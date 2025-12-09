@@ -39,3 +39,6 @@ htmlcov/
 # Personal notes (if any)
 NOTES.md
 TODO.md
+
+# Personal data (not for public repos)
+static/WHOAMI.md
