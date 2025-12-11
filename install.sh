@@ -40,6 +40,7 @@ UNLINK_STATIC=false
 INSTALL_CLI=false
 UNINSTALL_CLI=false
 CLI_TARGET="${HOME}/.local/bin"
+CLI_ALIASES=()
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
 EXCLUDE_DIRS=("static" "cli" ".git" ".github" ".agents" "node_modules" "__pycache__")
@@ -108,7 +109,8 @@ Static 관리:
 
 CLI 도구:
   --cli            claude-skill CLI 도구 설치 (~/.local/bin)
-  --uninstall-cli  claude-skill CLI 도구 제거
+  --alias=NAME     CLI 도구 별칭 추가 (여러 번 사용 가능, 예: --alias=cs)
+  --uninstall-cli  claude-skill CLI 도구 및 별칭 제거
 
 예시:
   $(basename "$0")                          # 전체 설치
@@ -316,6 +318,9 @@ install_cli() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_dry "디렉토리 생성: $CLI_TARGET"
         log_dry "심링크 생성: $cli_target -> $cli_source"
+        for alias_name in "${CLI_ALIASES[@]}"; do
+            log_dry "별칭 심링크: ${CLI_TARGET}/${alias_name} -> $cli_source"
+        done
         return
     fi
 
@@ -330,7 +335,24 @@ install_cli() {
     # 심링크 생성
     ln -s "$cli_source" "$cli_target"
     log_success "CLI 도구 설치됨: $cli_target"
-    log_info "사용법: claude-skill --help"
+
+    # 별칭 심링크 생성
+    for alias_name in "${CLI_ALIASES[@]}"; do
+        local alias_target="${CLI_TARGET}/${alias_name}"
+        if [[ -e "$alias_target" ]]; then
+            log_warn "기존 별칭 제거: $alias_target"
+            rm -f "$alias_target"
+        fi
+        ln -s "$cli_source" "$alias_target"
+        log_success "별칭 설치됨: $alias_target"
+    done
+
+    # 사용법 출력
+    if [[ ${#CLI_ALIASES[@]} -gt 0 ]]; then
+        log_info "사용법: claude-skill --help 또는 ${CLI_ALIASES[0]} --help"
+    else
+        log_info "사용법: claude-skill --help"
+    fi
 
     # PATH 확인
     if [[ ":$PATH:" != *":$CLI_TARGET:"* ]]; then
@@ -343,6 +365,7 @@ install_cli() {
 # CLI 도구 제거
 uninstall_cli() {
     local cli_target="${CLI_TARGET}/claude-skill"
+    local cli_source="${SCRIPT_DIR}/cli/claude-skill"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         if [[ -e "$cli_target" ]]; then
@@ -350,14 +373,39 @@ uninstall_cli() {
         else
             log_dry "CLI 도구가 설치되지 않음: $cli_target"
         fi
+        # 별칭 심링크 찾기
+        if [[ -d "$CLI_TARGET" ]]; then
+            for link in "$CLI_TARGET"/*; do
+                if [[ -L "$link" && "$(readlink -f "$link")" == "$cli_source" && "$link" != "$cli_target" ]]; then
+                    log_dry "별칭 제거: $link"
+                fi
+            done
+        fi
         return
     fi
 
+    local removed=false
+
+    # 메인 CLI 도구 제거
     if [[ -e "$cli_target" ]]; then
         rm -f "$cli_target"
         log_success "CLI 도구 제거됨: $cli_target"
-    else
-        log_warn "CLI 도구가 설치되지 않았습니다: $cli_target"
+        removed=true
+    fi
+
+    # 별칭 심링크 찾아서 제거 (claude-skill을 가리키는 모든 심링크)
+    if [[ -d "$CLI_TARGET" ]]; then
+        for link in "$CLI_TARGET"/*; do
+            if [[ -L "$link" && "$(readlink -f "$link")" == "$cli_source" ]]; then
+                rm -f "$link"
+                log_success "별칭 제거됨: $link"
+                removed=true
+            fi
+        done
+    fi
+
+    if [[ "$removed" == "false" ]]; then
+        log_warn "CLI 도구가 설치되지 않았습니다"
     fi
 }
 
@@ -539,6 +587,14 @@ while [[ $# -gt 0 ]]; do
         --cli)
             INSTALL_CLI=true
             shift
+            ;;
+        --alias=*)
+            CLI_ALIASES+=("${1#*=}")
+            shift
+            ;;
+        --alias)
+            CLI_ALIASES+=("$2")
+            shift 2
             ;;
         --uninstall-cli)
             UNINSTALL_CLI=true
