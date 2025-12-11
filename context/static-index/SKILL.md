@@ -64,7 +64,43 @@ description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니�
   - 네이밍 컨벤션
   - 주석 스타일
 
+## Prerequisites
+
+### 스크립트 설치
+
+```bash
+# 스크립트 실행 권한 부여
+chmod +x /path/to/agent-skills/context/static-index/scripts/static-index.sh
+
+# alias 설정 (선택)
+alias static-index='/path/to/agent-skills/context/static-index/scripts/static-index.sh'
+```
+
 ## Workflow
+
+### 스크립트 사용 (권장)
+
+```bash
+# 모든 정적 파일 목록
+static-index.sh list
+
+# 자연어 쿼리로 파일 검색
+static-index.sh search "보안 규칙"
+static-index.sh search "내 정보"
+
+# 특정 타입 파일 경로 반환
+static-index.sh get whoami
+static-index.sh get security
+```
+
+**토큰 절약 효과:**
+```
+Before: 2-3회 도구 호출 (ls, find, grep 등)
+After:  1회 스크립트 호출
+절약률: 50-60%
+```
+
+### 수동 워크플로우 (참고용)
 
 ### Step 1: 쿼리 분석
 
@@ -201,3 +237,11 @@ agent-skills/
 - 민감한 정보를 static 파일에 저장하지 않기
 - 프로젝트별 설정을 글로벌 static에 저장하지 않기
 - 인덱스 없이 직접 파일 경로 하드코딩하지 않기
+
+---
+
+## Resources
+
+| 파일 | 설명 |
+|------|------|
+| `scripts/static-index.sh` | 정적 파일 인덱싱 및 검색 스크립트 |

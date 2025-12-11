@@ -172,6 +172,48 @@ get_all_skills() {
     done
 }
 
+# YAML frontmatter에서 description 추출
+extract_description() {
+    local skill_md="$1"
+    local max_len="${2:-50}"
+
+    # Python으로 YAML frontmatter 파싱
+    python3 - "$skill_md" "$max_len" 2>/dev/null << 'PYEOF'
+import sys
+import re
+
+skill_md = sys.argv[1]
+max_len = int(sys.argv[2])
+
+try:
+    with open(skill_md, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # YAML frontmatter 추출 (--- 사이)
+    match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+    if not match:
+        print("")
+        sys.exit(0)
+
+    frontmatter = match.group(1)
+
+    # description 필드 찾기
+    desc_match = re.search(r'^description:\s*(.+?)(?:\n(?!\s)|\Z)', frontmatter, re.MULTILINE | re.DOTALL)
+    if desc_match:
+        desc = desc_match.group(1).strip()
+        # 멀티라인인 경우 첫 줄만
+        desc = desc.split('\n')[0].strip()
+        # 길이 제한
+        if len(desc) > max_len:
+            desc = desc[:max_len-3] + "..."
+        print(desc)
+    else:
+        print("")
+except Exception:
+    print("")
+PYEOF
+}
+
 # 스킬 목록 출력
 list_skills() {
     local groups=($(get_skill_groups))
@@ -189,13 +231,13 @@ list_skills() {
             for skill_dir in "$group_dir"/*/; do
                 if [[ -f "${skill_dir}SKILL.md" ]]; then
                     local skill_name=$(basename "$skill_dir")
-                    local description=$(grep -A1 "^description:" "${skill_dir}SKILL.md" 2>/dev/null | tail -1 | sed 's/^description: *//' | cut -c1-60)
+                    local description=$(extract_description "${skill_dir}SKILL.md" 45)
 
                     if [[ -z "$description" ]]; then
-                        description=$(sed -n '3p' "${skill_dir}SKILL.md" 2>/dev/null | sed 's/^description: *//' | cut -c1-60)
+                        description="(설명 없음)"
                     fi
 
-                    printf "  ├── ${GREEN}%-25s${NC} %s\n" "$skill_name" "${description}..."
+                    printf "  ├── ${GREEN}%-25s${NC} %s\n" "$skill_name" "$description"
                 fi
             done
             echo ""
