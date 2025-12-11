@@ -251,15 +251,17 @@ def run_streaming(cmd: list[str], args: argparse.Namespace) -> int:
                 for block in content:
                     if block.get("type") == "text":
                         text = block.get("text", "")
-                        if text:
+                        if text and not args.result_only:
                             print(text, end="", flush=True)
                     elif block.get("type") == "tool_use":
                         tool_name = block.get("name", "unknown")
                         tool_count += 1
                         current_tool = tool_name
 
-                        # 도구 사용 시작 표시
-                        if args.verbose:
+                        # 도구 사용 시작 표시 (result_only 모드에서는 숨김)
+                        if args.result_only:
+                            pass
+                        elif args.verbose:
                             print(f"\n{Colors.BLUE}[{tool_count}] {tool_name}{Colors.RESET}", end="", flush=True)
                             tool_input = block.get("input", {})
                             if tool_name == "Bash":
@@ -278,7 +280,8 @@ def run_streaming(cmd: list[str], args: argparse.Namespace) -> int:
                 # 최종 결과
                 result = data.get("result", "")
                 if result:
-                    print(f"\n\n{Colors.GREEN}━━━ 결과 ━━━{Colors.RESET}")
+                    if not args.result_only:
+                        print(f"\n\n{Colors.GREEN}━━━ 결과 ━━━{Colors.RESET}")
                     print(result)
 
                 # 통계
@@ -319,6 +322,7 @@ def main():
     parser.add_argument("-l", "--list", action="store_true", help="설치된 스킬 목록")
     parser.add_argument("-i", "--interactive", action="store_true", help="권한 요청 모드 (기본: 자동 승인)")
     parser.add_argument("-v", "--verbose", action="store_true", help="상세 출력")
+    parser.add_argument("-r", "--result-only", action="store_true", help="최종 결과만 출력 (스트리밍 숨김)")
     parser.add_argument("--no-stream", action="store_true", help="스트리밍 비활성화")
     parser.add_argument("--no-skill", action="store_true", help="스킬 매칭 없이 실행")
 
@@ -353,18 +357,19 @@ def main():
             print(f"{Colors.DIM}설치된 스킬: {', '.join(s.get('name', '') for s in skills)}{Colors.RESET}")
             return 1
 
-    # 헤더 출력
-    print(f"\n{Colors.CYAN}━━━ Claude Skill ━━━{Colors.RESET}")
-    if skill:
-        print(f"{Colors.GREEN}스킬:{Colors.RESET} {skill.get('name')}")
-        print(f"{Colors.DIM}{skill.get('description', '')[:60]}{Colors.RESET}")
-    elif args.no_skill:
-        print(f"{Colors.DIM}스킬 비활성화 (일반 모드){Colors.RESET}")
-    else:
-        print(f"{Colors.YELLOW}스킬:{Colors.RESET} Claude가 자동 선택")
-        print(f"{Colors.DIM}설치된 스킬 {len(skills)}개 중에서 적합한 스킬을 선택합니다{Colors.RESET}")
-    print(f"{Colors.GREEN}명령:{Colors.RESET} {args.prompt}")
-    print()
+    # 헤더 출력 (result_only 모드에서는 숨김)
+    if not args.result_only:
+        print(f"\n{Colors.CYAN}━━━ Claude Skill ━━━{Colors.RESET}")
+        if skill:
+            print(f"{Colors.GREEN}스킬:{Colors.RESET} {skill.get('name')}")
+            print(f"{Colors.DIM}{skill.get('description', '')[:60]}{Colors.RESET}")
+        elif args.no_skill:
+            print(f"{Colors.DIM}스킬 비활성화 (일반 모드){Colors.RESET}")
+        else:
+            print(f"{Colors.YELLOW}스킬:{Colors.RESET} Claude가 자동 선택")
+            print(f"{Colors.DIM}설치된 스킬 {len(skills)}개 중에서 적합한 스킬을 선택합니다{Colors.RESET}")
+        print(f"{Colors.GREEN}명령:{Colors.RESET} {args.prompt}")
+        print()
 
     # 실행
     return run_claude_with_skill(args.prompt, skill, skills, args)
