@@ -142,9 +142,9 @@ def run_claude_with_skill(prompt: str, skill: Optional[dict], skills: list[dict]
 
     cmd = ["claude", "-p"]
 
-    # 스트리밍 모드
+    # 스트리밍 모드 (stream-json은 --verbose 필요)
     if not args.no_stream:
-        cmd.extend(["--output-format", "stream-json"])
+        cmd.extend(["--verbose", "--output-format", "stream-json"])
 
     # 시스템 프롬프트 구성
     if skill:
