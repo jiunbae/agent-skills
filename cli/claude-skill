@@ -162,34 +162,31 @@ def run_claude_with_skill(prompt: str, skill: Optional[dict], skills: list[dict]
 진행 상황을 단계별로 알려주세요."""
 
     elif not args.no_skill and skills:
-        # Claude가 스킬을 선택하도록 함
+        # Claude가 스킬을 선택하도록 함 (인덱스만 전달하여 크기 제한)
         skill_index = build_skill_index(skills)
 
-        # 스킬 내용도 모두 포함
-        skill_contents = []
+        # 키워드 정보 추가
+        keywords_info = []
         for s in skills:
             name = s.get("name", "unknown")
-            content = s.get("content", "")
-            skill_contents.append(f"=== 스킬: {name} ===\n{content}\n")
+            keywords = s.get("keywords", [])
+            if keywords:
+                keywords_info.append(f"- {name}: {', '.join(keywords[:5])}")
 
-        all_skills_content = "\n".join(skill_contents)
+        keywords_section = ""
+        if keywords_info:
+            keywords_section = "\n\n## 스킬 키워드\n" + "\n".join(keywords_info)
 
         system_prompt = f"""당신은 사용자의 요청에 가장 적합한 스킬을 선택하여 작업을 수행합니다.
 
-{skill_index}
-
-아래는 각 스킬의 상세 문서입니다:
-
-{all_skills_content}
+{skill_index}{keywords_section}
 
 ## 지침
 
 1. 사용자 요청을 분석하여 가장 적합한 스킬을 선택하세요.
-2. 선택한 스킬의 Workflow를 따라 작업을 수행하세요.
-3. 적합한 스킬이 없으면 일반적인 방식으로 작업을 수행하세요.
-4. 진행 상황을 단계별로 알려주세요.
-
-응답 시작 시 선택한 스킬을 명시하세요: "[스킬: 스킬이름]" 또는 "[스킬: 없음]"
+2. 선택한 스킬 이름을 응답 첫 줄에 명시: "[스킬: 스킬이름]" 또는 "[스킬: 없음]"
+3. 스킬을 선택했다면 해당 스킬의 역할에 맞게 작업을 수행하세요.
+4. 적합한 스킬이 없으면 일반적인 방식으로 작업을 수행하세요.
 """
     else:
         system_prompt = None
