@@ -194,9 +194,9 @@ def run_claude_with_skill(prompt: str, skill: Optional[dict], skills: list[dict]
     if system_prompt:
         cmd.extend(["--append-system-prompt", system_prompt])
 
-    # 권한 모드
-    if args.yes:
-        cmd.extend(["--permission-mode", "acceptEdits"])
+    # 권한 모드 (기본: bypassPermissions, --interactive로 권한 요청 모드)
+    if not args.interactive:
+        cmd.extend(["--permission-mode", "bypassPermissions"])
 
     # 프롬프트 추가
     cmd.append(prompt)
@@ -317,7 +317,7 @@ def main():
     parser.add_argument("prompt", nargs="?", help="실행할 자연어 명령")
     parser.add_argument("-s", "--skill", help="사용할 스킬 이름 직접 지정")
     parser.add_argument("-l", "--list", action="store_true", help="설치된 스킬 목록")
-    parser.add_argument("-y", "--yes", action="store_true", help="모든 편집 자동 승인")
+    parser.add_argument("-i", "--interactive", action="store_true", help="권한 요청 모드 (기본: 자동 승인)")
     parser.add_argument("-v", "--verbose", action="store_true", help="상세 출력")
     parser.add_argument("--no-stream", action="store_true", help="스트리밍 비활성화")
     parser.add_argument("--no-skill", action="store_true", help="스킬 매칭 없이 실행")
