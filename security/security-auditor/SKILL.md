@@ -1,6 +1,15 @@
 ---
 name: security-auditor
 description: 레포지토리 보안 감사 스킬. 현재 코드와 commit history를 분석하여 민감 정보 유출을 점검합니다. '보안 점검', '보안 감사', 'security audit', '민감 정보 검사' 요청 시 활성화됩니다.
+trigger_keywords:
+  - 보안 검사
+  - 보안 감사
+  - 보안 점검
+  - security audit
+  - 민감 정보 검사
+  - 보안 스캔
+  - secret 검사
+  - api key 검사
 ---
 
 # Security Auditor 스킬

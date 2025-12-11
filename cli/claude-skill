@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""
+claude-skill - CLI에서 Claude 스킬을 직접 실행하는 도구
+
+Usage:
+    claude-skill "자연어 명령"
+    claude-skill --skill git-commit-pr "커밋해줘"
+    claude-skill --list
+
+Examples:
+    claude-skill "보안 검사해줘"
+    claude-skill "콜라보 워크스페이스 만들어줘"
+    claude-skill --skill security-auditor "현재 레포 검사"
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Optional
+
+# 색상 코드
+class Colors:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+
+
+def get_skills_dir() -> Path:
+    """설치된 스킬 디렉토리 반환"""
+    return Path.home() / ".claude" / "skills"
+
+
+def get_agent_skills_dir() -> Path:
+    """agent-skills 소스 디렉토리 반환"""
+    script_dir = Path(__file__).resolve().parent.parent
+    return script_dir
+
+
+def load_skill_metadata(skill_path: Path) -> dict:
+    """SKILL.md에서 메타데이터 추출"""
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.exists():
+        return {}
+
+    content = skill_md.read_text(encoding="utf-8")
+
+    # YAML frontmatter 파싱
+    match = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+    if not match:
+        return {"content": content}
+
+    frontmatter = match.group(1)
+    metadata = {"content": content}
+
+    # name 추출
+    name_match = re.search(r'^name:\s*(.+)$', frontmatter, re.MULTILINE)
+    if name_match:
+        metadata["name"] = name_match.group(1).strip()
+
+    # description 추출
+    desc_match = re.search(r'^description:\s*(.+?)(?:\n(?!\s)|\Z)', frontmatter, re.MULTILINE | re.DOTALL)
+    if desc_match:
+        metadata["description"] = desc_match.group(1).strip().split('\n')[0]
+
+    # trigger_keywords 추출
+    keywords_match = re.search(r'^trigger_keywords:\s*\n((?:\s+-\s*.+\n?)+)', frontmatter, re.MULTILINE)
+    if keywords_match:
+        keywords_text = keywords_match.group(1)
+        keywords = re.findall(r'-\s*(.+)', keywords_text)
+        metadata["keywords"] = [k.strip() for k in keywords]
+
+    return metadata
+
+
+def list_installed_skills() -> list[dict]:
+    """설치된 스킬 목록 반환"""
+    skills_dir = get_skills_dir()
+    if not skills_dir.exists():
+        return []
+
+    skills = []
+    for skill_path in skills_dir.iterdir():
+        if skill_path.is_dir() or skill_path.is_symlink():
+            actual_path = skill_path.resolve() if skill_path.is_symlink() else skill_path
+            if (actual_path / "SKILL.md").exists():
+                metadata = load_skill_metadata(actual_path)
+                skills.append({
+                    "name": skill_path.name,
+                    "path": str(actual_path),
+                    **metadata
+                })
+
+    return skills
+
+
+def build_skill_index(skills: list[dict]) -> str:
+    """Claude에게 전달할 스킬 인덱스 생성"""
+    lines = ["사용 가능한 스킬 목록:", ""]
+
+    for skill in sorted(skills, key=lambda x: x.get("name", "")):
+        name = skill.get("name", "unknown")
+        desc = skill.get("description", "(설명 없음)")
+        lines.append(f"- **{name}**: {desc}")
+
+    return "\n".join(lines)
+
+
+def print_skills_list(skills: list[dict]):
+    """스킬 목록 출력"""
+    print(f"\n{Colors.CYAN}설치된 스킬 목록{Colors.RESET}")
+    print("=" * 60)
+
+    for skill in sorted(skills, key=lambda x: x.get("name", "")):
+        name = skill.get("name", "unknown")
+        desc = skill.get("description", "(설명 없음)")[:50]
+        keywords = skill.get("keywords", [])
+
+        print(f"\n{Colors.GREEN}{name}{Colors.RESET}")
+        print(f"  {Colors.DIM}{desc}{Colors.RESET}")
+        if keywords:
+            kw_str = ", ".join(keywords[:5])
+            if len(keywords) > 5:
+                kw_str += f" (+{len(keywords)-5})"
+            print(f"  {Colors.YELLOW}키워드:{Colors.RESET} {kw_str}")
+
+    print()
+
+
+def run_claude_with_skill(prompt: str, skill: Optional[dict], skills: list[dict], args: argparse.Namespace):
+    """Claude CLI 실행"""
+
+    cmd = ["claude", "-p"]
+
+    # 스트리밍 모드
+    if not args.no_stream:
+        cmd.extend(["--output-format", "stream-json"])
+
+    # 시스템 프롬프트 구성
+    if skill:
+        # 스킬이 직접 지정된 경우
+        skill_content = skill.get("content", "")
+        skill_name = skill.get("name", "unknown")
+
+        system_prompt = f"""당신은 '{skill_name}' 스킬을 사용하여 작업을 수행합니다.
+
+다음은 스킬 문서입니다:
+
+{skill_content}
+
+위 스킬의 Workflow를 따라 작업을 수행하세요.
+진행 상황을 단계별로 알려주세요."""
+
+    elif not args.no_skill and skills:
+        # Claude가 스킬을 선택하도록 함
+        skill_index = build_skill_index(skills)
+
+        # 스킬 내용도 모두 포함
+        skill_contents = []
+        for s in skills:
+            name = s.get("name", "unknown")
+            content = s.get("content", "")
+            skill_contents.append(f"=== 스킬: {name} ===\n{content}\n")
+
+        all_skills_content = "\n".join(skill_contents)
+
+        system_prompt = f"""당신은 사용자의 요청에 가장 적합한 스킬을 선택하여 작업을 수행합니다.
+
+{skill_index}
+
+아래는 각 스킬의 상세 문서입니다:
+
+{all_skills_content}
+
+## 지침
+
+1. 사용자 요청을 분석하여 가장 적합한 스킬을 선택하세요.
+2. 선택한 스킬의 Workflow를 따라 작업을 수행하세요.
+3. 적합한 스킬이 없으면 일반적인 방식으로 작업을 수행하세요.
+4. 진행 상황을 단계별로 알려주세요.
+
+응답 시작 시 선택한 스킬을 명시하세요: "[스킬: 스킬이름]" 또는 "[스킬: 없음]"
+"""
+    else:
+        system_prompt = None
+
+    if system_prompt:
+        cmd.extend(["--append-system-prompt", system_prompt])
+
+    # 권한 모드
+    if args.yes:
+        cmd.extend(["--permission-mode", "acceptEdits"])
+
+    # 프롬프트 추가
+    cmd.append(prompt)
+
+    # 실행
+    if args.verbose:
+        print(f"{Colors.DIM}실행: {' '.join(cmd[:5])}...{Colors.RESET}\n")
+
+    if args.no_stream:
+        # 일반 모드
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        print(result.stdout)
+        if result.stderr:
+            print(f"{Colors.RED}{result.stderr}{Colors.RESET}", file=sys.stderr)
+        return result.returncode
+    else:
+        # 스트리밍 모드
+        return run_streaming(cmd, args)
+
+
+def run_streaming(cmd: list[str], args: argparse.Namespace) -> int:
+    """스트리밍 모드로 실행"""
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1
+    )
+
+    current_tool = None
+    tool_count = 0
+
+    try:
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = data.get("type")
+
+            if msg_type == "assistant":
+                # 어시스턴트 메시지
+                message = data.get("message", {})
+                content = message.get("content", [])
+
+                for block in content:
+                    if block.get("type") == "text":
+                        text = block.get("text", "")
+                        if text:
+                            print(text, end="", flush=True)
+                    elif block.get("type") == "tool_use":
+                        tool_name = block.get("name", "unknown")
+                        tool_count += 1
+                        current_tool = tool_name
+
+                        # 도구 사용 시작 표시
+                        if args.verbose:
+                            print(f"\n{Colors.BLUE}[{tool_count}] {tool_name}{Colors.RESET}", end="", flush=True)
+                            tool_input = block.get("input", {})
+                            if tool_name == "Bash":
+                                cmd_str = tool_input.get("command", "")[:60]
+                                print(f" {Colors.DIM}{cmd_str}{Colors.RESET}", flush=True)
+                            elif tool_name in ("Read", "Write", "Edit"):
+                                file_path = tool_input.get("file_path", "")
+                                print(f" {Colors.DIM}{file_path}{Colors.RESET}", flush=True)
+                            else:
+                                print(flush=True)
+                        else:
+                            # 간단한 진행 표시
+                            print(f"{Colors.DIM}.{Colors.RESET}", end="", flush=True)
+
+            elif msg_type == "result":
+                # 최종 결과
+                result = data.get("result", "")
+                if result:
+                    print(f"\n\n{Colors.GREEN}━━━ 결과 ━━━{Colors.RESET}")
+                    print(result)
+
+                # 통계
+                cost_usd = data.get("cost_usd", 0)
+                duration_ms = data.get("duration_ms", 0)
+                duration_sec = duration_ms / 1000
+
+                print(f"\n{Colors.DIM}[도구 호출: {tool_count}회 | 소요: {duration_sec:.1f}s | 비용: ${cost_usd:.4f}]{Colors.RESET}")
+
+            elif msg_type == "error":
+                error_msg = data.get("error", {}).get("message", "Unknown error")
+                print(f"\n{Colors.RED}오류: {error_msg}{Colors.RESET}", file=sys.stderr)
+
+    except KeyboardInterrupt:
+        process.terminate()
+        print(f"\n{Colors.YELLOW}중단됨{Colors.RESET}")
+        return 130
+
+    process.wait()
+    return process.returncode
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Claude 스킬을 CLI에서 직접 실행",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+예시:
+  claude-skill "보안 검사해줘"
+  claude-skill --skill git-commit-pr "커밋해줘"
+  claude-skill -y "콜라보 서버 띄워줘"
+  claude-skill --list
+        """
+    )
+
+    parser.add_argument("prompt", nargs="?", help="실행할 자연어 명령")
+    parser.add_argument("-s", "--skill", help="사용할 스킬 이름 직접 지정")
+    parser.add_argument("-l", "--list", action="store_true", help="설치된 스킬 목록")
+    parser.add_argument("-y", "--yes", action="store_true", help="모든 편집 자동 승인")
+    parser.add_argument("-v", "--verbose", action="store_true", help="상세 출력")
+    parser.add_argument("--no-stream", action="store_true", help="스트리밍 비활성화")
+    parser.add_argument("--no-skill", action="store_true", help="스킬 매칭 없이 실행")
+
+    args = parser.parse_args()
+
+    # 스킬 목록
+    skills = list_installed_skills()
+
+    if args.list:
+        print_skills_list(skills)
+        return 0
+
+    if not args.prompt:
+        parser.print_help()
+        return 1
+
+    # 스킬 선택
+    skill = None
+
+    if args.no_skill:
+        # 스킬 없이 실행
+        pass
+    elif args.skill:
+        # 직접 지정된 스킬
+        for s in skills:
+            if s.get("name") == args.skill:
+                skill = s
+                break
+
+        if not skill:
+            print(f"{Colors.RED}스킬을 찾을 수 없습니다: {args.skill}{Colors.RESET}")
+            print(f"{Colors.DIM}설치된 스킬: {', '.join(s.get('name', '') for s in skills)}{Colors.RESET}")
+            return 1
+
+    # 헤더 출력
+    print(f"\n{Colors.CYAN}━━━ Claude Skill ━━━{Colors.RESET}")
+    if skill:
+        print(f"{Colors.GREEN}스킬:{Colors.RESET} {skill.get('name')}")
+        print(f"{Colors.DIM}{skill.get('description', '')[:60]}{Colors.RESET}")
+    elif args.no_skill:
+        print(f"{Colors.DIM}스킬 비활성화 (일반 모드){Colors.RESET}")
+    else:
+        print(f"{Colors.YELLOW}스킬:{Colors.RESET} Claude가 자동 선택")
+        print(f"{Colors.DIM}설치된 스킬 {len(skills)}개 중에서 적합한 스킬을 선택합니다{Colors.RESET}")
+    print(f"{Colors.GREEN}명령:{Colors.RESET} {args.prompt}")
+    print()
+
+    # 실행
+    return run_claude_with_skill(args.prompt, skill, skills, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

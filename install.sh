@@ -37,9 +37,12 @@ LIST_MODE=false
 QUIET=false
 LINK_STATIC=false
 UNLINK_STATIC=false
+INSTALL_CLI=false
+UNINSTALL_CLI=false
+CLI_TARGET="${HOME}/.local/bin"
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
-EXCLUDE_DIRS=("static" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" ".git" ".github" ".agents" "node_modules" "__pycache__")
 
 # 스킬 그룹 동적 탐색
 get_skill_groups() {
@@ -102,6 +105,10 @@ usage() {
 Static 관리:
   --link-static    static/ -> ~/.agents 심링크 생성
   --unlink-static  ~/.agents 심링크 제거
+
+CLI 도구:
+  --cli            claude-skill CLI 도구 설치 (~/.local/bin)
+  --uninstall-cli  claude-skill CLI 도구 제거
 
 예시:
   $(basename "$0")                          # 전체 설치
@@ -295,6 +302,65 @@ link_static() {
     log_success "심링크 생성됨: ~/.agents -> $STATIC_SOURCE"
 }
 
+# CLI 도구 설치
+install_cli() {
+    local cli_source="${SCRIPT_DIR}/cli/claude-skill"
+    local cli_target="${CLI_TARGET}/claude-skill"
+
+    if [[ ! -f "$cli_source" ]]; then
+        log_error "CLI 스크립트를 찾을 수 없습니다: $cli_source"
+        exit 1
+    fi
+
+    # 대상 디렉토리 생성
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry "디렉토리 생성: $CLI_TARGET"
+        log_dry "심링크 생성: $cli_target -> $cli_source"
+        return
+    fi
+
+    mkdir -p "$CLI_TARGET"
+
+    # 기존 파일 처리
+    if [[ -e "$cli_target" ]]; then
+        log_warn "기존 파일 제거: $cli_target"
+        rm -f "$cli_target"
+    fi
+
+    # 심링크 생성
+    ln -s "$cli_source" "$cli_target"
+    log_success "CLI 도구 설치됨: $cli_target"
+    log_info "사용법: claude-skill --help"
+
+    # PATH 확인
+    if [[ ":$PATH:" != *":$CLI_TARGET:"* ]]; then
+        log_warn "$CLI_TARGET 가 PATH에 없습니다."
+        log_info "다음을 ~/.bashrc 또는 ~/.zshrc에 추가하세요:"
+        echo "  export PATH=\"\$PATH:$CLI_TARGET\""
+    fi
+}
+
+# CLI 도구 제거
+uninstall_cli() {
+    local cli_target="${CLI_TARGET}/claude-skill"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ -e "$cli_target" ]]; then
+            log_dry "CLI 도구 제거: $cli_target"
+        else
+            log_dry "CLI 도구가 설치되지 않음: $cli_target"
+        fi
+        return
+    fi
+
+    if [[ -e "$cli_target" ]]; then
+        rm -f "$cli_target"
+        log_success "CLI 도구 제거됨: $cli_target"
+    else
+        log_warn "CLI 도구가 설치되지 않았습니다: $cli_target"
+    fi
+}
+
 # Static 심링크 제거
 unlink_static() {
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -470,6 +536,14 @@ while [[ $# -gt 0 ]]; do
             UNLINK_STATIC=true
             shift
             ;;
+        --cli)
+            INSTALL_CLI=true
+            shift
+            ;;
+        --uninstall-cli)
+            UNINSTALL_CLI=true
+            shift
+            ;;
         -*)
             log_error "알 수 없는 옵션: $1"
             echo "도움말: $(basename "$0") --help"
@@ -490,6 +564,17 @@ fi
 
 if [[ "$UNLINK_STATIC" == "true" ]]; then
     unlink_static
+    exit 0
+fi
+
+# CLI 설치 모드
+if [[ "$INSTALL_CLI" == "true" ]]; then
+    install_cli
+    exit 0
+fi
+
+if [[ "$UNINSTALL_CLI" == "true" ]]; then
+    uninstall_cli
     exit 0
 fi
 
