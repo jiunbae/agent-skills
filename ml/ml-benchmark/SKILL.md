@@ -21,7 +21,7 @@ ML 모델의 성능 벤치마크 및 평가를 자동화하는 스킬입니다.
 ## Script Location
 
 ```
-SCRIPT: ~/.claude/skills/ml-benchmark/scripts/ml-benchmark.sh
+SCRIPT: ./scripts/ml-benchmark.sh
 ```
 
 Claude는 이 스크립트를 Bash 도구로 직접 실행합니다.
@@ -67,7 +67,7 @@ chmod +x /path/to/agent-skills/ml/ml-benchmark/scripts/ml-benchmark.sh
 **Step 2**: 스크립트 실행
 ```bash
 # 스크립트 경로
-SCRIPT=~/.claude/skills/ml-benchmark/scripts/ml-benchmark.sh
+SCRIPT=./scripts/ml-benchmark.sh
 
 # 벤치마크 실행
 $SCRIPT run --url <endpoint> --model <name> [--runs <n>] [--save <file>]

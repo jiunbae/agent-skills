@@ -21,7 +21,7 @@ ffmpeg을 활용한 오디오 파일 변환 및 처리 자동화 스킬입니다
 ## Script Location
 
 ```
-SCRIPT: ~/.claude/skills/audio-processor/scripts/audio-process.sh
+SCRIPT: ./scripts/audio-process.sh
 ```
 
 Claude는 이 스크립트를 Bash 도구로 직접 실행합니다.
@@ -63,7 +63,7 @@ chmod +x /path/to/agent-skills/ml/audio-processor/scripts/audio-process.sh
 **Step 2**: 스크립트 실행
 ```bash
 # 스크립트 경로
-SCRIPT=~/.claude/skills/audio-processor/scripts/audio-process.sh
+SCRIPT=./scripts/audio-process.sh
 
 # 포맷 변환
 $SCRIPT convert <input> <output> [--sr <rate>] [--mono|--stereo]

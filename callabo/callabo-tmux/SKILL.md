@@ -454,12 +454,12 @@ cd magi && pnpm dev
 Claude:
 1. [callabo-init 활성화]
    워크스페이스 생성 중...
-   ~/scripts/init-callabo-workspace.sh ~/work/new-feature feature/new
+   ./scripts/init-callabo-workspace.sh ~/work/new-feature feature/new
    ✅ 완료
 
 2. [callabo-tmux 활성화]
    서비스 시작 중...
-   cd ~/work/new-feature && ./run.sh
+   echo "" | ./scripts/run.sh ~/work/new-feature
    ✅ tmux 세션 'runtime-new-feature' 준비됨
 ```
 

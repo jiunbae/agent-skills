@@ -21,7 +21,7 @@ NVIDIA Triton Inference Server 컨테이너 배포 및 관리를 자동화하는
 ## Script Location
 
 ```
-SCRIPT: ~/.claude/skills/triton-deploy/scripts/triton-deploy.sh
+SCRIPT: ./scripts/triton-deploy.sh
 ```
 
 Claude는 이 스크립트를 Bash 도구로 직접 실행합니다.
@@ -66,7 +66,7 @@ chmod +x /path/to/agent-skills/ml/triton-deploy/scripts/triton-deploy.sh
 **Step 2**: 스크립트 실행
 ```bash
 # 스크립트 경로
-SCRIPT=~/.claude/skills/triton-deploy/scripts/triton-deploy.sh
+SCRIPT=./scripts/triton-deploy.sh
 
 # 서버 시작
 $SCRIPT start --model-repo <path> [--gpu <devices>] [--port <port>] [--profile <name>]

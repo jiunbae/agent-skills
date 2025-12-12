@@ -21,7 +21,7 @@ ML 모델 파일을 여러 서버 간에 동기화하는 스킬입니다.
 ## Script Location
 
 ```
-SCRIPT: ~/.claude/skills/model-sync/scripts/model-sync.sh
+SCRIPT: ./scripts/model-sync.sh
 ```
 
 Claude는 이 스크립트를 Bash 도구로 직접 실행합니다.
@@ -88,7 +88,7 @@ naming:
 **Step 2**: 스크립트 실행
 ```bash
 # 스크립트 경로
-SCRIPT=~/.claude/skills/model-sync/scripts/model-sync.sh
+SCRIPT=./scripts/model-sync.sh
 
 # 서버 목록
 $SCRIPT servers
