@@ -31,6 +31,7 @@ description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니�
 | 내 정보, 내 프로필, 사용자 정보, whoami, 개발자 정보, 내 기술 스택 | `WHOAMI.md` | 사용자 개발 프로필 (기술 스택, 선호도, 경험) |
 | 보안 규칙, 보안 정책, 민감 정보, 커밋 금지, security | `SECURITY.md` | 보안 검증 규칙 (커밋 금지 패턴, 민감 정보) |
 | 코딩 스타일, 스타일 가이드, 코드 컨벤션, formatting | `STYLE.md` | 코딩 스타일 가이드 (포맷팅, 네이밍) |
+| 노션 설정, notion, 노션 페이지, 업로드 설정 | `NOTION.md` | Notion 연동 설정 (페이지 ID, 업로드 옵션) |
 
 ### 파일 상세 정보
 
@@ -63,6 +64,16 @@ description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니�
   - 포맷팅 규칙 (들여쓰기, 줄 길이)
   - 네이밍 컨벤션
   - 주석 스타일
+
+#### NOTION.md
+- **경로**: `~/.agents/NOTION.md`
+- **용도**: Notion 연동 설정
+- **관리 스킬**: `notion-summary`
+- **포함 정보**:
+  - 업로드 대상 페이지 ID
+  - 페이지 이름
+  - 업로드 설정 (날짜별/프로젝트별 분류)
+  - 콘텐츠 템플릿
 
 ## Prerequisites
 
@@ -205,12 +216,14 @@ static-index: SECURITY.md 파일을 참조하세요.
 ├── WHOAMI.md                # 사용자 프로필
 ├── SECURITY.md              # 보안 규칙
 ├── STYLE.md                 # 코딩 스타일 (선택)
+├── NOTION.md                # Notion 연동 설정
 └── README.md                # 디렉토리 설명
 
 agent-skills/
 ├── static/                  # 실제 파일 위치 (Git 관리)
 │   ├── WHOAMI.md
 │   ├── SECURITY.md
+│   ├── NOTION.md
 │   └── README.md
 └── context/
     └── static-index/
@@ -225,6 +238,7 @@ agent-skills/
 | git-commit-pr | SECURITY.md | 커밋 전 보안 검증 |
 | context-manager | WHOAMI.md, STYLE.md | 프로젝트 컨텍스트 구성 |
 | planning-agents | WHOAMI.md | 사용자 역량 기반 기획 |
+| notion-summary | NOTION.md | Notion 업로드 설정 |
 
 ## Best Practices
 
