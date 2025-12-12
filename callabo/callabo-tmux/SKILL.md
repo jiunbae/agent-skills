@@ -103,15 +103,20 @@ ls callabo-server/ callabo-webapp/ magi/
 ### Step 2: 실행 스크립트 호출
 
 ```bash
-# 기본 실행 (현재 디렉토리)
-<workspace>/run.sh
+# 기본 실행 (AWS Vault 비밀번호 자동 입력)
+echo "" | <workspace>/run.sh
 
 # 경로 지정 실행
-<workspace>/run.sh /path/to/workspace
+echo "" | <workspace>/run.sh /path/to/workspace
 
 # 또는 callabo-base의 run.sh 사용
-~/callabo-base/run.sh <workspace>
+echo "" | ~/callabo-base/run.sh <workspace>
+
+# AWS Vault 건너뛰기 (로컬 전용)
+CALLABO_SKIP_AWS_VAULT=1 <workspace>/run.sh
 ```
+
+> **Note**: `echo "" |`는 AWS Vault 비밀번호 프롬프트에 빈 문자열(엔터)을 자동 입력합니다.
 
 ### Step 3: 옵션 설정
 
@@ -153,7 +158,7 @@ Claude: Callabo 개발 서버를 시작하겠습니다.
 📍 현재 워크스페이스: ~/work/feature-login
 
 [명령 실행]
-./run.sh
+echo "" | ./run.sh
 
 ✅ tmux 세션 'runtime-feature-login' 이(가) 준비되었습니다.
 
@@ -175,7 +180,7 @@ tmux attach -t runtime-feature-login
 Claude: 커스텀 세션명으로 실행하겠습니다.
 
 [명령 실행]
-./run.sh --name my-dev
+echo "" | ./run.sh --name my-dev
 
 ✅ tmux 세션 'my-dev' 생성 완료
 
@@ -195,7 +200,7 @@ Pane 구성:
 Claude: 기존 세션을 종료하고 재시작하겠습니다.
 
 [명령 실행]
-./run.sh --force
+echo "" | ./run.sh --force
 
 기존 tmux 세션 'runtime-feature-login' 종료를 시도합니다...
 기존 tmux 세션 'runtime-feature-login' 이(가) 정상적으로 종료되었습니다.
@@ -210,7 +215,7 @@ Claude: 기존 세션을 종료하고 재시작하겠습니다.
 Claude: 스케줄러 없이 실행하겠습니다.
 
 [명령 실행]
-./run.sh --skip-scheduler
+echo "" | ./run.sh --skip-scheduler
 
 ✅ 세션 준비 완료 (scheduler 제외)
 
@@ -230,7 +235,7 @@ Pane 구성:
 Claude: 의존성을 재설치 후 실행하겠습니다.
 
 [명령 실행]
-./run.sh --force-sync
+echo "" | ./run.sh --force-sync
 
 [callabo-server] CALLABO_FORCE_SYNC=1: uv sync를 강제로 실행합니다...
 [callabo-webapp] yarn install을 실행합니다...
@@ -248,7 +253,7 @@ Claude: 의존성을 재설치 후 실행하겠습니다.
 Claude: 지정된 워크스페이스를 실행하겠습니다.
 
 [명령 실행]
-~/callabo-base/run.sh ~/work/other-feature
+echo "" | ~/callabo-base/run.sh ~/work/other-feature
 
 ✅ tmux 세션 'runtime-other-feature' 준비 완료
 
@@ -264,10 +269,21 @@ Claude: 지정된 워크스페이스를 실행하겠습니다.
 | 변수 | 설명 | 기본값 |
 |------|------|--------|
 | `AWS_VAULT_PROFILE` | AWS Vault 프로파일 | `dev-callabo` |
+| `AWS_VAULT_PASS` | AWS Vault 비밀번호 (빈 문자열이면 자동 엔터) | `""` |
 | `CALLABO_SKIP_AWS_VAULT` | AWS Vault 건너뛰기 | 미설정 |
 | `CALLABO_FORCE_SYNC` | 강제 의존성 설치 | `0` |
 | `CALLABO_SKIP_SCHEDULER` | 스케줄러 비활성화 | `0` |
 | `CALLABO_FORCE_SHUTDOWN_TIMEOUT` | 종료 대기 시간(초) | `15` |
+
+**AWS Vault 자동 인증 (기본값):**
+```bash
+# AWS_VAULT_PASS가 설정되면 자동으로 비밀번호 입력
+# 빈 비밀번호인 경우 (기본값)
+AWS_VAULT_PASS="" ./run.sh
+
+# 비밀번호가 있는 경우
+AWS_VAULT_PASS="mypassword" ./run.sh
+```
 
 ### 포트 설정
 
