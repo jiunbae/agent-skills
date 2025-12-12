@@ -22,6 +22,7 @@ declare -A FILE_TYPES=(
     ["context"]="CONTEXT.md|컨텍스트|작업 맥락|현재 작업"
     ["config"]="CONFIG.md|설정|환경설정|구성"
     ["readme"]="README.md|리드미|설명서|가이드"
+    ["notion"]="NOTION.md|노션 설정|노션 페이지|업로드 설정|notion"
 )
 
 # 인덱스 생성
