@@ -420,13 +420,26 @@ gh auth login
 
 ### 리뷰 감지 안됨
 
-```bash
-# PR 코멘트 직접 확인
-gh pr view <PR_NUMBER> --comments
+**주의:** `gh pr view --comments`나 `gh pr reviews`는 모든 리뷰를 표시하지 않을 수 있습니다.
+Web UI에서 보이는데 CLI에서 안 보이면 `gh api`로 3종류를 각각 확인하세요:
 
-# 리뷰 목록 확인
-gh pr reviews <PR_NUMBER>
+```bash
+# 1. 제출된 review (approve/request-changes/commented)
+gh api repos/{owner}/{repo}/pulls/<PR_NUMBER>/reviews --paginate \
+  --jq '.[] | {author:.user.login, state, body}'
+
+# 2. Inline review comments (diff line comment) - 가장 흔한 유형
+gh api repos/{owner}/{repo}/pulls/<PR_NUMBER>/comments --paginate \
+  --jq '.[] | {author:.user.login, path, line, body}'
+
+# 3. Conversation comments (일반 코멘트)
+gh api repos/{owner}/{repo}/issues/<PR_NUMBER>/comments --paginate \
+  --jq '.[] | {author:.user.login, body}'
 ```
+
+**핵심 포인트:**
+- `--paginate` 없으면 30개 제한에 걸려 누락처럼 보일 수 있음
+- Web UI에서 "review가 있다"의 대부분이 #2 (inline comment)인 경우가 많음
 
 ### 푸시 실패
 
