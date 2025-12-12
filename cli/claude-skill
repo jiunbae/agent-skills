@@ -229,6 +229,7 @@ def run_streaming(cmd: list[str], args: argparse.Namespace) -> int:
 
     current_tool = None
     tool_count = 0
+    collected_text = []  # result_only 모드용 텍스트 수집
 
     try:
         for line in process.stdout:
@@ -251,8 +252,11 @@ def run_streaming(cmd: list[str], args: argparse.Namespace) -> int:
                 for block in content:
                     if block.get("type") == "text":
                         text = block.get("text", "")
-                        if text and not args.result_only:
-                            print(text, end="", flush=True)
+                        if text:
+                            if args.result_only:
+                                collected_text.append(text)
+                            else:
+                                print(text, end="", flush=True)
                     elif block.get("type") == "tool_use":
                         tool_name = block.get("name", "unknown")
                         tool_count += 1
@@ -279,10 +283,17 @@ def run_streaming(cmd: list[str], args: argparse.Namespace) -> int:
             elif msg_type == "result":
                 # 최종 결과
                 result = data.get("result", "")
-                if result:
-                    if not args.result_only:
+
+                if args.result_only:
+                    # result_only 모드: 수집된 텍스트 또는 result 출력
+                    if collected_text:
+                        print("".join(collected_text))
+                    elif result:
+                        print(result)
+                else:
+                    if result:
                         print(f"\n\n{Colors.GREEN}━━━ 결과 ━━━{Colors.RESET}")
-                    print(result)
+                        print(result)
 
                 # 통계
                 cost_usd = data.get("cost_usd", 0)
