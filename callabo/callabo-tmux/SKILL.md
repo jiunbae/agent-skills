@@ -104,7 +104,7 @@ ls callabo-server/ callabo-webapp/ magi/
 
 ```bash
 # 스킬 내장 스크립트 경로
-SKILL_SCRIPT="~/.claude/skills/callabo-tmux/scripts/run.sh"
+SKILL_SCRIPT="./scripts/run.sh"
 
 # 기본 실행 (AWS Vault 비밀번호 자동 입력)
 echo "" | $SKILL_SCRIPT <workspace>
@@ -158,7 +158,7 @@ Claude: Callabo 개발 서버를 시작하겠습니다.
 📍 현재 워크스페이스: ~/work/feature-login
 
 [명령 실행]
-echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh ~/work/feature-login
+echo "" | ./scripts/run.sh ~/work/feature-login
 
 ✅ tmux 세션 'runtime-feature-login' 이(가) 준비되었습니다.
 
@@ -180,7 +180,7 @@ tmux attach -t runtime-feature-login
 Claude: 커스텀 세션명으로 실행하겠습니다.
 
 [명령 실행]
-echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --name my-dev
+echo "" | ./scripts/run.sh . --name my-dev
 
 ✅ tmux 세션 'my-dev' 생성 완료
 
@@ -200,7 +200,7 @@ Pane 구성:
 Claude: 기존 세션을 종료하고 재시작하겠습니다.
 
 [명령 실행]
-echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --force
+echo "" | ./scripts/run.sh . --force
 
 기존 tmux 세션 'runtime-feature-login' 종료를 시도합니다...
 기존 tmux 세션 'runtime-feature-login' 이(가) 정상적으로 종료되었습니다.
@@ -215,7 +215,7 @@ echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --force
 Claude: 스케줄러 없이 실행하겠습니다.
 
 [명령 실행]
-echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --skip-scheduler
+echo "" | ./scripts/run.sh . --skip-scheduler
 
 ✅ 세션 준비 완료 (scheduler 제외)
 
@@ -235,7 +235,7 @@ Pane 구성:
 Claude: 의존성을 재설치 후 실행하겠습니다.
 
 [명령 실행]
-echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --force-sync
+echo "" | ./scripts/run.sh . --force-sync
 
 [callabo-server] CALLABO_FORCE_SYNC=1: uv sync를 강제로 실행합니다...
 [callabo-webapp] yarn install을 실행합니다...
@@ -253,7 +253,7 @@ echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --force-sync
 Claude: 지정된 워크스페이스를 실행하겠습니다.
 
 [명령 실행]
-echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh ~/work/other-feature
+echo "" | ./scripts/run.sh ~/work/other-feature
 
 ✅ tmux 세션 'runtime-other-feature' 준비 완료
 
@@ -486,7 +486,7 @@ tmux 세션 'runtime-other-feature'가 존재하지 않습니다.
 
 | 항목 | 경로 |
 |------|------|
-| 실행 스크립트 | `~/.claude/skills/callabo-tmux/scripts/run.sh` |
+| 실행 스크립트 | `./scripts/run.sh` |
 | 서버 코드 | `<workspace>/callabo-server/` |
 | 웹앱 코드 | `<workspace>/callabo-webapp/` |
 | Magi 코드 | `<workspace>/magi/` |
