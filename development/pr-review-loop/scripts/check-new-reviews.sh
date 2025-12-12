@@ -62,28 +62,34 @@ TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
 REVIEWS_FILE="$TEMP_DIR/reviews.json"
-COMMENTS_FILE="$TEMP_DIR/comments.json"
+REVIEW_COMMENTS_FILE="$TEMP_DIR/review_comments.json"
+ISSUE_COMMENTS_FILE="$TEMP_DIR/issue_comments.json"
 RESULT_FILE="$TEMP_DIR/result.json"
 
-# 1. PR Review (코드 리뷰) 가져오기
+# 1. PR Review (제출된 review: approve/request-changes/commented) 가져오기
+# --paginate: 30개 제한 방지 (Web UI에서 보이는데 CLI에서 안 보이는 문제 해결)
 echo -e "${YELLOW}PR #$PR_NUMBER 리뷰 확인 중...${NC}" >&2
 
 gh api \
     -H "Accept: application/vnd.github+json" \
     "/repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" \
+    --paginate \
     --jq '[.[] | select(.submitted_at > "'"$SINCE_TIME"'") | {
         type: "review",
         id: .id,
         user: .user.login,
         state: .state,
         body: .body,
-        submitted_at: .submitted_at
+        submitted_at: .submitted_at,
+        html_url: .html_url
     }]' > "$REVIEWS_FILE" 2>/dev/null || echo "[]" > "$REVIEWS_FILE"
 
-# 2. PR Review Comments (코드 라인 코멘트) 가져오기
+# 2. PR Review Comments (inline review comment / diff line comment) 가져오기
+# Web UI에서 "review가 있다"로 보이는 대부분이 이 유형
 gh api \
     -H "Accept: application/vnd.github+json" \
     "/repos/{owner}/{repo}/pulls/$PR_NUMBER/comments" \
+    --paginate \
     --jq '[.[] | select(.created_at > "'"$SINCE_TIME"'") | {
         type: "review_comment",
         id: .id,
@@ -91,32 +97,36 @@ gh api \
         body: .body,
         path: .path,
         line: .line,
-        created_at: .created_at
-    }]' > "$COMMENTS_FILE" 2>/dev/null || echo "[]" > "$COMMENTS_FILE"
+        created_at: .created_at,
+        html_url: .html_url
+    }]' > "$REVIEW_COMMENTS_FILE" 2>/dev/null || echo "[]" > "$REVIEW_COMMENTS_FILE"
 
-# 3. Issue Comments (일반 PR 코멘트) 가져오기
+# 3. Issue Comments (Conversation issue comment / 일반 PR 코멘트) 가져오기
 gh api \
     -H "Accept: application/vnd.github+json" \
     "/repos/{owner}/{repo}/issues/$PR_NUMBER/comments" \
+    --paginate \
     --jq '[.[] | select(.created_at > "'"$SINCE_TIME"'") | {
         type: "issue_comment",
         id: .id,
         user: .user.login,
         body: .body,
-        created_at: .created_at
-    }]' >> "$COMMENTS_FILE" 2>/dev/null || true
+        created_at: .created_at,
+        html_url: .html_url
+    }]' > "$ISSUE_COMMENTS_FILE" 2>/dev/null || echo "[]" > "$ISSUE_COMMENTS_FILE"
 
 # 4. 결과 병합 및 자기 코멘트 필터링
 # 현재 사용자 확인
 CURRENT_USER=$(gh api /user --jq '.login' 2>/dev/null || echo "")
 
-# jq로 병합 및 필터링
+# jq로 3개 파일 병합 및 필터링
+# --paginate 결과가 배열의 배열로 올 수 있으므로 flatten 처리
 jq -s '
-    add |
+    flatten |
     map(select(.user != "'"$CURRENT_USER"'")) |
     sort_by(.submitted_at // .created_at) |
     reverse
-' "$REVIEWS_FILE" "$COMMENTS_FILE" > "$RESULT_FILE"
+' "$REVIEWS_FILE" "$REVIEW_COMMENTS_FILE" "$ISSUE_COMMENTS_FILE" > "$RESULT_FILE"
 
 # 5. 결과 확인
 REVIEW_COUNT=$(jq 'length' "$RESULT_FILE")
