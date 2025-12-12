@@ -110,9 +110,20 @@ find /path/to/agent-skills -name "SKILL.md" -type f
 - 모호한 활성화 조건
 
 **경로 문제 (Critical):**
-- 절대 경로 포함 (예: `/home/username/...`)
-- 허용 경로: `~/.claude/`, `~/.agents/`, `~/` (상대 경로)
-- 스크립트 경로는 반드시 `~/.claude/skills/<skill-name>/scripts/` 형식
+- 외부 스크립트 참조 금지 (예: `~/scripts/`, `~/callabo-base/run.sh`)
+- 스킬 내장 스크립트는 반드시 상대 경로 사용: `./scripts/`
+- 절대 경로 금지 (예: `/home/username/...`, `~/.claude/skills/<skill-name>/scripts/`)
+- 허용 경로: `~/.claude/`, `~/.agents/`, `~/work/` (사용자 워크스페이스)
+
+**경로 검사 방법:**
+```bash
+# 외부 스크립트 참조 탐지
+grep -r "~/scripts/" */SKILL.md
+grep -r "~/callabo-base/" */SKILL.md
+
+# 절대 스킬 경로 탐지 (상대 경로로 변경 필요)
+grep -r "~/.claude/skills/.*/scripts/" */SKILL.md
+```
 
 **생태계 문제:**
 - 스킬 간 기능 중복
@@ -170,6 +181,17 @@ find /path/to/agent-skills -name "SKILL.md" -type f
 - YAML frontmatter 보완
 - 일관된 포맷으로 변환
 - 오타/형식 오류 수정
+- 경로 수정: `~/.claude/skills/*/scripts/` → `./scripts/`
+- 외부 스크립트 복사 및 경로 변경
+
+**경로 자동 수정 예시:**
+```bash
+# Before (절대 경로)
+~/.claude/skills/callabo-tmux/scripts/run.sh
+
+# After (상대 경로)
+./scripts/run.sh
+```
 
 **자동 수정 불가 항목:**
 - 실제 내용 작성 (사용자 입력 필요)
@@ -507,6 +529,8 @@ Claude: 전체 스킬의 토큰 효율성을 분석합니다...
 - 변경 시 관련 스킬 영향도 확인
 - 3회 이상 반복되는 도구 호출은 스크립트로 통합
 - 스크립트 출력은 마크다운 테이블/구조화된 형식 사용
+- 스킬 내장 스크립트는 `./scripts/` 상대 경로 사용
+- 외부 스크립트 의존 시 스킬 내부로 복사
 
 **DON'T:**
 - 표준 구조 무시하고 스킬 생성
@@ -516,6 +540,8 @@ Claude: 전체 스킬의 토큰 효율성을 분석합니다...
 - 테스트 없이 자동 수정 적용
 - 여러 git/시스템 명령을 개별 호출로 나열
 - 파싱이 어려운 자유 형식 출력 사용
+- 외부 경로 참조 (예: `~/scripts/`, `~/callabo-base/`)
+- 절대 스킬 경로 사용 (예: `~/.claude/skills/*/scripts/`)
 
 ---
 
