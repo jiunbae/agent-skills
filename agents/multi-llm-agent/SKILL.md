@@ -153,7 +153,7 @@ result = execute_parallel(
 }
 ```
 
-## Usage Examples
+## Examples
 
 ### 예시 1: 코드 리뷰 파이프라인
 

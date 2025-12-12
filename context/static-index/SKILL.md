@@ -134,7 +134,7 @@ ls ~/.agents/WHOAMI.md 2>/dev/null
 - 파일이 존재하면: 파일 경로와 간단한 설명 반환
 - 파일이 없으면: 해당 스킬을 통해 생성 안내
 
-## Usage Examples
+## Examples
 
 ### 예시 1: 다른 스킬에서 호출
 
