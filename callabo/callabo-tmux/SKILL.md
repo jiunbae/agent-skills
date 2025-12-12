@@ -103,17 +103,17 @@ ls callabo-server/ callabo-webapp/ magi/
 ### Step 2: 실행 스크립트 호출
 
 ```bash
+# 스킬 내장 스크립트 경로
+SKILL_SCRIPT="~/.claude/skills/callabo-tmux/scripts/run.sh"
+
 # 기본 실행 (AWS Vault 비밀번호 자동 입력)
-echo "" | <workspace>/run.sh
+echo "" | $SKILL_SCRIPT <workspace>
 
-# 경로 지정 실행
-echo "" | <workspace>/run.sh /path/to/workspace
-
-# 또는 callabo-base의 run.sh 사용
-echo "" | ~/callabo-base/run.sh <workspace>
+# 현재 디렉토리에서 실행
+echo "" | $SKILL_SCRIPT .
 
 # AWS Vault 건너뛰기 (로컬 전용)
-CALLABO_SKIP_AWS_VAULT=1 <workspace>/run.sh
+CALLABO_SKIP_AWS_VAULT=1 $SKILL_SCRIPT <workspace>
 ```
 
 > **Note**: `echo "" |`는 AWS Vault 비밀번호 프롬프트에 빈 문자열(엔터)을 자동 입력합니다.
@@ -158,7 +158,7 @@ Claude: Callabo 개발 서버를 시작하겠습니다.
 📍 현재 워크스페이스: ~/work/feature-login
 
 [명령 실행]
-echo "" | ./run.sh
+echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh ~/work/feature-login
 
 ✅ tmux 세션 'runtime-feature-login' 이(가) 준비되었습니다.
 
@@ -180,7 +180,7 @@ tmux attach -t runtime-feature-login
 Claude: 커스텀 세션명으로 실행하겠습니다.
 
 [명령 실행]
-echo "" | ./run.sh --name my-dev
+echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --name my-dev
 
 ✅ tmux 세션 'my-dev' 생성 완료
 
@@ -200,7 +200,7 @@ Pane 구성:
 Claude: 기존 세션을 종료하고 재시작하겠습니다.
 
 [명령 실행]
-echo "" | ./run.sh --force
+echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --force
 
 기존 tmux 세션 'runtime-feature-login' 종료를 시도합니다...
 기존 tmux 세션 'runtime-feature-login' 이(가) 정상적으로 종료되었습니다.
@@ -215,7 +215,7 @@ echo "" | ./run.sh --force
 Claude: 스케줄러 없이 실행하겠습니다.
 
 [명령 실행]
-echo "" | ./run.sh --skip-scheduler
+echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --skip-scheduler
 
 ✅ 세션 준비 완료 (scheduler 제외)
 
@@ -235,7 +235,7 @@ Pane 구성:
 Claude: 의존성을 재설치 후 실행하겠습니다.
 
 [명령 실행]
-echo "" | ./run.sh --force-sync
+echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh . --force-sync
 
 [callabo-server] CALLABO_FORCE_SYNC=1: uv sync를 강제로 실행합니다...
 [callabo-webapp] yarn install을 실행합니다...
@@ -253,7 +253,7 @@ echo "" | ./run.sh --force-sync
 Claude: 지정된 워크스페이스를 실행하겠습니다.
 
 [명령 실행]
-echo "" | ~/callabo-base/run.sh ~/work/other-feature
+echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh ~/work/other-feature
 
 ✅ tmux 세션 'runtime-other-feature' 준비 완료
 
@@ -486,7 +486,7 @@ tmux 세션 'runtime-other-feature'가 존재하지 않습니다.
 
 | 항목 | 경로 |
 |------|------|
-| 실행 스크립트 | `<workspace>/run.sh` 또는 `~/callabo-base/run.sh` |
+| 실행 스크립트 | `~/.claude/skills/callabo-tmux/scripts/run.sh` |
 | 서버 코드 | `<workspace>/callabo-server/` |
 | 웹앱 코드 | `<workspace>/callabo-webapp/` |
 | Magi 코드 | `<workspace>/magi/` |
