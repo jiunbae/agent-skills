@@ -91,7 +91,7 @@ tmux -V
 ### Step 2: 스크립트 실행
 
 ```bash
-~/scripts/init-callabo-workspace.sh <target_dir> <branch_name> [options]
+~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh <target_dir> <branch_name> [options]
 ```
 
 **옵션:**
@@ -182,7 +182,7 @@ Claude: 커스텀 포트 설정으로 워크스페이스를 초기화하겠습�
 Claude: 워크스페이스 초기화 중...
 
 [명령 실행]
-~/scripts/init-callabo-workspace.sh ~/work/test test-branch \
+~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh ~/work/test test-branch \
   server=localhost:8100 \
   webapp=localhost:3100 \
   magi=localhost:3300
@@ -208,7 +208,7 @@ Claude: 선택된 컴포넌트로 워크스페이스를 초기화하겠습니다
 
 Claude:
 [명령 실행]
-~/scripts/init-callabo-workspace.sh ~/work/api-test api-test \
+~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh ~/work/api-test api-test \
   --target callabo-server,callabo-webapp
 
 ✅ callabo-server 복제 완료
@@ -230,7 +230,7 @@ Claude: dev 환경 magi를 연동한 워크스페이스를 생성합니다.
 - magi: dev 환경 연동 (별칭 사용)
 
 [명령 실행]
-~/scripts/init-callabo-workspace.sh ~/work/local-dev local-dev \
+~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh ~/work/local-dev local-dev \
   --target callabo-server,callabo-webapp \
   magi=dev
 
@@ -246,7 +246,7 @@ Claude: dev 환경 magi를 연동한 워크스페이스를 생성합니다.
 | 경로 | 용도 |
 |------|------|
 | `~/callabo-base` | 원본 레포지토리 위치 |
-| `~/scripts/init-callabo-workspace.sh` | 초기화 스크립트 |
+| `~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh` | 초기화 스크립트 |
 
 ### 기본 포트
 
@@ -286,7 +286,7 @@ Claude: dev 환경 magi를 연동한 워크스페이스를 생성합니다.
 ### 스크립트 실행 권한 오류
 
 ```bash
-chmod +x ~/scripts/init-callabo-workspace.sh
+chmod +x ~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh
 ```
 
 ### Base 디렉토리 없음
@@ -359,10 +359,10 @@ pnpm install
 
 Claude:
 1. [callabo-init 활성화]
-   ~/scripts/init-callabo-workspace.sh ~/work/new-feature feature/new
+   ~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh ~/work/new-feature feature/new
 
 2. [callabo-tmux 활성화]
-   cd ~/work/new-feature && ./run.sh
+   echo "" | ~/.claude/skills/callabo-tmux/scripts/run.sh ~/work/new-feature
 ```
 
 ### context-worktree와의 연동
@@ -378,6 +378,6 @@ context-worktree가 활성화된 경우:
 
 | 항목 | 경로 |
 |------|------|
-| 초기화 스크립트 | `~/scripts/init-callabo-workspace.sh` |
-| 실행 스크립트 | `~/callabo-base/run.sh` |
+| 초기화 스크립트 | `~/.claude/skills/callabo-init/scripts/init-callabo-workspace.sh` |
+| 실행 스크립트 | `~/.claude/skills/callabo-tmux/scripts/run.sh` |
 | Base 디렉토리 | `~/callabo-base/` |
