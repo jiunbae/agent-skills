@@ -162,7 +162,7 @@ codex -m o4-mini -q "다음 주제에 대해 상세한 기획안을 작성해주
 ./planning_output/[주제]_[timestamp].md
 ```
 
-## Usage Examples
+## Examples
 
 ### 예시 1: 기본 사용
 
