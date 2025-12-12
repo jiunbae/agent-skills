@@ -282,7 +282,7 @@ echo "" | ./scripts/run.sh ~/work/other-feature
 AWS_VAULT_PASS="" ./run.sh
 
 # 비밀번호가 있는 경우
-AWS_VAULT_PASS="mypassword" ./run.sh
+AWS_VAULT_PASS="<your-password>" ./run.sh
 ```
 
 ### 포트 설정

@@ -327,7 +327,7 @@ fi
 
 TARGET_DIR="$1"
 BRANCH_NAME="$2"
-BASE_DIR="/home/june/callabo-base"
+BASE_DIR="${CALLABO_BASE_DIR:-$HOME/callabo-base}"
 ALL_REPOS=("callabo-server" "callabo-webapp" "magi")
 TARGET_REPOS=("${ALL_REPOS[@]}")
 
