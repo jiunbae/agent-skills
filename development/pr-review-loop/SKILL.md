@@ -64,18 +64,23 @@ gh pr view
 | `gemini` | `/gemini review` | Gemini Code Assist 리뷰 |
 | `copilot` | `@copilot /review` | GitHub Copilot 리뷰 |
 
-**리뷰어 선택:**
-- `gemini` - Gemini만 사용
-- `copilot` - Copilot만 사용
-- `gemini,copilot` - 둘 다 사용 (기본값)
+### 자연어로 리뷰어 선택
 
-### 환경 변수 (선택)
+사용자의 요청에서 리뷰어를 자동으로 파악합니다:
 
-```bash
-export PR_REVIEW_INTERVAL=60      # 확인 간격 (초)
-export PR_REVIEW_MAX_ATTEMPTS=10  # 최대 시도 횟수
-export PR_REVIEWERS="copilot"     # 사용할 리뷰어 (gemini, copilot, 또는 둘 다)
-```
+| 요청 예시 | 사용 리뷰어 |
+|-----------|-------------|
+| "리뷰 대기해줘" | Gemini + Copilot (기본) |
+| "copilot으로 리뷰 대기" | Copilot만 |
+| "copilot 리뷰만 받아줘" | Copilot만 |
+| "gemini 리뷰 대기해줘" | Gemini만 |
+| "둘 다 리뷰 받아줘" | Gemini + Copilot |
+
+**Claude의 판단 기준:**
+- `copilot`, `코파일럿` 언급 → Copilot 포함
+- `gemini`, `제미나이` 언급 → Gemini 포함
+- `만`, `only` 언급 → 해당 리뷰어만 사용
+- 특별한 언급 없음 → 기본값 (둘 다)
 
 ---
 
@@ -304,9 +309,9 @@ gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
 ```
 
 **리뷰어 선택:**
-- 환경 변수 `PR_REVIEWERS`로 설정 가능
-- 예: `export PR_REVIEWERS="copilot"` (Gemini quota 초과 시)
-- 예: `export PR_REVIEWERS="gemini,copilot"` (둘 다 사용)
+- 사용자의 자연어 요청에 따라 자동 선택
+- 예: "copilot 리뷰만" → Copilot만 사용
+- 예: "둘 다 리뷰" → Gemini + Copilot
 
 ---
 
@@ -459,14 +464,12 @@ Claude: ...
 
 ### Gemini quota 초과 시
 
-Gemini Code Assist quota가 초과된 경우 Copilot만 사용하도록 설정:
+Gemini Code Assist quota가 초과된 경우 자연어로 Copilot만 사용 요청:
 
-```bash
-# Copilot만 사용
-export PR_REVIEWERS="copilot"
-
-# 또는 스킬 실행 시 직접 지정
-# Claude에게: "리뷰 대기해줘, copilot만 사용해"
+```
+"copilot으로 리뷰 대기해줘"
+"copilot 리뷰만 받아줘"
+"gemini 빼고 리뷰 대기"
 ```
 
 ### gh 명령어 인증 실패
