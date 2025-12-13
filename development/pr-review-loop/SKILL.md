@@ -13,8 +13,12 @@ PR 생성 후 리뷰가 달릴 때까지 대기하고, 리뷰 내용을 분석�
 - **리뷰 대기**: 마지막 커밋 이후 새 리뷰 코멘트 감지
 - **리뷰 분석**: Claude가 리뷰 내용을 분석하여 수정 필요 여부 판단
 - **자동 수정**: 수정이 필요한 경우 코드 변경 및 커밋
-- **리뷰 재요청**: 수정 후 "/gemini review" 코멘트로 재리뷰 트리거
+- **리뷰 재요청**: 수정 후 Gemini/Copilot 리뷰 재요청 (둘 다 또는 선택)
 - **반복 실행**: 수정 사항이 없을 때까지 자동 반복
+
+**지원 리뷰어:**
+- Gemini Code Assist (`/gemini review`)
+- GitHub Copilot (`@copilot /review`)
 
 ## When to Use
 
@@ -28,7 +32,7 @@ PR 생성 후 리뷰가 달릴 때까지 대기하고, 리뷰 내용을 분석�
 
 **자동 활성화:**
 - PR 생성 직후 리뷰 대기 요청 시
-- 자동 리뷰어(Gemini 등) 리뷰 대기 시
+- 자동 리뷰어(Gemini, Copilot) 리뷰 대기 시
 
 ## Prerequisites
 
@@ -51,13 +55,26 @@ gh pr view
 |----------|------|--------|
 | `CHECK_INTERVAL` | 리뷰 확인 간격 (초) | 60 |
 | `MAX_ATTEMPTS` | 최대 대기 횟수 | 10 |
-| `REVIEW_TRIGGER` | 리뷰 재요청 명령어 | `/gemini review` |
+| `REVIEWERS` | 사용할 리뷰어 목록 | `gemini,copilot` |
+
+### 리뷰어 설정
+
+| 리뷰어 | 트리거 명령어 | 설명 |
+|--------|---------------|------|
+| `gemini` | `/gemini review` | Gemini Code Assist 리뷰 |
+| `copilot` | `@copilot /review` | GitHub Copilot 리뷰 |
+
+**리뷰어 선택:**
+- `gemini` - Gemini만 사용
+- `copilot` - Copilot만 사용
+- `gemini,copilot` - 둘 다 사용 (기본값)
 
 ### 환경 변수 (선택)
 
 ```bash
 export PR_REVIEW_INTERVAL=60      # 확인 간격 (초)
 export PR_REVIEW_MAX_ATTEMPTS=10  # 최대 시도 횟수
+export PR_REVIEWERS="copilot"     # 사용할 리뷰어 (gemini, copilot, 또는 둘 다)
 ```
 
 ---
@@ -111,8 +128,9 @@ export PR_REVIEW_MAX_ATTEMPTS=10  # 최대 시도 횟수
 │         ▼                                                   │
 │  ┌──────────────┐                                           │
 │  │ PR 코멘트   │                                           │
-│  │ /gemini     │──────────────▶ [처음으로]                 │
-│  │ review      │                                            │
+│  │ 리뷰 재요청 │──────────────▶ [처음으로]                 │
+│  │ (설정된     │                                            │
+│  │  리뷰어들)  │                                            │
 │  └──────────────┘                                           │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -246,8 +264,35 @@ git push
 
 ### Step 7: 리뷰 재요청
 
+설정된 리뷰어(들)에게 리뷰를 재요청합니다.
+
+**Gemini + Copilot 둘 다 사용 시 (기본):**
 ```bash
-# PR에 코멘트 작성
+gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
+
+**수정 내용:**
+- [변경 사항 1]
+- [변경 사항 2]
+
+
+/gemini review
+@copilot /review"
+```
+
+**Copilot만 사용 시:**
+```bash
+gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
+
+**수정 내용:**
+- [변경 사항 1]
+- [변경 사항 2]
+
+
+@copilot /review"
+```
+
+**Gemini만 사용 시:**
+```bash
 gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
 
 **수정 내용:**
@@ -258,7 +303,10 @@ gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
 /gemini review"
 ```
 
-**중요:** 코멘트 마지막에 빈 줄 2개 후 `/gemini review` 작성
+**리뷰어 선택:**
+- 환경 변수 `PR_REVIEWERS`로 설정 가능
+- 예: `export PR_REVIEWERS="copilot"` (Gemini quota 초과 시)
+- 예: `export PR_REVIEWERS="gemini,copilot"` (둘 다 사용)
 
 ---
 
@@ -306,7 +354,7 @@ Claude: PR #123의 리뷰를 대기합니다.
 commit: "fix: add error handling to validateToken"
 
 ## 리뷰 재요청
-"/gemini review" 코멘트 작성 완료
+리뷰 재요청 코멘트 작성 완료 (Gemini, Copilot)
 
 ---
 
@@ -354,7 +402,8 @@ Claude: PR #456의 리뷰를 대기합니다.
 
 **가능한 원인:**
 - 리뷰어가 아직 리뷰하지 않음
-- Gemini 봇이 비활성 상태
+- Gemini/Copilot 봇이 비활성 상태
+- Gemini quota 초과 (Copilot만 사용 권장)
 - 네트워크 이슈
 
 **다음 단계:**
@@ -407,6 +456,18 @@ Claude: ...
 ---
 
 ## Troubleshooting
+
+### Gemini quota 초과 시
+
+Gemini Code Assist quota가 초과된 경우 Copilot만 사용하도록 설정:
+
+```bash
+# Copilot만 사용
+export PR_REVIEWERS="copilot"
+
+# 또는 스킬 실행 시 직접 지정
+# Claude에게: "리뷰 대기해줘, copilot만 사용해"
+```
 
 ### gh 명령어 인증 실패
 
