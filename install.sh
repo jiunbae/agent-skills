@@ -226,43 +226,84 @@ PYEOF
 # 스킬 목록 출력
 list_skills() {
     local groups=($(get_skill_groups))
+    local total_skills=0
+    local installed_skills=0
 
     echo ""
-    echo -e "${CYAN}사용 가능한 스킬${NC}"
-    echo "================="
+    echo -e "${CYAN}사용 가능한 스킬${NC}  (${GREEN}✓${NC} 설치됨 / ${RED}○${NC} 미설치)"
+    echo "========================================"
     echo ""
 
     for group in "${groups[@]}"; do
         local group_dir="${SCRIPT_DIR}/${group}"
         if [[ -d "$group_dir" ]]; then
-            echo -e "${YELLOW}${group}/${NC}"
+            # 그룹 내 설치 현황 계산
+            local group_total=0
+            local group_installed=0
+            for skill_dir in "$group_dir"/*/; do
+                if [[ -f "${skill_dir}SKILL.md" ]]; then
+                    local skill_name=$(basename "$skill_dir")
+                    local target_name="${PREFIX}${skill_name}${POSTFIX}"
+                    group_total=$((group_total + 1))
+                    if [[ -e "${TARGET_DIR}/${target_name}" ]]; then
+                        group_installed=$((group_installed + 1))
+                    fi
+                fi
+            done
+
+            echo -e "${YELLOW}${group}/${NC} (${group_installed}/${group_total})"
 
             for skill_dir in "$group_dir"/*/; do
                 if [[ -f "${skill_dir}SKILL.md" ]]; then
                     local skill_name=$(basename "$skill_dir")
-                    local description=$(extract_description "${skill_dir}SKILL.md" 45)
+                    local target_name="${PREFIX}${skill_name}${POSTFIX}"
+                    local description=$(extract_description "${skill_dir}SKILL.md" 40)
 
                     if [[ -z "$description" ]]; then
                         description="(설명 없음)"
                     fi
 
-                    printf "  ├── ${GREEN}%-25s${NC} %s\n" "$skill_name" "$description"
+                    # 설치 여부 확인
+                    local status_icon
+                    local name_color
+                    if [[ -e "${TARGET_DIR}/${target_name}" ]]; then
+                        status_icon="${GREEN}✓${NC}"
+                        name_color="$GREEN"
+                        installed_skills=$((installed_skills + 1))
+                    else
+                        status_icon="${RED}○${NC}"
+                        name_color=""
+                    fi
+                    total_skills=$((total_skills + 1))
+
+                    # 스킬 이름 패딩 (24자)
+                    local padded_name
+                    padded_name=$(printf "%-24s" "$skill_name")
+                    echo -e "  ${status_icon} ${name_color}${padded_name}${NC} ${description}"
                 fi
             done
             echo ""
         fi
     done
 
+    # 요약
+    echo -e "${CYAN}요약${NC}"
+    echo "========================================"
+    echo -e "  전체: ${total_skills}개 스킬"
+    echo -e "  설치됨: ${GREEN}${installed_skills}개${NC}"
+    echo -e "  미설치: ${RED}$((total_skills - installed_skills))개${NC}"
+    echo ""
+
     # Static 상태 표시
     echo -e "${CYAN}Static 디렉토리${NC}"
-    echo "================="
+    echo "========================================"
     if [[ -L "$STATIC_TARGET" ]]; then
         local link_target=$(readlink "$STATIC_TARGET")
-        echo -e "  ${GREEN}심링크 활성${NC}: ~/.agents -> $link_target"
+        echo -e "  ${GREEN}✓${NC} 심링크 활성: ~/.agents -> $link_target"
     elif [[ -d "$STATIC_TARGET" ]]; then
-        echo -e "  ${YELLOW}일반 디렉토리${NC}: ~/.agents (심링크 아님)"
+        echo -e "  ${YELLOW}!${NC} 일반 디렉토리: ~/.agents (심링크 아님)"
     else
-        echo -e "  ${RED}없음${NC}: ~/.agents가 존재하지 않음"
+        echo -e "  ${RED}○${NC} 없음: ~/.agents가 존재하지 않음"
     fi
     echo ""
 
