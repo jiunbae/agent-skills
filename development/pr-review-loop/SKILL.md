@@ -17,8 +17,10 @@ PR 생성 후 리뷰가 달릴 때까지 대기하고, 리뷰 내용을 분석�
 - **반복 실행**: 수정 사항이 없을 때까지 자동 반복
 
 **지원 리뷰어:**
-- Gemini Code Assist (`/gemini review`)
-- GitHub Copilot (`@copilot /review`)
+- Gemini Code Assist - 코멘트로 재요청 가능 (`/gemini review`)
+- GitHub Copilot - 자동 리뷰 설정 필요 (코멘트 재요청 불가)
+
+> ⚠️ **주의**: `@copilot /review`는 리뷰가 아닌 **Coding Agent**를 호출하여 sub-PR을 생성합니다.
 
 ## When to Use
 
@@ -59,28 +61,43 @@ gh pr view
 
 ### 리뷰어 설정
 
-| 리뷰어 | 트리거 명령어 | 설명 |
-|--------|---------------|------|
-| `gemini` | `/gemini review` | Gemini Code Assist 리뷰 |
-| `copilot` | `@copilot /review` | GitHub Copilot 리뷰 |
+| 리뷰어 | 재요청 방식 | 설명 |
+|--------|-------------|------|
+| `gemini` | `/gemini review` 코멘트 | PR 코멘트로 리뷰 재요청 가능 |
+| `copilot` | 자동 리뷰 (push 시 자동) | 코멘트 재요청 불가, 자동 설정 필요 |
+
+### Copilot 자동 리뷰 설정 (필수)
+
+Copilot 리뷰를 사용하려면 **자동 리뷰 설정**이 필요합니다:
+
+1. GitHub → Profile → **Your Copilot** 이동
+2. **"Automatic code review by Copilot"** → Enabled
+3. 대상 저장소 선택 (All repositories 또는 특정 저장소)
+
+설정 후 PR을 열거나 push하면 Copilot이 자동으로 리뷰합니다.
+
+> ⚠️ `@copilot /review` 코멘트는 **Coding Agent**를 호출하여 sub-PR을 생성합니다. 리뷰 목적으로 사용하지 마세요.
 
 ### 자연어로 리뷰어 선택
 
 사용자의 요청에서 리뷰어를 자동으로 파악합니다:
 
-| 요청 예시 | 사용 리뷰어 |
-|-----------|-------------|
-| "리뷰 대기해줘" | Gemini + Copilot (기본) |
-| "copilot으로 리뷰 대기" | Copilot만 |
-| "copilot 리뷰만 받아줘" | Copilot만 |
-| "gemini 리뷰 대기해줘" | Gemini만 |
-| "둘 다 리뷰 받아줘" | Gemini + Copilot |
+| 요청 예시 | 사용 리뷰어 | 재요청 방식 |
+|-----------|-------------|-------------|
+| "리뷰 대기해줘" | Gemini + Copilot | Gemini: 코멘트 / Copilot: 자동 |
+| "gemini 리뷰 대기해줘" | Gemini만 | 코멘트로 재요청 |
+| "copilot 리뷰만 받아줘" | Copilot만 | push 시 자동 (코멘트 불가) |
+| "둘 다 리뷰 받아줘" | Gemini + Copilot | Gemini: 코멘트 / Copilot: 자동 |
 
 **Claude의 판단 기준:**
-- `copilot`, `코파일럿` 언급 → Copilot 포함
-- `gemini`, `제미나이` 언급 → Gemini 포함
+- `copilot`, `코파일럿` 언급 → Copilot 리뷰 대기 (자동 설정 필요)
+- `gemini`, `제미나이` 언급 → Gemini 리뷰 재요청
 - `만`, `only` 언급 → 해당 리뷰어만 사용
 - 특별한 언급 없음 → 기본값 (둘 다)
+
+**리뷰 재요청 동작:**
+- **Gemini**: `/gemini review` 코멘트 작성
+- **Copilot**: push만 하면 자동 리뷰 (코멘트 작성 안 함)
 
 ---
 
@@ -269,34 +286,14 @@ git push
 
 ### Step 7: 리뷰 재요청
 
-설정된 리뷰어(들)에게 리뷰를 재요청합니다.
+리뷰어별로 재요청 방식이 다릅니다:
 
-**Gemini + Copilot 둘 다 사용 시 (기본):**
-```bash
-gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
+| 리뷰어 | 재요청 방식 |
+|--------|-------------|
+| Gemini | `/gemini review` 코멘트 작성 |
+| Copilot | push만 하면 자동 리뷰 (코멘트 불필요) |
 
-**수정 내용:**
-- [변경 사항 1]
-- [변경 사항 2]
-
-
-/gemini review
-@copilot /review"
-```
-
-**Copilot만 사용 시:**
-```bash
-gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
-
-**수정 내용:**
-- [변경 사항 1]
-- [변경 사항 2]
-
-
-@copilot /review"
-```
-
-**Gemini만 사용 시:**
+**Gemini 리뷰 재요청:**
 ```bash
 gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
 
@@ -308,10 +305,12 @@ gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
 /gemini review"
 ```
 
-**리뷰어 선택:**
-- 사용자의 자연어 요청에 따라 자동 선택
-- 예: "copilot 리뷰만" → Copilot만 사용
-- 예: "둘 다 리뷰" → Gemini + Copilot
+**Copilot 리뷰:**
+- Step 6에서 `git push`만 하면 자동으로 리뷰됨
+- 별도 코멘트 불필요 (자동 리뷰 설정 필수)
+
+> ⚠️ **절대 사용 금지**: `@copilot /review`
+> 이 명령어는 Coding Agent를 호출하여 sub-PR을 생성합니다.
 
 ---
 
@@ -359,7 +358,8 @@ Claude: PR #123의 리뷰를 대기합니다.
 commit: "fix: add error handling to validateToken"
 
 ## 리뷰 재요청
-리뷰 재요청 코멘트 작성 완료 (Gemini, Copilot)
+- Gemini: `/gemini review` 코멘트 작성 완료
+- Copilot: push로 자동 리뷰 트리거됨
 
 ---
 
@@ -462,6 +462,22 @@ Claude: ...
 
 ## Troubleshooting
 
+### Copilot이 sub-PR을 생성함
+
+**원인**: `@copilot /review` 코멘트를 사용함
+
+`@copilot /review`는 리뷰가 아닌 **Coding Agent**를 호출하여 sub-PR을 생성합니다.
+
+**해결책**:
+1. `@copilot /review` 코멘트 사용 금지
+2. Copilot 자동 리뷰 설정 활성화
+3. push만 하면 자동으로 리뷰됨
+
+**자동 리뷰 설정 방법**:
+1. GitHub → Profile → Your Copilot
+2. "Automatic code review by Copilot" → Enabled
+3. 대상 저장소 선택
+
 ### Gemini quota 초과 시
 
 Gemini Code Assist quota가 초과된 경우 자연어로 Copilot만 사용 요청:
@@ -471,6 +487,8 @@ Gemini Code Assist quota가 초과된 경우 자연어로 Copilot만 사용 요�
 "copilot 리뷰만 받아줘"
 "gemini 빼고 리뷰 대기"
 ```
+
+> ⚠️ Copilot 사용 전 자동 리뷰 설정이 되어 있는지 확인하세요.
 
 ### gh 명령어 인증 실패
 
