@@ -544,3 +544,20 @@ git pull --rebase origin <branch>
 |------|------|
 | `scripts/check-new-reviews.sh` | 새 리뷰 확인 스크립트 |
 | `scripts/wait-for-review.sh` | 리뷰 대기 루프 (선택적) |
+| `scripts/request-review.sh` | Copilot/Gemini 리뷰 요청 스크립트 |
+
+### request-review.sh 사용법
+
+```bash
+# 기본: Copilot + Gemini 둘 다 요청
+./scripts/request-review.sh
+
+# Copilot만 요청
+./scripts/request-review.sh -r copilot
+
+# Gemini만 요청 (메시지 포함)
+./scripts/request-review.sh -r gemini -m "보안 검토 부탁드립니다"
+
+# 특정 PR에 요청
+./scripts/request-review.sh -p 123 -r both
+```
