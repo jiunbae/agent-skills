@@ -40,9 +40,12 @@ UNLINK_STATIC=false
 INSTALL_CLI=false
 UNINSTALL_CLI=false
 CLI_TARGET="${HOME}/.local/bin"
+INSTALL_CODEX=false
+CODEX_TARGET="${HOME}/.codex"
+CODEX_AGENTS_SOURCE="${SCRIPT_DIR}/codex-support/AGENTS.md"
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
-EXCLUDE_DIRS=("static" "cli" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" "codex-support" ".git" ".github" ".agents" "node_modules" "__pycache__")
 
 # 스킬 그룹 동적 탐색
 get_skill_groups() {
@@ -110,6 +113,11 @@ CLI 도구:
   --cli            claude-skill CLI 도구 설치 (~/.local/bin)
   --alias=NAME     CLI 도구 별칭 추가 (여러 번 사용 가능, 예: --alias=cs)
   --uninstall-cli  claude-skill CLI 도구 및 별칭 제거
+
+Codex 지원:
+  --codex          Codex CLI 지원 설정
+                   - ~/.codex/AGENTS.md에 스킬 가이드 추가
+                   - ~/.codex/skills -> ~/.claude/skills 심링크 생성
 
 예시:
   $(basename "$0")                          # 전체 설치
@@ -477,6 +485,97 @@ unlink_static() {
     fi
 }
 
+# Codex 지원 설치
+install_codex() {
+    local codex_agents_target="${CODEX_TARGET}/AGENTS.md"
+    local codex_skills_target="${CODEX_TARGET}/skills"
+    local claude_skills_source="${HOME}/.claude/skills"
+
+    # codex-support/AGENTS.md 확인
+    if [[ ! -f "$CODEX_AGENTS_SOURCE" ]]; then
+        log_error "Codex AGENTS.md를 찾을 수 없습니다: $CODEX_AGENTS_SOURCE"
+        exit 1
+    fi
+
+    # DRY RUN 모드
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry "디렉토리 생성: $CODEX_TARGET"
+        if [[ -f "$codex_agents_target" ]]; then
+            log_dry "AGENTS.md에 내용 추가: $codex_agents_target"
+        else
+            log_dry "AGENTS.md 생성: $codex_agents_target"
+        fi
+        log_dry "심링크 생성: $codex_skills_target -> $claude_skills_source"
+        return
+    fi
+
+    # ~/.codex 디렉토리 생성
+    mkdir -p "$CODEX_TARGET"
+
+    # AGENTS.md에 내용 추가 (기존 내용 유지, 스킬 가이드만 추가)
+    if [[ -f "$codex_agents_target" ]]; then
+        # 이미 스킬 가이드가 있는지 확인
+        if grep -q "## Claude Skills (SKILL.md) 활용" "$codex_agents_target" 2>/dev/null; then
+            log_warn "=========================================="
+            log_warn "AGENTS.md에 이미 스킬 가이드가 있습니다!"
+            log_warn "기존 스킬 설정을 덮어쓰지 않습니다."
+            log_warn ""
+            log_warn "덮어쓰려면 다음 단계를 수행하세요:"
+            log_warn "  1. 기존 스킬 섹션 수동 제거:"
+            log_warn "     vim ~/.codex/AGENTS.md"
+            log_warn "  2. 다시 설치:"
+            log_warn "     ./install.sh --codex"
+            log_warn "=========================================="
+        else
+            # 기존 내용 뒤에 스킬 가이드 추가
+            log_info "기존 AGENTS.md에 스킬 가이드를 추가합니다..."
+            echo "" >> "$codex_agents_target"
+            echo "" >> "$codex_agents_target"
+            echo "# ====================================================" >> "$codex_agents_target"
+            echo "# Agent Skills Integration (auto-generated)" >> "$codex_agents_target"
+            echo "# ====================================================" >> "$codex_agents_target"
+            echo "" >> "$codex_agents_target"
+            cat "$CODEX_AGENTS_SOURCE" >> "$codex_agents_target"
+            log_success "AGENTS.md에 스킬 가이드 추가됨 (기존 내용 유지)"
+        fi
+    else
+        # 새 파일 생성
+        cat "$CODEX_AGENTS_SOURCE" > "$codex_agents_target"
+        log_success "AGENTS.md 생성됨: $codex_agents_target"
+    fi
+
+    # skills 심링크 생성
+    if [[ ! -d "$claude_skills_source" ]]; then
+        log_warn "Claude skills 디렉토리가 없습니다: $claude_skills_source"
+        log_info "먼저 스킬을 설치하세요: ./install.sh"
+    fi
+
+    if [[ -L "$codex_skills_target" ]]; then
+        local current_target=$(readlink "$codex_skills_target")
+        if [[ "$current_target" == "$claude_skills_source" ]]; then
+            log_info "skills 심링크가 이미 올바르게 설정됨"
+        else
+            log_warn "기존 심링크 교체: $codex_skills_target"
+            rm "$codex_skills_target"
+            ln -s "$claude_skills_source" "$codex_skills_target"
+            log_success "심링크 생성됨: ~/.codex/skills -> ~/.claude/skills"
+        fi
+    elif [[ -d "$codex_skills_target" ]]; then
+        log_warn "기존 디렉토리를 백업합니다: ${codex_skills_target}.backup"
+        mv "$codex_skills_target" "${codex_skills_target}.backup"
+        ln -s "$claude_skills_source" "$codex_skills_target"
+        log_success "심링크 생성됨: ~/.codex/skills -> ~/.claude/skills"
+    else
+        ln -s "$claude_skills_source" "$codex_skills_target"
+        log_success "심링크 생성됨: ~/.codex/skills -> ~/.claude/skills"
+    fi
+
+    echo ""
+    log_info "Codex CLI에서 스킬을 사용할 수 있습니다"
+    log_info "AGENTS.md: $codex_agents_target"
+    log_info "Skills: $codex_skills_target -> $claude_skills_source"
+}
+
 # 스킬 설치
 install_skill() {
     local group="$1"
@@ -640,6 +739,10 @@ while [[ $# -gt 0 ]]; do
             UNINSTALL_CLI=true
             shift
             ;;
+        --codex)
+            INSTALL_CODEX=true
+            shift
+            ;;
         -*)
             log_error "알 수 없는 옵션: $1"
             echo "도움말: $(basename "$0") --help"
@@ -652,20 +755,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Static 링크 모드
-if [[ "$LINK_STATIC" == "true" ]]; then
-    link_static
-    exit 0
-fi
-
+# 단독 실행 모드 (다른 옵션과 조합 불가)
 if [[ "$UNLINK_STATIC" == "true" ]]; then
     unlink_static
-    exit 0
-fi
-
-# CLI 설치 모드
-if [[ "$INSTALL_CLI" == "true" ]]; then
-    install_cli
     exit 0
 fi
 
@@ -674,9 +766,30 @@ if [[ "$UNINSTALL_CLI" == "true" ]]; then
     exit 0
 fi
 
-# 목록 모드
 if [[ "$LIST_MODE" == "true" ]]; then
     list_skills
+    exit 0
+fi
+
+# 조합 가능한 설치 옵션들 (스킬 설치 전에 실행)
+if [[ "$LINK_STATIC" == "true" ]]; then
+    link_static
+    echo ""
+fi
+
+if [[ "$INSTALL_CLI" == "true" ]]; then
+    install_cli
+    echo ""
+fi
+
+if [[ "$INSTALL_CODEX" == "true" ]]; then
+    install_codex
+    echo ""
+fi
+
+# 스킬 설치 대상이 없고 다른 옵션만 있으면 종료
+if [[ ${#TARGETS[@]} -eq 0 && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true") ]]; then
+    # 다른 설치 옵션만 실행한 경우
     exit 0
 fi
 

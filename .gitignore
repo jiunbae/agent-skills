@@ -36,6 +36,17 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Secrets / env files
+.env
+.env.*
+!.env.example
+
+# Key/cert files
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Personal notes (if any)
 NOTES.md
 TODO.md

@@ -1,6 +1,6 @@
 # Agent Skills Repository
 
-Claude Code 기능을 확장하는 커스텀 스킬 모음입니다.
+Claude Code와 Codex CLI 기능을 확장하는 커스텀 스킬 모음입니다.
 
 ## Quick Start
 
@@ -9,225 +9,213 @@ Claude Code 기능을 확장하는 커스텀 스킬 모음입니다.
 git clone <repository-url> ~/workspace/agent-skills
 cd ~/workspace/agent-skills
 
-# 모든 스킬 설치
-./install.sh
+# 전체 설치 (스킬 + static + codex 지원)
+./install.sh all --link-static --codex --cli
+
+# 또는 개별 설치
+./install.sh                    # 스킬만 설치
+./install.sh --link-static      # static 디렉토리 심링크
+./install.sh --codex            # Codex CLI 지원
+./install.sh --cli              # claude-skill CLI 도구
 
 # 스킬 목록 확인
 ./install.sh --list
-
-# 특정 그룹만 설치
-./install.sh agents
 ```
 
-## Available Skills
+## Installation Options
 
-스킬은 주제별로 그룹화되어 있습니다:
-
-### 🤖 agents/ - AI 에이전트
-
-#### multi-llm-agent
-여러 LLM을 통합하여 멀티 에이전트 협업을 수행합니다.
-
-- **지원 LLM**: OpenAI, Gemini, Anthropic, Ollama
-- **협업 패턴**: 역할 분담, 토론/합의, 체인 파이프라인, 병렬 처리
-- 동적 시나리오 구성
-
-#### planning-agents
-여러 AI 에이전트(Claude, Codex)가 동일 주제를 병렬로 기획합니다.
-
-- 랜덤 에이전트 분배 (Claude/Codex)
-- 개별 기획안 출력 후 통합 머지
-- "3명이 기획해주세요" 형태로 에이전트 수 지정
-
-### 🛠️ development/ - 개발 도구
-
-#### context-manager
-프로젝트 컨텍스트 문서를 자동으로 탐색하고 로드합니다.
-
-- `context/` 디렉토리에서 관련 문서 자동 탐색
-- 키워드, 파일 경로, 작업 유형 기반 매칭
-- 작업 완료 후 문서 업데이트
-
-#### git-commit-pr
-Git 커밋 및 Pull Request 생성을 가이드합니다.
-
-- 커밋 메시지 작성 가이드
-- PR 생성 워크플로우
-- 컨벤션 준수 지원
-
-#### pr-review-loop
-PR 리뷰 대기 및 자동 수정 루프를 실행합니다.
-
-- 마지막 커밋 이후 새 리뷰 감지
-- 리뷰 내용 분석 및 자동 코드 수정
-- `/gemini review` 등 리뷰 재요청 트리거
-- 수정 사항 없을 때까지 자동 반복
-
-### 📊 business/ - 비즈니스
-
-#### proposal-analyzer
-사업 제안서/RFP 문서를 분석합니다.
-
-- 가격, 기한, 기술 스펙 적정성 평가
-- 사업 진행 여부 판단 보고서 생성
-
-## Installation
-
-### 설치 스크립트 사용 (권장)
+### 기본 설치
 
 ```bash
-# 모든 스킬 설치
+# 모든 스킬 설치 (심볼릭 링크)
 ./install.sh
 
 # 그룹별 설치
-./install.sh agents              # AI 에이전트 스킬만
-./install.sh development         # 개발 도구만
-./install.sh business            # 비즈니스 스킬만
+./install.sh agents             # AI 에이전트
+./install.sh development        # 개발 도구
+./install.sh business           # 비즈니스
+./install.sh integrations       # 외부 서비스 연동
+./install.sh ml                 # ML/AI 도구
 
 # 특정 스킬만 설치
-./install.sh agents/planning-agents development/git-commit-pr
-
-# 스킬 목록 확인
-./install.sh --list
+./install.sh agents/planning-agents
 ```
 
-### Prefix/Postfix로 스킬 구분
+### 추가 옵션
 
-여러 버전이나 환경을 구분할 때 사용합니다:
+| 옵션 | 설명 |
+|------|------|
+| `--link-static` | `~/.agents` → `static/` 심링크 (글로벌 컨텍스트) |
+| `--codex` | Codex CLI 지원 (AGENTS.md + skills 심링크) |
+| `--cli` | `claude-skill` CLI 도구 설치 |
+| `--copy` | 심링크 대신 복사 |
+| `--dry-run` | 미리보기만 |
+| `--prefix NAME` | 스킬 이름 접두사 |
+| `--postfix NAME` | 스킬 이름 접미사 |
+
+### 한 번에 전체 설치
 
 ```bash
-# prefix 추가 (예: my-planning-agents)
-./install.sh --prefix "my-" agents
-
-# postfix 추가 (예: planning-agents-dev)
-./install.sh --postfix "-dev" agents
-
-# 조합 (예: team-planning-agents-v2)
-./install.sh --prefix "team-" --postfix "-v2"
+./install.sh all --link-static --codex --cli
 ```
 
-### 설치 옵션
-
-```bash
-# 심볼릭 링크 (기본값) - 변경사항 자동 반영
-./install.sh
-
-# 복사 모드 - 독립적인 설치
-./install.sh --copy
-
-# 설치 미리보기
-./install.sh --dry-run
-
-# 다른 경로에 설치
-./install.sh --target ~/.claude/skills-dev
-```
+**실행 순서:**
+1. `--link-static` → `~/.agents` 심링크
+2. `--codex` → Codex CLI 지원 설정
+3. `--cli` → CLI 도구 설치
+4. `all` → 모든 스킬 설치
 
 ### 제거
 
 ```bash
-# 모든 스킬 제거
-./install.sh --uninstall
-
-# 특정 그룹 제거
-./install.sh --uninstall agents
-
-# 특정 스킬만 제거
-./install.sh --uninstall agents/planning-agents
-
-# prefix로 설치한 스킬 제거
-./install.sh --prefix "my-" --uninstall
+./install.sh --uninstall              # 모든 스킬 제거
+./install.sh --uninstall agents       # 특정 그룹 제거
+./install.sh --unlink-static          # static 심링크 제거
+./install.sh --uninstall-cli          # CLI 도구 제거
 ```
+
+---
+
+## Codex CLI 지원
+
+Codex CLI에서도 동일한 스킬을 사용할 수 있습니다.
+
+```bash
+./install.sh --codex
+```
+
+**동작:**
+1. `~/.codex/AGENTS.md`에 스킬 가이드 추가 (기존 내용 유지)
+2. `~/.codex/skills` → `~/.claude/skills` 심링크 생성
+
+**주의사항:**
+- 기존 AGENTS.md 내용은 유지됩니다
+- 이미 스킬 가이드가 있으면 덮어쓰지 않고 경고 출력
+- 덮어쓰려면 수동으로 기존 스킬 섹션 제거 후 재설치
+
+---
+
+## CLI 도구
+
+`claude-skill` CLI로 스킬을 관리할 수 있습니다.
+
+```bash
+# 설치
+./install.sh --cli
+
+# 별칭 추가 (선택)
+./install.sh --cli --alias=cs
+
+# 사용법
+claude-skill --list              # 스킬 목록
+claude-skill --skill planning    # 스킬 검색
+claude-skill --json              # JSON 출력
+```
+
+---
+
+## Available Skills
+
+### 🤖 agents/ - AI 에이전트
+
+| 스킬 | 설명 |
+|------|------|
+| `codex-implementer` | Codex CLI를 sub-agent로 활용한 구현 작업 |
+| `multi-llm-agent` | 여러 LLM 통합 협업 (OpenAI, Gemini, Ollama) |
+| `planning-agents` | 멀티 에이전트 병렬 기획 |
+| `plan-executor` | 자동 플래닝 워크플로우 실행 |
+
+### 🛠️ development/ - 개발 도구
+
+| 스킬 | 설명 |
+|------|------|
+| `context-worktree` | 작업별 git worktree 자동 생성 |
+| `git-commit-pr` | Git 커밋 및 PR 생성 가이드 |
+| `multi-ai-code-review` | 멀티 AI 코드 리뷰 오케스트레이터 |
+| `playwright` | Playwright 브라우저 자동화 |
+| `pr-review-loop` | PR 리뷰 대기 및 자동 수정 |
+| `task-master` | Task Master CLI 기반 작업 관리 |
+
+### 📊 business/ - 비즈니스
+
+| 스킬 | 설명 |
+|------|------|
+| `document-processor` | PDF, DOCX, XLSX, PPTX 문서 처리 |
+| `proposal-analyzer` | 사업 제안서/RFP 분석 |
+
+### 🔗 integrations/ - 외부 연동
+
+| 스킬 | 설명 |
+|------|------|
+| `appstore-connect` | App Store Connect 자동화 |
+| `discord-skill` | Discord REST API 관리 |
+| `google-search-console` | Google Search Console API |
+| `kubernetes-skill` | Kubernetes 클러스터 관리 |
+| `notion-summary` | Notion 페이지 업로드 |
+| `slack-skill` | Slack 앱 개발 및 API |
+
+### 🧠 ml/ - ML/AI
+
+| 스킬 | 설명 |
+|------|------|
+| `audio-processor` | ffmpeg 기반 오디오 처리 |
+| `ml-benchmark` | ML 모델 벤치마크 |
+| `model-sync` | 모델 파일 서버 동기화 |
+| `triton-deploy` | Triton Inference Server 배포 |
+
+### 🔐 security/
+
+| 스킬 | 설명 |
+|------|------|
+| `security-auditor` | 레포지토리 보안 감사 |
+
+### 📁 context/ - 컨텍스트 관리
+
+| 스킬 | 설명 |
+|------|------|
+| `context-manager` | 프로젝트 컨텍스트 자동 로드 |
+| `static-index` | 글로벌 정적 컨텍스트 인덱스 |
+| `whoami` | 사용자 프로필 관리 |
+
+### 🔧 meta/ - 메타 스킬
+
+| 스킬 | 설명 |
+|------|------|
+| `skill-manager` | 스킬 생태계 관리 |
+| `skill-recommender` | 스킬 자동 추천 |
+
+---
 
 ## Repository Structure
 
 ```
 agent-skills/
-├── install.sh                   # 설치 스크립트 (Bash)
-├── README.md                    # 이 문서
-├── INSTALL.md                   # 상세 설치 가이드
+├── install.sh              # 설치 스크립트
+├── README.md               # 이 문서
 │
-├── agents/                      # AI 에이전트 관련 스킬
-│   ├── multi-llm-agent/
-│   │   ├── SKILL.md
-│   │   ├── scripts/
-│   │   ├── config/
-│   │   └── references/
-│   └── planning-agents/
-│       ├── SKILL.md
-│       ├── scripts/
-│       └── templates/
+├── agents/                 # AI 에이전트 스킬
+├── development/            # 개발 도구 스킬
+├── business/               # 비즈니스 스킬
+├── integrations/           # 외부 서비스 연동
+├── ml/                     # ML/AI 도구
+├── security/               # 보안 스킬
+├── context/                # 컨텍스트 관리
+├── meta/                   # 메타 스킬
+├── callabo/                # Callabo 서비스 전용
 │
-├── development/                 # 개발 도구 스킬
-│   ├── context-manager/
-│   │   ├── SKILL.md
-│   │   ├── scripts/
-│   │   └── references/
-│   └── git-commit-pr/
-│       └── SKILL.md
+├── static/                 # 글로벌 정적 컨텍스트
+│   ├── WHOAMI.md          # 사용자 프로필
+│   ├── SECURITY.md        # 보안 규칙
+│   └── README.md          # 인덱스
 │
-└── business/                    # 비즈니스 스킬
-    └── proposal-analyzer/
-        └── SKILL.md
+├── codex-support/          # Codex CLI 지원 파일
+│   └── AGENTS.md          # Codex용 스킬 가이드
+│
+└── cli/                    # CLI 도구
+    └── claude-skill       # 스킬 관리 CLI
 ```
 
-## Usage Examples
-
-### 예시 1: 개발 환경 설정
-
-```bash
-# 개발용 스킬 (심볼릭 링크로 변경사항 즉시 반영)
-./install.sh --postfix "-dev"
-
-# 스킬 수정
-vim agents/planning-agents/SKILL.md
-
-# 변경사항이 Claude Code에 즉시 반영됨
-```
-
-### 예시 2: 그룹별 설치
-
-```bash
-# AI 에이전트 관련만 설치
-./install.sh agents
-
-# 개발 도구 추가 설치
-./install.sh development
-```
-
-### 예시 3: 개인/팀 스킬 분리
-
-```bash
-# 개인 스킬
-./install.sh --prefix "personal-"
-
-# 팀 공유 스킬
-./install.sh --prefix "team-" --copy
-```
-
-## Install Script Reference
-
-```
-사용법: install.sh [옵션] [그룹/스킬...]
-
-인자:
-  그룹/스킬         설치할 그룹 또는 스킬 (기본: all)
-
-옵션:
-  -h, --help        도움말 표시
-  -l, --list        스킬 목록 출력
-  -u, --uninstall   제거 모드
-  -c, --copy        복사 모드 (기본: 심볼릭 링크)
-  -n, --dry-run     미리보기만
-  -q, --quiet       최소 출력
-  --prefix PREFIX   스킬 이름 접두사
-  --postfix POSTFIX 스킬 이름 접미사
-  -t, --target DIR  설치 경로 (기본: ~/.claude/skills)
-
-그룹:
-  agents            AI 에이전트 스킬
-  development       개발 도구 스킬
-  business          비즈니스 스킬
-```
+---
 
 ## Creating New Skills
 
@@ -235,10 +223,10 @@ vim agents/planning-agents/SKILL.md
 
 ```
 group/my-skill/
-├── SKILL.md           # 필수: 스킬 설명 및 사용법
+├── SKILL.md           # 필수: 스킬 설명
 ├── scripts/           # 선택: 실행 스크립트
 ├── references/        # 선택: 참고 문서
-└── config/            # 선택: 설정 파일
+└── templates/         # 선택: 템플릿 파일
 ```
 
 ### SKILL.md 형식
@@ -246,7 +234,7 @@ group/my-skill/
 ```markdown
 ---
 name: my-skill
-description: 스킬에 대한 간단한 설명. 이 설명이 스킬 활성화 조건이 됩니다.
+description: 스킬 설명. 키워드로 활성화.
 ---
 
 # My Skill
@@ -259,56 +247,59 @@ description: 스킬에 대한 간단한 설명. 이 설명이 스킬 활성화 �
 
 ## Workflow
 사용 방법
+
+## Examples
+사용 예시
 ```
 
 ### 새 스킬 추가
 
-1. 적절한 그룹에 디렉토리 생성: `mkdir agents/my-skill`
-2. SKILL.md 작성
-3. 필요시 scripts/, references/ 추가
-4. 테스트: `./install.sh agents/my-skill`
-5. 커밋: `git add agents/my-skill && git commit -m "Add my-skill"`
-
-## Syncing Across Machines
-
 ```bash
-# Machine A
-cd ~/workspace/agent-skills
-git add . && git commit -m "Update skills" && git push
+# 1. 디렉토리 생성
+mkdir -p development/my-skill
 
-# Machine B
-cd ~/workspace/agent-skills
-git pull
-./install.sh
+# 2. SKILL.md 작성
+vim development/my-skill/SKILL.md
+
+# 3. 테스트 설치
+./install.sh development/my-skill
+
+# 4. 확인
+./install.sh --list | grep my-skill
 ```
+
+---
 
 ## Troubleshooting
 
 ### 스킬이 인식되지 않음
 
-1. SKILL.md frontmatter 확인:
-   ```bash
-   head -n 5 ~/.claude/skills/my-skill/SKILL.md
-   ```
+```bash
+# SKILL.md frontmatter 확인
+head -n 5 ~/.claude/skills/my-skill/SKILL.md
 
-2. 설치 상태 확인:
-   ```bash
-   ./install.sh --list
-   ```
+# 설치 상태 확인
+./install.sh --list
+```
 
 ### 심볼릭 링크 깨짐
 
 ```bash
-./install.sh --uninstall agents/my-skill
-./install.sh agents/my-skill
+./install.sh --uninstall my-skill
+./install.sh development/my-skill
 ```
 
-### 스크립트 권한 오류
+### Codex에서 스킬 인식 안됨
 
 ```bash
-chmod +x ~/.claude/skills/*/scripts/*.py
-chmod +x ~/.claude/skills/*/scripts/*.sh
+# 심링크 확인
+ls -la ~/.codex/skills
+
+# 재설치
+./install.sh --codex
 ```
+
+---
 
 ## License
 
@@ -316,5 +307,5 @@ Personal use. Individual skills may have their own licenses.
 
 ---
 
-**Last Updated**: 2025-12-09
-**Skills Count**: 6
+**Last Updated**: 2025-12-15
+**Skills Count**: 30+
