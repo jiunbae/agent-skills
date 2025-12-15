@@ -412,7 +412,7 @@ parallel:
 ## Codex CLI Quick Reference
 
 ```bash
-# 기본 실행
+# 기본 실행 (대화형)
 codex "프롬프트"
 
 # 승인 모드 지정
@@ -420,19 +420,14 @@ codex -a full-auto "프롬프트"
 codex -a auto-edit "프롬프트"
 codex -a suggest-edit "프롬프트"
 
-# 모델 지정
-codex -m o4-mini "프롬프트"
-codex -m gpt-4o "프롬프트"
-
 # 비대화형 실행 (exec 서브커맨드)
 codex exec "프롬프트"
-codex exec -m o4-mini "프롬프트"
 
 # 조합 예시 (대화형)
-codex -a full-auto -m o4-mini "구현 프롬프트"
+codex -a full-auto "구현 프롬프트"
 
 # 조합 예시 (비대화형 - 스크립트에서 사용)
-codex exec -a full-auto -m o4-mini "구현 프롬프트"
+codex exec -a full-auto "구현 프롬프트"
 ```
 
 ## Troubleshooting

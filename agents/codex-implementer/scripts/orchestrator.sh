@@ -13,7 +13,6 @@ NC='\033[0m' # No Color
 
 # Default settings
 APPROVAL_MODE="full-auto"
-MODEL="o4-mini"
 TIMEOUT=300
 OUTPUT_DIR="./codex_output"
 MAX_PARALLEL=3
@@ -25,7 +24,6 @@ usage() {
     echo "Options:"
     echo "  -t, --tasks FILE      Tasks file (JSON format, required)"
     echo "  -a, --approval MODE   Approval mode: full-auto|auto-edit|suggest-edit (default: full-auto)"
-    echo "  -m, --model MODEL     Model: o4-mini|gpt-4o (default: o4-mini)"
     echo "  -p, --parallel N      Max parallel agents (default: 3)"
     echo "  -o, --output DIR      Output directory (default: ./codex_output)"
     echo "  -T, --timeout SEC     Timeout per task in seconds (default: 300)"
@@ -49,10 +47,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         -a|--approval)
             APPROVAL_MODE="$2"
-            shift 2
-            ;;
-        -m|--model)
-            MODEL="$2"
             shift 2
             ;;
         -p|--parallel)
@@ -108,7 +102,6 @@ echo "========================================"
 echo -e "${BLUE}  Codex Parallel Orchestrator${NC}"
 echo "========================================"
 echo "  Tasks file: $TASKS_FILE"
-echo "  Model: $MODEL"
 echo "  Approval: $APPROVAL_MODE"
 echo "  Max parallel: $MAX_PARALLEL"
 echo "  Timeout: ${TIMEOUT}s"
@@ -136,7 +129,7 @@ run_task() {
     echo -e "${BLUE}[${task_id}]${NC} Starting..."
 
     # Run codex with timeout
-    timeout "$TIMEOUT" codex -a "$APPROVAL_MODE" -m "$MODEL" "$prompt" > "$output_file" 2>&1
+    timeout "$TIMEOUT" codex -a "$APPROVAL_MODE" "$prompt" > "$output_file" 2>&1
     local exit_code=$?
 
     if [ $exit_code -eq 0 ]; then

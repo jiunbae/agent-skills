@@ -62,9 +62,6 @@ The Codex Reviewer is invoked through the Codex CLI with high reasoning effort c
 
 ```bash
 codex exec \
-  -m gpt-5.1 \
-  -s read-only \
-  -c model_reasoning_effort=high \
   "Review the following files for code correctness and logic issues: {files}
 
 Analyze for:
@@ -115,9 +112,6 @@ Format your complete response as JSON matching the standard review schema.`;
   try {
     const result = await execCodexCommand([
       'exec',
-      '-m', 'gpt-5.1',
-      '-s', 'read-only',
-      '-c', 'model_reasoning_effort=high',
       prompt
     ]);
 
@@ -132,24 +126,14 @@ Format your complete response as JSON matching the standard review schema.`;
 ### Codex Command Structure
 
 ```bash
-codex exec \
-  -m gpt-5.1 \
-  -s read-only \
-  -c model_reasoning_effort=high \
-  -c extended_thinking_budget=10000 \
-  --timeout 120000 \
-  "Review files: {files}"
+codex exec "Review files: {files}"
 ```
 
 #### Command Flags Explained
 
 | Flag | Value | Meaning |
 |------|-------|---------|
-| `-m` | `gpt-5.1` | Use GPT-5.1 model for highest reasoning capability |
-| `-s` | `read-only` | Safe mode - no file modifications |
-| `-c` | `model_reasoning_effort=high` | Use extended reasoning for complex analysis |
-| `-c` | `extended_thinking_budget=10000` | Allocate tokens for deep reasoning |
-| `--timeout` | `120000` | 2-minute timeout for analysis |
+| `exec` | - | 비대화형 실행 모드 |
 
 ## Output Format
 
@@ -511,17 +495,15 @@ const prompt = `Review these files focusing on:
 
 ## Troubleshooting
 
-### Issue: High Reasoning Effort Takes Too Long
+### Issue: Codex Takes Too Long
 
-Reduce reasoning budget or timeout for faster results:
+타임아웃 설정 조정:
 
 ```typescript
 const result = await execCodexCommand([
   'exec',
-  '-m', 'gpt-4-turbo',  // Faster model
-  '-c', 'model_reasoning_effort=standard',  // Standard reasoning
   prompt
-]);
+], { timeout: 60000 });  // 타임아웃 조정
 ```
 
 ### Issue: Too Many False Positives

@@ -53,11 +53,6 @@ def parse_args():
         help="각 에이전트 타임아웃 (초, 기본값: 120)"
     )
     parser.add_argument(
-        "--codex-model",
-        default="o4-mini",
-        help="Codex CLI에서 사용할 모델 (기본값: o4-mini)"
-    )
-    parser.add_argument(
         "--claude-model",
         default="claude-sonnet-4-20250514",
         help="Claude API 모델 (기본값: claude-sonnet-4-20250514)"
@@ -223,7 +218,6 @@ async def run_planning(args):
         else:  # codex
             task = run_codex_agent(
                 prompt=prompt,
-                model=args.codex_model,
                 timeout=args.timeout
             )
         tasks.append((agent, task))
