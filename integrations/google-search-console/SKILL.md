@@ -1,17 +1,26 @@
 ---
 name: google-search-console
-description: >-
-  Google Search Console API integration for search analytics, URL inspection, sitemap management, and site verification.
-  Activated when users mention "Google Search Console", "GSC", "서치콘솔", "검색 성과", or need SEO data from Google.
+description: Google Search Console API 통합 스킬. 검색 성과 분석, URL 검사, 사이트맵 관리, 사이트 인증 지원. "GSC", "서치콘솔", "검색 성과", "SEO 분석" 키워드로 활성화.
 trigger-keywords: google search console, gsc, search console, 구글 서치콘솔, 서치콘솔, 검색 성과, 검색 분석, seo 분석, url 검사, 색인 상태, sitemap, 사이트맵
 allowed-tools: Read, Write, Edit, Bash
 ---
 
 # Google Search Console Skill
 
-Comprehensive Google Search Console API skill for Claude Code providing search analytics, URL inspection, sitemap management, and site verification capabilities.
+## Overview
 
-## When to Invoke
+Google Search Console API를 통합한 포괄적인 SEO 분석 스킬입니다.
+검색 성과 분석, URL 인덱싱 상태 확인, 사이트맵 관리, 사이트 인증 기능을 제공합니다.
+
+## When to Use
+
+**명시적 요청:**
+- "검색 성과 분석해줘"
+- "URL 인덱싱 상태 확인해줘"
+- "사이트맵 제출해줘"
+- "CTR과 노출수 보여줘"
+
+**자동 활성화 키워드:**
 
 - User mentions "Google Search Console", "GSC", "서치콘솔"
 - User asks about search performance, clicks, impressions, CTR
@@ -322,3 +331,117 @@ The skill will:
 - [URL Inspection API Reference](https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect)
 - [OAuth 2.0 Setup](https://developers.google.com/webmaster-tools/v1/how-tos/authorizing)
 - [API Quotas and Limits](https://developers.google.com/webmaster-tools/limits)
+
+---
+
+## Workflow
+
+### Step 1: 인증 확인
+
+```bash
+# 서비스 계정 키 파일 확인
+ls -la $GOOGLE_SERVICE_ACCOUNT_KEY_FILE
+
+# 또는 환경변수 확인
+echo $GOOGLE_CLIENT_ID
+```
+
+### Step 2: 작업 유형별 분기
+
+**검색 성과 분석:**
+1. 날짜 범위 결정 (기본: 최근 7일)
+2. Search Analytics API 호출
+3. 결과를 마크다운 테이블로 포맷
+
+**URL 검사:**
+1. 대상 URL 확인
+2. URL Inspection API 호출
+3. 인덱싱 상태 및 문제점 보고
+
+**사이트맵 관리:**
+1. 기존 사이트맵 목록 조회
+2. 새 사이트맵 제출 또는 삭제
+3. 상태 확인
+
+---
+
+## Examples
+
+### 예시 1: 검색 성과 조회
+
+```
+사용자: "지난 7일간 검색 성과 보여줘"
+
+Claude: Google Search Console에서 검색 성과를 조회합니다.
+
+→ 검색 성과 (Last 7 Days):
+| Metric | Value | Change |
+|--------|-------|--------|
+| Clicks | 1,234 | +12% |
+| Impressions | 45,678 | +8% |
+| CTR | 2.7% | +0.3% |
+| Avg Position | 15.2 | -2.1 |
+```
+
+### 예시 2: URL 인덱싱 상태 확인
+
+```
+사용자: "/blog/my-post URL 인덱싱 상태 확인해줘"
+
+Claude: URL Inspection API를 호출합니다.
+
+→ URL 검사 결과: https://example.com/blog/my-post
+| 항목 | 상태 |
+|------|------|
+| Index Status | Indexed |
+| Crawled | 2025-01-10 |
+| Mobile Usability | Mobile friendly |
+```
+
+### 예시 3: 상위 쿼리 분석
+
+```
+사용자: "어떤 검색어로 가장 많이 유입되고 있어?"
+
+Claude: 상위 검색어를 분석합니다.
+
+→ Top Queries:
+| Query | Clicks | Impressions | CTR | Position |
+|-------|--------|-------------|-----|----------|
+| react tutorial | 234 | 5,678 | 4.1% | 8.5 |
+| typescript guide | 189 | 4,321 | 4.4% | 12.3 |
+```
+
+---
+
+## Best Practices
+
+**DO:**
+- 서비스 계정 이메일을 Search Console에 추가
+- 날짜 범위는 최대 16개월까지만 조회 가능
+- 대량 쿼리 시 rowLimit 파라미터 활용
+- 정기적으로 사이트맵 상태 확인
+- API 응답을 캐싱하여 쿼터 절약
+
+**DON'T:**
+- API 키를 코드에 하드코딩하지 않기
+- 일일 쿼터(1,200) 초과하지 않기
+- 2-3일 이내 데이터 기대하지 않기 (지연 있음)
+- 쿼리당 3개 이상 dimension 사용하지 않기
+- 25,000행 이상 단일 쿼리로 요청하지 않기
+
+---
+
+## Troubleshooting
+
+### 403 Forbidden
+- 서비스 계정이 Search Console에 추가되었는지 확인
+- Search Console → Settings → Users and permissions
+
+### 404 Site Not Found
+- 사이트가 Search Console에 등록되었는지 확인
+- 사이트 URL 형식 확인 (https://, sc-domain:)
+
+### Invalid Date Range
+- 날짜 형식: YYYY-MM-DD
+- 최대 16개월 이전까지만 조회 가능

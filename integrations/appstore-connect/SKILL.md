@@ -1,9 +1,6 @@
 ---
 name: appstore-connect
-description: >-
-  App Store Connect 자동화 스킬. JWT API와 Playwright 브라우저 자동화를 결합한 하이브리드 방식.
-  앱 정보 조회, 빌드 관리, TestFlight 배포, 스크린샷 업로드, 앱 제출 워크플로우 지원.
-  jelly-ios-skill과 연동하여 iOS 빌드 후 자동 배포 가능.
+description: App Store Connect 자동화 스킬. JWT API/Playwright 하이브리드 방식으로 앱 정보, 빌드, TestFlight 배포, 스크린샷 업로드, 앱 제출 지원. "ASC", "TestFlight", "앱스토어" 키워드로 활성화.
 trigger-keywords: App Store Connect, ASC, TestFlight, 앱스토어, 앱 제출, 앱 배포, 스크린샷 업로드, 테스트플라이트, iOS 배포, Apple Developer
 allowed-tools: Bash, Read, Edit, Write, Skill
 tags: [ios, app-store, testflight, deployment, automation, apple]
@@ -24,9 +21,15 @@ API로 가능한 작업은 API를 사용하고, API 미지원 기능은 브라�
 - **스크린샷 업로드**: 앱 스크린샷 일괄 업로드
 - **앱 제출**: 전체 릴리스 워크플로우 자동화
 
-## 활성화 조건
+## When to Use
 
-다음 키워드 언급 시 자동 활성화:
+**명시적 요청:**
+- "App Store Connect에서 앱 정보 조회해줘"
+- "TestFlight에 빌드 배포해줘"
+- "앱 스크린샷 업로드해줘"
+- "앱스토어에 제출해줘"
+
+**자동 활성화 키워드:**
 - "App Store Connect", "ASC", "앱스토어 커넥트"
 - "TestFlight", "테스트플라이트"
 - "앱 제출", "앱 배포", "스토어 업로드"
@@ -374,6 +377,97 @@ skills/jelly-appstore-connect/
 - 일부 기능은 브라우저 자동화 필요 (macOS 권장)
 - 2FA는 최초 1회 수동 처리 필요
 - Rate limiting으로 대량 요청 시 지연 발생 가능
+
+---
+
+## Workflow
+
+### Step 1: 환경 설정 확인
+
+```bash
+# API 키 설정 확인
+npm run asc -- auth test-api
+```
+
+### Step 2: 작업 유형에 따른 분기
+
+**앱 정보 조회:**
+1. `apps list` → 앱 목록 확인
+2. `apps info <app-id>` → 상세 정보
+
+**빌드 관리:**
+1. `builds list <app-id>` → 빌드 목록
+2. `builds wait <build-id>` → 처리 완료 대기
+3. `testflight distribute <build-id>` → TestFlight 배포
+
+**앱 제출:**
+1. `metadata update` → 메타데이터 준비
+2. `screenshots upload-batch` → 스크린샷 업로드
+3. `submit full-release` → 전체 릴리스 실행
+
+---
+
+## Examples
+
+### 예시 1: 앱 목록 조회
+
+```
+사용자: "App Store Connect에서 내 앱 목록 보여줘"
+
+Claude:
+npm run asc -- apps list
+
+→ 앱 목록:
+| 앱 이름 | Bundle ID | 상태 |
+|---------|-----------|------|
+| MyApp | com.example.myapp | Ready for Sale |
+```
+
+### 예시 2: TestFlight 빌드 배포
+
+```
+사용자: "최신 빌드를 TestFlight에 배포해줘"
+
+Claude:
+1. npm run asc -- builds list <app-id>  # 최신 빌드 확인
+2. npm run asc -- testflight groups list <app-id>  # 그룹 확인
+3. npm run asc -- testflight distribute <build-id> --group <group-id>
+
+→ 빌드 1.2.3 (build 45)가 "Internal Testers" 그룹에 배포되었습니다.
+```
+
+### 예시 3: 앱 제출 워크플로우
+
+```
+사용자: "앱 1.3.0 버전을 앱스토어에 제출해줘"
+
+Claude:
+npm run asc -- submit full-release <app-id> \
+  --version 1.3.0 \
+  --build <build-id> \
+  --metadata ./metadata.json \
+  --screenshots ./screenshots/
+
+→ 앱 제출 완료. 현재 상태: Waiting for Review
+```
+
+---
+
+## Best Practices
+
+**DO:**
+- API 키 발급 후 .p8 파일 안전하게 보관 (재다운로드 불가)
+- `--dry-run` 옵션으로 먼저 시뮬레이션
+- 메타데이터 JSON 파일로 버전 관리
+- 빌드 처리 완료 후 TestFlight 배포
+- 스크린샷 규격 준수 (기기별 해상도)
+
+**DON'T:**
+- API 키를 코드에 하드코딩하지 않기
+- 2FA 세션 만료 후 자동화 시도하지 않기
+- 빌드 처리 중 다른 작업 요청하지 않기
+- Rate limit 초과하도록 연속 요청하지 않기
+- 동일 빌드를 여러 번 제출하지 않기
 
 ---
 

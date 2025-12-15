@@ -99,7 +99,8 @@ def assign_agents(count):
 
 **Codex CLI 호출:**
 ```bash
-codex -m o4-mini -q "다음 주제에 대해 상세한 기획안을 작성해주세요: [주제]
+# 비대화형 실행 (exec 서브커맨드 사용)
+codex exec -m o4-mini "다음 주제에 대해 상세한 기획안을 작성해주세요: [주제]
 
 기획안에는 다음을 포함해주세요:
 1. 핵심 아이디어 및 목표
@@ -345,8 +346,8 @@ codex --version
 # API 키 확인
 echo $OPENAI_API_KEY
 
-# 직접 테스트
-codex -m o4-mini -q "Hello"
+# 직접 테스트 (비대화형)
+codex exec -m o4-mini "Hello"
 ```
 
 ### 타임아웃 발생

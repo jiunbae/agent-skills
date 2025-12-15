@@ -1,16 +1,31 @@
 ---
 name: kubernetes-skill
-description: >-
-  Kubernetes cluster management and operations skill. Provides kubectl commands,
-  pod/deployment/service management, log inspection, port forwarding, and cluster diagnostics.
-  Activated when users mention "kubernetes", "k8s", "kubectl", "pod", "deployment", or need cluster operations.
+description: Kubernetes 클러스터 관리 스킬. kubectl로 파드/디플로이먼트/서비스 관리, 로그 조회, 포트포워딩, 디버깅 지원. "k8s", "kubectl", "파드" 키워드로 활성화.
 trigger-keywords: kubernetes, k8s, kubectl, pod, pods, deployment, deployments, service, services, namespace, configmap, secret, ingress, helm, 쿠버네티스, 파드, 디플로이먼트, 서비스, 네임스페이스
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 
 # Kubernetes Skill
 
-Comprehensive Kubernetes cluster management skill for Claude Code, providing cluster operations, resource management, log inspection, debugging, and deployment automation.
+## Overview
+
+Kubernetes 클러스터 관리를 위한 포괄적인 스킬입니다.
+kubectl CLI를 통해 클러스터 운영, 리소스 관리, 로그 검사, 디버깅, 배포 자동화를 지원합니다.
+
+## When to Use
+
+**명시적 요청:**
+- "파드 상태 확인해줘"
+- "디플로이먼트 스케일 조정해줘"
+- "로그 보여줘"
+- "포트포워딩 설정해줘"
+- "매니페스트 적용해줘"
+
+**자동 활성화 키워드:**
+- "kubernetes", "k8s", "kubectl"
+- "pod", "deployment", "service", "namespace"
+- "helm", "ingress", "configmap", "secret"
+- "쿠버네티스", "파드", "디플로이먼트"
 
 ## Features
 
@@ -52,6 +67,37 @@ kubectl version --client
 # Check cluster connection
 kubectl cluster-info
 ```
+
+## Workflow
+
+### Step 1: 클러스터 연결 확인
+
+```bash
+# 현재 컨텍스트 확인
+kubectl config current-context
+
+# 클러스터 연결 테스트
+kubectl cluster-info
+```
+
+### Step 2: 작업 유형별 분기
+
+**조회 작업 (Read):**
+1. `kubectl get` 으로 리소스 목록 조회
+2. `kubectl describe` 로 상세 정보 확인
+3. `kubectl logs` 로 로그 조회
+
+**변경 작업 (Write):**
+1. 현재 상태 확인 (`get`, `describe`)
+2. 변경 명령 실행 (`apply`, `scale`, `delete`)
+3. 결과 확인 및 롤백 준비
+
+**디버깅:**
+1. `kubectl get events` 로 이벤트 확인
+2. `kubectl describe` 로 상세 상태 확인
+3. `kubectl logs --previous` 로 이전 로그 확인
+
+---
 
 ## Usage Scenarios
 
