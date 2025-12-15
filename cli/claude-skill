@@ -6,11 +6,17 @@ Usage:
     claude-skill "자연어 명령"
     claude-skill --skill git-commit-pr "커밋해줘"
     claude-skill --list
+    claude-skill --list --verbose
+    claude-skill --list --all --json
 
 Examples:
     claude-skill "보안 검사해줘"
     claude-skill "콜라보 워크스페이스 만들어줘"
     claude-skill --skill security-auditor "현재 레포 검사"
+    claude-skill --list --verbose          # 상세 설명 포함
+    claude-skill --list --all              # 소스의 모든 스킬
+    claude-skill --list --json             # JSON 출력
+    claude-skill --list --plain            # 스킬 이름만 (파이프용)
 """
 
 import argparse
@@ -35,6 +41,16 @@ class Colors:
     CYAN = "\033[36m"
     WHITE = "\033[37m"
 
+    @classmethod
+    def disable(cls):
+        """색상 비활성화"""
+        for attr in ["RESET", "BOLD", "DIM", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "WHITE"]:
+            setattr(cls, attr, "")
+
+
+# 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
+EXCLUDE_DIRS = {"static", "cli", ".git", ".github", ".agents", "node_modules", "__pycache__"}
+
 
 def get_skills_dir() -> Path:
     """설치된 스킬 디렉토리 반환"""
@@ -47,7 +63,49 @@ def get_agent_skills_dir() -> Path:
     return script_dir
 
 
-def load_skill_metadata(skill_path: Path) -> dict:
+def extract_overview(content: str) -> Optional[str]:
+    """본문에서 Overview 섹션 추출"""
+    # YAML frontmatter 제거
+    content = re.sub(r'^---\s*\n.*?\n---\s*\n?', '', content, flags=re.DOTALL)
+
+    # ## Overview 섹션 찾기
+    overview_match = re.search(
+        r'##\s*Overview\s*\n+(.*?)(?=\n##|\Z)',
+        content,
+        re.IGNORECASE | re.DOTALL
+    )
+
+    if overview_match:
+        overview = overview_match.group(1).strip()
+        # 첫 2-3 문단만 추출
+        paragraphs = [p.strip() for p in overview.split('\n\n') if p.strip()]
+        if paragraphs:
+            result = '\n\n'.join(paragraphs[:2])
+            if len(result) > 500:
+                result = result[:500] + "..."
+            return result
+    return None
+
+
+def extract_when_to_use(content: str) -> Optional[str]:
+    """본문에서 When to Use 섹션 추출"""
+    content = re.sub(r'^---\s*\n.*?\n---\s*\n?', '', content, flags=re.DOTALL)
+
+    when_match = re.search(
+        r'##\s*When\s+to\s+Use\s*\n+(.*?)(?=\n##|\Z)',
+        content,
+        re.IGNORECASE | re.DOTALL
+    )
+
+    if when_match:
+        when_text = when_match.group(1).strip()
+        if len(when_text) > 300:
+            when_text = when_text[:300] + "..."
+        return when_text
+    return None
+
+
+def load_skill_metadata(skill_path: Path, verbose: bool = False) -> dict:
     """SKILL.md에서 메타데이터 추출"""
     skill_md = skill_path / "SKILL.md"
     if not skill_md.exists():
@@ -80,28 +138,71 @@ def load_skill_metadata(skill_path: Path) -> dict:
         keywords = re.findall(r'-\s*(.+)', keywords_text)
         metadata["keywords"] = [k.strip() for k in keywords]
 
+    # verbose 모드일 때 추가 정보 추출
+    if verbose:
+        overview = extract_overview(content)
+        if overview:
+            metadata["overview"] = overview
+        when_to_use = extract_when_to_use(content)
+        if when_to_use:
+            metadata["when_to_use"] = when_to_use
+
     return metadata
 
 
-def list_installed_skills() -> list[dict]:
+def list_installed_skills(verbose: bool = False) -> list[dict]:
     """설치된 스킬 목록 반환"""
     skills_dir = get_skills_dir()
     if not skills_dir.exists():
         return []
 
     skills = []
-    for skill_path in skills_dir.iterdir():
+    for skill_path in sorted(skills_dir.iterdir()):
         if skill_path.is_dir() or skill_path.is_symlink():
             actual_path = skill_path.resolve() if skill_path.is_symlink() else skill_path
             if (actual_path / "SKILL.md").exists():
-                metadata = load_skill_metadata(actual_path)
-                skills.append({
+                metadata = load_skill_metadata(actual_path, verbose=verbose)
+                info = {
                     "name": skill_path.name,
                     "path": str(actual_path),
-                    **metadata
-                })
+                    "is_symlink": skill_path.is_symlink(),
+                }
+                if skill_path.is_symlink():
+                    info["link_target"] = str(actual_path)
+                    # 그룹 추출
+                    parts = actual_path.parts
+                    if len(parts) >= 2:
+                        info["group"] = parts[-2]
+                info.update(metadata)
+                skills.append(info)
 
     return skills
+
+
+def get_source_skills(verbose: bool = False) -> dict:
+    """소스 디렉토리의 모든 스킬 (그룹별)"""
+    source_dir = get_agent_skills_dir()
+    groups = {}
+
+    for group_dir in sorted(source_dir.iterdir()):
+        if not group_dir.is_dir():
+            continue
+        if group_dir.name in EXCLUDE_DIRS or group_dir.name.startswith('.'):
+            continue
+
+        skills = []
+        for skill_dir in sorted(group_dir.iterdir()):
+            if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                info = load_skill_metadata(skill_dir, verbose=verbose)
+                if info:
+                    info["group"] = group_dir.name
+                    info["path"] = str(skill_dir)
+                    skills.append(info)
+
+        if skills:
+            groups[group_dir.name] = skills
+
+    return groups
 
 
 def build_skill_index(skills: list[dict]) -> str:
@@ -116,23 +217,147 @@ def build_skill_index(skills: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def print_skills_list(skills: list[dict]):
-    """스킬 목록 출력"""
-    print(f"\n{Colors.CYAN}설치된 스킬 목록{Colors.RESET}")
+def print_skills_list(args: argparse.Namespace):
+    """스킬 목록 출력 (옵션에 따라 다른 형식)"""
+    verbose = args.verbose
+    show_all = args.all
+    output_json = args.json
+    output_plain = args.plain
+
+    # 색상 비활성화 (파이프 또는 json/plain)
+    if output_json or output_plain or not sys.stdout.isatty():
+        Colors.disable()
+
+    # 데이터 수집
+    installed_skills = list_installed_skills(verbose=verbose)
+    installed_names = {s.get("name", "") for s in installed_skills}
+
+    if show_all:
+        source_groups = get_source_skills(verbose=verbose)
+    else:
+        source_groups = None
+
+    # JSON 출력
+    if output_json:
+        # content 필드 제거 (너무 큼)
+        def clean_skill(s):
+            return {k: v for k, v in s.items() if k != "content"}
+
+        if show_all:
+            cleaned_groups = {
+                group: [clean_skill(s) for s in skills]
+                for group, skills in source_groups.items()
+            }
+            output = {
+                "groups": cleaned_groups,
+                "installed": list(installed_names),
+                "total_skills": sum(len(skills) for skills in source_groups.values()),
+                "installed_count": len(installed_names)
+            }
+        else:
+            output = {
+                "skills": [clean_skill(s) for s in installed_skills],
+                "count": len(installed_skills)
+            }
+        print(json.dumps(output, ensure_ascii=False, indent=2))
+        return
+
+    # Plain 출력 (스킬 이름만)
+    if output_plain:
+        if show_all:
+            for group, skills in source_groups.items():
+                for skill in skills:
+                    print(skill.get("name", ""))
+        else:
+            for skill in installed_skills:
+                print(skill.get("name", ""))
+        return
+
+    # 포맷된 출력
+    if show_all:
+        _print_source_skills(source_groups, verbose, installed_names)
+    else:
+        _print_installed_skills(installed_skills, verbose)
+
+
+def _print_installed_skills(skills: list[dict], verbose: bool):
+    """설치된 스킬 목록 출력"""
+    print(f"\n{Colors.CYAN}설치된 스킬{Colors.RESET} ({len(skills)}개)")
     print("=" * 60)
 
-    for skill in sorted(skills, key=lambda x: x.get("name", "")):
+    for skill in skills:
         name = skill.get("name", "unknown")
-        desc = skill.get("description", "(설명 없음)")[:50]
-        keywords = skill.get("keywords", [])
+        desc = skill.get("description", "(설명 없음)")
+        group = skill.get("group", "")
 
         print(f"\n{Colors.GREEN}{name}{Colors.RESET}")
-        print(f"  {Colors.DIM}{desc}{Colors.RESET}")
-        if keywords:
-            kw_str = ", ".join(keywords[:5])
-            if len(keywords) > 5:
-                kw_str += f" (+{len(keywords)-5})"
-            print(f"  {Colors.YELLOW}키워드:{Colors.RESET} {kw_str}")
+        if group:
+            print(f"  {Colors.DIM}[{group}]{Colors.RESET}")
+
+        if not verbose:
+            desc = desc[:60] + "..." if len(desc) > 60 else desc
+        print(f"  {desc}")
+
+        if verbose:
+            if skill.get("overview"):
+                print(f"\n  {Colors.YELLOW}Overview:{Colors.RESET}")
+                for line in skill["overview"].split('\n'):
+                    print(f"    {line}")
+
+            if skill.get("when_to_use"):
+                print(f"\n  {Colors.YELLOW}When to Use:{Colors.RESET}")
+                for line in skill["when_to_use"].split('\n'):
+                    print(f"    {Colors.DIM}{line}{Colors.RESET}")
+
+            if skill.get("keywords"):
+                kw = ", ".join(skill["keywords"][:10])
+                print(f"\n  {Colors.BLUE}Keywords:{Colors.RESET} {kw}")
+
+    print()
+
+
+def _print_source_skills(groups: dict, verbose: bool, installed_names: set):
+    """소스의 모든 스킬 출력 (그룹별)"""
+    total = sum(len(skills) for skills in groups.values())
+    installed_count = len(installed_names)
+
+    print(f"\n{Colors.CYAN}사용 가능한 스킬{Colors.RESET}  ({Colors.GREEN}✓{Colors.RESET} 설치됨 / {Colors.RED}○{Colors.RESET} 미설치)")
+    print("=" * 60)
+    print(f"전체 {total}개 / 설치됨 {installed_count}개")
+
+    for group, skills in groups.items():
+        group_installed = sum(1 for s in skills if s.get("name") in installed_names)
+        print(f"\n{Colors.YELLOW}{group}/{Colors.RESET} ({group_installed}/{len(skills)})")
+
+        for skill in skills:
+            name = skill.get("name", "unknown")
+            desc = skill.get("description", "(설명 없음)")
+            is_installed = name in installed_names
+
+            if is_installed:
+                icon = f"{Colors.GREEN}✓{Colors.RESET}"
+                name_display = f"{Colors.GREEN}{name}{Colors.RESET}"
+            else:
+                icon = f"{Colors.RED}○{Colors.RESET}"
+                name_display = name
+
+            if not verbose:
+                desc = desc[:40] + "..." if len(desc) > 40 else desc
+                print(f"  {icon} {name:<24} {Colors.DIM}{desc}{Colors.RESET}")
+            else:
+                print(f"  {icon} {name_display}")
+                print(f"     {desc}")
+
+                if skill.get("overview"):
+                    print(f"\n     {Colors.YELLOW}Overview:{Colors.RESET}")
+                    for line in skill["overview"].split('\n')[:5]:
+                        print(f"       {Colors.DIM}{line}{Colors.RESET}")
+
+                if skill.get("keywords"):
+                    kw = ", ".join(skill["keywords"][:8])
+                    print(f"\n     {Colors.BLUE}Keywords:{Colors.RESET} {kw}")
+
+                print()
 
     print()
 
@@ -332,26 +557,34 @@ def main():
   claude-skill --skill git-commit-pr "커밋해줘"
   claude-skill -y "콜라보 서버 띄워줘"
   claude-skill --list
+  claude-skill --list --verbose          # 상세 설명 포함
+  claude-skill --list --all              # 소스의 모든 스킬 (설치 여부 표시)
+  claude-skill --list --json             # JSON 출력
+  claude-skill --list --plain            # 스킬 이름만 (파이프용)
         """
     )
 
     parser.add_argument("prompt", nargs="?", help="실행할 자연어 명령")
     parser.add_argument("-s", "--skill", help="사용할 스킬 이름 직접 지정")
-    parser.add_argument("-l", "--list", action="store_true", help="설치된 스킬 목록")
+    parser.add_argument("-l", "--list", action="store_true", help="스킬 목록 출력")
+    parser.add_argument("-a", "--all", action="store_true", help="소스의 모든 스킬 표시 (--list와 함께 사용)")
     parser.add_argument("-i", "--interactive", action="store_true", help="권한 요청 모드 (기본: 자동 승인)")
-    parser.add_argument("-v", "--verbose", action="store_true", help="상세 출력")
+    parser.add_argument("-v", "--verbose", action="store_true", help="상세 출력 (Overview, When to Use 포함)")
+    parser.add_argument("-j", "--json", action="store_true", help="JSON 출력 (--list와 함께 사용)")
+    parser.add_argument("-p", "--plain", action="store_true", help="스킬 이름만 출력 (--list와 함께 사용)")
     parser.add_argument("-r", "--result-only", action="store_true", help="최종 결과만 출력 (스트리밍 숨김)")
     parser.add_argument("--no-stream", action="store_true", help="스트리밍 비활성화")
     parser.add_argument("--no-skill", action="store_true", help="스킬 매칭 없이 실행")
 
     args = parser.parse_args()
 
+    # 스킬 목록 모드
+    if args.list:
+        print_skills_list(args)
+        return 0
+
     # 스킬 목록
     skills = list_installed_skills()
-
-    if args.list:
-        print_skills_list(skills)
-        return 0
 
     if not args.prompt:
         parser.print_help()

@@ -40,7 +40,6 @@ UNLINK_STATIC=false
 INSTALL_CLI=false
 UNINSTALL_CLI=false
 CLI_TARGET="${HOME}/.local/bin"
-CLI_ALIASES=()
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
 EXCLUDE_DIRS=("static" "cli" ".git" ".github" ".agents" "node_modules" "__pycache__")
