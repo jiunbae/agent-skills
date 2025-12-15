@@ -424,11 +424,15 @@ codex -a suggest-edit "프롬프트"
 codex -m o4-mini "프롬프트"
 codex -m gpt-4o "프롬프트"
 
-# quiet 모드 (간단한 출력)
-codex -q "프롬프트"
+# 비대화형 실행 (exec 서브커맨드)
+codex exec "프롬프트"
+codex exec -m o4-mini "프롬프트"
 
-# 조합 예시
+# 조합 예시 (대화형)
 codex -a full-auto -m o4-mini "구현 프롬프트"
+
+# 조합 예시 (비대화형 - 스크립트에서 사용)
+codex exec -a full-auto -m o4-mini "구현 프롬프트"
 ```
 
 ## Troubleshooting
@@ -442,8 +446,8 @@ codex --version
 # API 키 확인
 echo $OPENAI_API_KEY
 
-# 직접 테스트
-codex -q "Hello, world를 출력하는 Python 코드를 작성해"
+# 직접 테스트 (비대화형)
+codex exec "Hello, world를 출력하는 Python 코드를 작성해"
 ```
 
 ### 병렬 실행 시 파일 충돌

@@ -1,9 +1,6 @@
 ---
 name: discord-skill
-description: >-
-  Discord REST API를 통한 서버 및 채널 관리 스킬.
-  채널 생성/수정/삭제, 권한 관리, 메시지 전송, 웹훅 관리를 지원합니다.
-  "Discord", "디스코드", "채널 관리", "서버 관리", "discord bot" 키워드로 활성화.
+description: Discord REST API 서버/채널 관리 스킬. 채널 CRUD, 권한 관리, 메시지 전송, 웹훅 지원. "Discord", "디스코드", "채널 관리", "discord bot" 키워드로 활성화.
 trigger-keywords: discord, 디스코드, discord bot, 디스코드 봇, 채널 관리, channel management, discord api, 서버 관리, guild, 길드, webhook, 웹훅
 allowed-tools: Read, Write, Edit, Bash, WebFetch
 priority: medium
@@ -12,7 +9,10 @@ tags: [discord, api, bot, channel, guild, webhook, messaging]
 
 # Discord Channel Management Skill
 
+## Overview
+
 Discord REST API를 활용하여 서버(길드)와 채널을 관리하는 스킬입니다.
+Bot 토큰 기반 인증으로 채널 CRUD, 권한 관리, 메시지 전송, 웹훅 작업을 지원합니다.
 
 ## Purpose
 
@@ -22,14 +22,20 @@ Discord REST API를 활용하여 서버(길드)와 채널을 관리하는 스킬
 - **웹훅 관리**: 웹훅 생성 및 메시지 전송
 - **서버 정보**: 길드 정보 및 채널 목록 조회
 
-## When to Invoke
+## When to Use
 
+**명시적 요청:**
 - "Discord 채널 만들어줘"
 - "디스코드 서버에 메시지 보내줘"
 - "채널 권한 설정해줘"
 - "Discord 웹훅으로 알림 보내줘"
 - "디스코드 채널 목록 보여줘"
 - "채널 삭제해줘"
+
+**자동 활성화:**
+- "discord", "디스코드" 키워드 언급 시
+- 채널/서버/길드 관리 요청 시
+- 웹훅 설정 요청 시
 
 ## Prerequisites
 
@@ -368,6 +374,137 @@ fi
 - **Discord.js Guide**: https://discordjs.guide/
 - **Permission Calculator**: https://discordapi.com/permissions.html
 - **Discord API Types**: https://discord-api-types.dev/
+
+---
+
+## Workflow
+
+### Step 1: 환경 확인
+
+```bash
+# 환경 변수 로드
+source skills/jelly-dotenv/load-env.sh
+
+# 봇 연결 테스트
+curl -s -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  "https://discord.com/api/v10/users/@me" | jq .username
+```
+
+### Step 2: 작업 유형별 분기
+
+**채널 관리:**
+1. 길드 채널 목록 조회
+2. 채널 생성/수정/삭제 실행
+3. 결과 확인
+
+**메시지 전송:**
+1. 대상 채널 ID 확인
+2. 메시지 본문 구성 (텍스트/Embed)
+3. POST 요청 실행
+
+**웹훅 작업:**
+1. 채널에 웹훅 생성
+2. 웹훅 URL로 메시지 전송
+
+---
+
+## Examples
+
+### 예시 1: 채널 목록 조회
+
+```
+사용자: "디스코드 서버의 채널 목록 보여줘"
+
+Claude:
+curl -s -X GET \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  "https://discord.com/api/v10/guilds/$DISCORD_GUILD_ID/channels" | jq
+
+→ 채널 목록:
+| 이름 | 타입 | ID |
+|------|------|-----|
+| general | 텍스트 | 123456789 |
+| voice-chat | 음성 | 987654321 |
+```
+
+### 예시 2: 텍스트 채널 생성
+
+```
+사용자: "announcements라는 공지 채널 만들어줘"
+
+Claude:
+curl -s -X POST \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "announcements", "type": 0, "topic": "공지사항"}' \
+  "https://discord.com/api/v10/guilds/$DISCORD_GUILD_ID/channels"
+
+→ 채널 "announcements" 생성 완료 (ID: 111222333)
+```
+
+### 예시 3: Embed 메시지 전송
+
+```
+사용자: "알림 채널에 배포 완료 메시지 보내줘"
+
+Claude:
+curl -s -X POST \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "embeds": [{
+      "title": "배포 완료",
+      "description": "v1.2.3 배포가 완료되었습니다.",
+      "color": 5763719
+    }]
+  }' \
+  "https://discord.com/api/v10/channels/$CHANNEL_ID/messages"
+
+→ 메시지 전송 완료
+```
+
+---
+
+## Best Practices
+
+**DO:**
+- 봇 토큰은 환경 변수로 관리
+- Rate limit 준수 (429 응답 시 대기)
+- 필요한 최소 권한만 봇에 부여
+- 채널 작업 전 권한 확인
+- 대량 삭제 시 bulk-delete API 사용
+
+**DON'T:**
+- 토큰을 코드에 하드코딩하지 않기
+- Rate limit 무시하고 연속 요청하지 않기
+- 모든 권한을 가진 봇 사용하지 않기
+- 2주 이상 된 메시지에 bulk-delete 시도하지 않기
+- 사용자 DM에 무분별하게 메시지 보내지 않기
+
+---
+
+## Troubleshooting
+
+### 401 Unauthorized
+```bash
+# 토큰 확인
+echo $DISCORD_BOT_TOKEN | head -c 20
+# 토큰 형식: Bot xxxxxxxxxxx
+```
+
+### 403 Forbidden
+- 봇이 해당 채널/서버에 접근 권한이 있는지 확인
+- 필요한 권한(Manage Channels 등)이 부여되었는지 확인
+
+### 429 Rate Limited
+```bash
+# retry_after 값만큼 대기 후 재시도
+sleep $retry_after
+```
+
+### 50001 Missing Access
+- 봇이 서버에 초대되었는지 확인
+- `/invite @bot` 명령으로 채널에 봇 추가
 
 ---
 
