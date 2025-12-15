@@ -13,14 +13,8 @@ PR 생성 후 리뷰가 달릴 때까지 대기하고, 리뷰 내용을 분석�
 - **리뷰 대기**: 마지막 커밋 이후 새 리뷰 코멘트 감지
 - **리뷰 분석**: Claude가 리뷰 내용을 분석하여 수정 필요 여부 판단
 - **자동 수정**: 수정이 필요한 경우 코드 변경 및 커밋
-- **리뷰 재요청**: 수정 후 Gemini/Copilot 리뷰 재요청 (둘 다 또는 선택)
+- **리뷰 재요청**: 수정 후 `gh pr edit --add-reviewer`로 시스템적 리뷰 재요청
 - **반복 실행**: 수정 사항이 없을 때까지 자동 반복
-
-**지원 리뷰어:**
-- Gemini Code Assist - `/gemini review` 코멘트로 재요청
-- GitHub Copilot - Reviewer 추가 API로 재요청
-
-> ⚠️ **주의**: `@copilot /review` 코멘트는 **Coding Agent**를 호출하여 sub-PR을 생성합니다. 사용 금지!
 
 ## When to Use
 
@@ -34,7 +28,7 @@ PR 생성 후 리뷰가 달릴 때까지 대기하고, 리뷰 내용을 분석�
 
 **자동 활성화:**
 - PR 생성 직후 리뷰 대기 요청 시
-- 자동 리뷰어(Gemini, Copilot) 리뷰 대기 시
+- 자동 리뷰어(Copilot 등) 리뷰 대기 시
 
 ## Prerequisites
 
@@ -57,47 +51,14 @@ gh pr view
 |----------|------|--------|
 | `CHECK_INTERVAL` | 리뷰 확인 간격 (초) | 60 |
 | `MAX_ATTEMPTS` | 최대 대기 횟수 | 10 |
-| `REVIEWERS` | 사용할 리뷰어 목록 | `gemini,copilot` |
+| `REVIEWER` | 리뷰어 이름 | `copilot` |
 
-### 리뷰어 설정
-
-| 리뷰어 | 재요청 방식 | 명령어 |
-|--------|-------------|--------|
-| `gemini` | PR 코멘트 | `/gemini review` |
-| `copilot` | Reviewer API | `gh api` (아래 참조) |
-
-### Copilot 리뷰 요청/재요청
-
-Copilot은 **Reviewer로 추가**하면 리뷰를 생성하고, 다시 추가하면 재리뷰합니다:
+### 환경 변수 (선택)
 
 ```bash
-# Copilot을 Reviewer로 추가 (리뷰 요청 또는 재요청)
-gh api --method POST /repos/{owner}/{repo}/pulls/<PR_NUMBER>/requested_reviewers \
-  -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+export PR_REVIEW_INTERVAL=60      # 확인 간격 (초)
+export PR_REVIEW_MAX_ATTEMPTS=10  # 최대 시도 횟수
 ```
-
-> ⚠️ `@copilot /review` 코멘트는 **Coding Agent**를 호출하여 sub-PR을 생성합니다. 절대 사용 금지!
-
-### 자연어로 리뷰어 선택
-
-사용자의 요청에서 리뷰어를 자동으로 파악합니다:
-
-| 요청 예시 | 사용 리뷰어 |
-|-----------|-------------|
-| "리뷰 대기해줘" | Gemini + Copilot |
-| "gemini 리뷰 대기해줘" | Gemini만 |
-| "copilot 리뷰만 받아줘" | Copilot만 |
-| "둘 다 리뷰 받아줘" | Gemini + Copilot |
-
-**Claude의 판단 기준:**
-- `copilot`, `코파일럿` 언급 → Copilot 리뷰 요청 (Reviewer API)
-- `gemini`, `제미나이` 언급 → Gemini 리뷰 요청 (코멘트)
-- `만`, `only` 언급 → 해당 리뷰어만 사용
-- 특별한 언급 없음 → 기본값 (둘 다)
-
-**리뷰 재요청 동작:**
-- **Gemini**: `/gemini review` 코멘트 작성
-- **Copilot**: Reviewer API 호출 (refresh 효과)
 
 ---
 
@@ -149,10 +110,9 @@ gh api --method POST /repos/{owner}/{repo}/pulls/<PR_NUMBER>/requested_reviewers
 │         │                                                   │
 │         ▼                                                   │
 │  ┌──────────────┐                                           │
-│  │ PR 코멘트   │                                           │
-│  │ 리뷰 재요청 │──────────────▶ [처음으로]                 │
-│  │ (설정된     │                                            │
-│  │  리뷰어들)  │                                            │
+│  │ reviewer    │                                           │
+│  │ 재요청      │──────────────▶ [처음으로]                 │
+│  │ (gh pr)     │                                            │
 │  └──────────────┘                                           │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -286,31 +246,29 @@ git push
 
 ### Step 7: 리뷰 재요청
 
-| 리뷰어 | 재요청 방식 |
-|--------|-------------|
-| Gemini | `/gemini review` 코멘트 작성 |
-| Copilot | Reviewer API 호출 (refresh) |
+```bash
+# reviewer에게 리뷰 재요청 (시스템적 방식)
+gh pr edit <PR_NUMBER> --add-reviewer copilot
 
-**Gemini 리뷰 재요청:**
+# 또는 API로 직접 요청
+gh api repos/{owner}/{repo}/pulls/<PR_NUMBER>/requested_reviewers \
+  --method POST \
+  --field 'reviewers[]=copilot'
+```
+
+**참고:**
+- `--add-reviewer` 방식으로 reviewer를 등록하면 copilot이 자동으로 리뷰 생성
+- 수정 후 다시 `--add-reviewer`를 호출하면 리뷰 재요청됨
+- 코멘트 방식(`@copilot /review`) 대신 시스템적 reviewer 요청 사용
+
+**선택적: PR에 수정 내용 코멘트 작성**
 ```bash
 gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
 
 **수정 내용:**
 - [변경 사항 1]
-- [변경 사항 2]
-
-
-/gemini review"
+- [변경 사항 2]"
 ```
-
-**Copilot 리뷰 재요청:**
-```bash
-# Reviewer로 다시 추가하면 새 리뷰 생성 (refresh)
-gh api --method POST /repos/{owner}/{repo}/pulls/<PR_NUMBER>/requested_reviewers \
-  -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
-```
-
-> ⚠️ **절대 사용 금지**: `@copilot /review` - Coding Agent가 sub-PR을 생성합니다!
 
 ---
 
@@ -345,7 +303,7 @@ Claude: PR #123의 리뷰를 대기합니다.
 ✅ 새 리뷰가 감지되었습니다!
 
 ## 리뷰 분석
-리뷰어: gemini-code-assist
+리뷰어: copilot
 내용: "validateToken 함수에서 에러 핸들링이 누락되었습니다..."
 
 **판단**: 수정 필요
@@ -358,8 +316,7 @@ Claude: PR #123의 리뷰를 대기합니다.
 commit: "fix: add error handling to validateToken"
 
 ## 리뷰 재요청
-- Gemini: `/gemini review` 코멘트 작성 완료
-- Copilot: Reviewer API로 리뷰 재요청 완료
+`gh pr edit --add-reviewer copilot` 실행 완료
 
 ---
 
@@ -368,7 +325,7 @@ commit: "fix: add error handling to validateToken"
 ✅ 새 리뷰가 감지되었습니다!
 
 ## 리뷰 분석
-리뷰어: gemini-code-assist
+리뷰어: copilot
 내용: "LGTM! 에러 핸들링이 잘 추가되었습니다."
 
 **판단**: 수정 불필요
@@ -407,8 +364,7 @@ Claude: PR #456의 리뷰를 대기합니다.
 
 **가능한 원인:**
 - 리뷰어가 아직 리뷰하지 않음
-- Gemini/Copilot 봇이 비활성 상태
-- Gemini quota 초과 (Copilot만 사용 권장)
+- Copilot 봇이 비활성 상태
 - 네트워크 이슈
 
 **다음 단계:**
@@ -426,7 +382,7 @@ Claude: ...
 ✅ 새 리뷰가 감지되었습니다!
 
 ## 리뷰 분석
-리뷰어: gemini-code-assist
+리뷰어: copilot
 내용: "이 아키텍처에서는 Repository 패턴 대신
        Service Layer를 사용하는 것이 더 적합할 수 있습니다..."
 
@@ -461,36 +417,6 @@ Claude: ...
 ---
 
 ## Troubleshooting
-
-### Copilot이 sub-PR을 생성함
-
-**원인**: `@copilot /review` 코멘트를 사용함
-
-`@copilot /review`는 리뷰가 아닌 **Coding Agent**를 호출하여 sub-PR을 생성합니다.
-
-**해결책**: Reviewer API를 사용하세요:
-
-```bash
-# 올바른 방법: Reviewer로 추가
-gh api --method POST /repos/{owner}/{repo}/pulls/<PR_NUMBER>/requested_reviewers \
-  -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
-```
-
-**절대 사용 금지:**
-```bash
-# 잘못된 방법: Coding Agent 호출 → sub-PR 생성됨
-@copilot /review
-```
-
-### Gemini quota 초과 시
-
-Gemini Code Assist quota가 초과된 경우 자연어로 Copilot만 사용 요청:
-
-```
-"copilot으로 리뷰 대기해줘"
-"copilot 리뷰만 받아줘"
-"gemini 빼고 리뷰 대기"
-```
 
 ### gh 명령어 인증 실패
 
@@ -544,20 +470,3 @@ git pull --rebase origin <branch>
 |------|------|
 | `scripts/check-new-reviews.sh` | 새 리뷰 확인 스크립트 |
 | `scripts/wait-for-review.sh` | 리뷰 대기 루프 (선택적) |
-| `scripts/request-review.sh` | Copilot/Gemini 리뷰 요청 스크립트 |
-
-### request-review.sh 사용법
-
-```bash
-# 기본: Copilot + Gemini 둘 다 요청
-./scripts/request-review.sh
-
-# Copilot만 요청
-./scripts/request-review.sh -r copilot
-
-# Gemini만 요청 (메시지 포함)
-./scripts/request-review.sh -r gemini -m "보안 검토 부탁드립니다"
-
-# 특정 PR에 요청
-./scripts/request-review.sh -p 123 -r both
-```
