@@ -130,7 +130,6 @@ async def _run_claude_via_curl(
 
 async def run_codex_agent(
     prompt: str,
-    model: str = "o4-mini",
     timeout: int = 120
 ) -> str:
     """
@@ -138,7 +137,6 @@ async def run_codex_agent(
 
     Args:
         prompt: 기획 프롬프트
-        model: Codex 모델명 (o4-mini, gpt-4o 등)
         timeout: 타임아웃 (초)
 
     Returns:
@@ -161,14 +159,11 @@ async def run_codex_agent(
         return "[오류] OPENAI_API_KEY 환경 변수가 설정되지 않았습니다."
 
     # Codex CLI 호출
-    # -q: quiet mode (프롬프트만 전달)
-    # -m: 모델 지정
-    # --approval-mode full-auto: 자동 승인 모드
+    # exec: 비대화형 실행 모드
     cmd = [
         "codex",
-        "-m", model,
-        "-q", prompt,
-        "--approval-mode", "full-auto"
+        "exec",
+        prompt
     ]
 
     try:
@@ -232,7 +227,6 @@ async def run_agent(
         model = model or "claude-sonnet-4-20250514"
         return await run_claude_agent(prompt, model, timeout)
     elif agent_type == "codex":
-        model = model or "o4-mini"
-        return await run_codex_agent(prompt, model, timeout)
+        return await run_codex_agent(prompt, timeout)
     else:
         return f"[오류] 알 수 없는 에이전트 타입: {agent_type}"

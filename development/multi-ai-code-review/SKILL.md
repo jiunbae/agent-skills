@@ -97,9 +97,7 @@ Task({
 
 **Invocation**:
 ```bash
-codex exec -m gpt-5.1 \
-  -s read-only \
-  -c model_reasoning_effort=high \
+codex exec \
   "Review {files} for correctness and logic issues"
 ```
 

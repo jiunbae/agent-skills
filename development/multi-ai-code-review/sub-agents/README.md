@@ -34,7 +34,7 @@ This directory contains detailed specifications for the four sub-agent reviewers
 - Null/undefined safety analysis
 - Promise and async/await correctness
 
-**Invocation**: `codex exec -m gpt-5.1 -s read-only -c model_reasoning_effort=high`
+**Invocation**: `codex exec "프롬프트"`
 
 **Key Output**: JSON with logic errors, correctness issues, test case suggestions
 
