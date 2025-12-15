@@ -1,0 +1,42 @@
+{
+  "name": "jelly-appstore-connect",
+  "version": "1.0.0",
+  "description": "App Store Connect automation skill with hybrid API and browser support",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "asc": "dist/bin/asc.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "asc": "npx tsx bin/asc.ts",
+    "test": "echo \"No tests yet\"",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "app-store-connect",
+    "apple",
+    "ios",
+    "testflight",
+    "browser-automation",
+    "claude-code"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "jsonwebtoken": "^9.0.2",
+    "playwright": "^1.40.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
