@@ -247,18 +247,19 @@ git push
 ### Step 7: 리뷰 재요청
 
 ```bash
-# reviewer에게 리뷰 재요청 (시스템적 방식)
-gh pr edit <PR_NUMBER> --add-reviewer copilot
+# ⚠️ 주의: gh pr edit --add-reviewer copilot은 Bot에 작동하지 않음!
+# 반드시 API를 통해 요청해야 함
 
-# 또는 API로 직접 요청
+# API로 Copilot 리뷰 요청 (권장)
 gh api repos/{owner}/{repo}/pulls/<PR_NUMBER>/requested_reviewers \
   --method POST \
-  --field 'reviewers[]=copilot'
+  --field 'reviewers[]=Copilot'
 ```
 
-**참고:**
-- `--add-reviewer` 방식으로 reviewer를 등록하면 copilot이 자동으로 리뷰 생성
-- 수정 후 다시 `--add-reviewer`를 호출하면 리뷰 재요청됨
+**중요:**
+- `gh pr edit --add-reviewer copilot`은 일반 사용자에게만 작동하며, Bot(Copilot)에는 **작동하지 않음**
+- 반드시 `gh api`를 통해 직접 요청해야 함
+- 리뷰어 이름은 `Copilot` (대문자 C)으로 정확히 지정해야 함
 - 코멘트 방식(`@copilot /review`) 대신 시스템적 reviewer 요청 사용
 
 **선택적: PR에 수정 내용 코멘트 작성**
@@ -316,7 +317,7 @@ Claude: PR #123의 리뷰를 대기합니다.
 commit: "fix: add error handling to validateToken"
 
 ## 리뷰 재요청
-`gh pr edit --add-reviewer copilot` 실행 완료
+`gh api ... --field 'reviewers[]=Copilot'` 실행 완료
 
 ---
 
