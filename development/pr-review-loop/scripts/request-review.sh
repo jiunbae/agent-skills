@@ -134,10 +134,12 @@ request_copilot_review() {
 
     # Copilot을 Reviewer로 추가
     # 이미 추가되어 있어도 다시 추가하면 re-review 효과
+    # 주의: gh pr edit --add-reviewer copilot은 Bot에 작동하지 않음
+    #       반드시 API를 통해 'Copilot' (대문자 C)으로 요청해야 함
     RESULT=$(gh api \
         --method POST \
         "/repos/{owner}/{repo}/pulls/$PR_NUMBER/requested_reviewers" \
-        -f 'reviewers[]=copilot-pull-request-reviewer[bot]' 2>&1) || {
+        -f 'reviewers[]=Copilot' 2>&1) || {
         ERROR_CODE=$?
         echo -e "${RED}  ✗ Copilot 리뷰어 등록 실패${NC}"
         echo -e "${RED}    에러: $RESULT${NC}"
@@ -145,7 +147,7 @@ request_copilot_review() {
     }
 
     echo -e "${GREEN}  ✓ Copilot 리뷰어 등록 완료${NC}"
-    echo -e "    copilot-pull-request-reviewer[bot]이 reviewer로 추가됨"
+    echo -e "    Copilot이 reviewer로 추가됨"
     return 0
 }
 
