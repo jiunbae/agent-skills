@@ -45,7 +45,15 @@ CODEX_TARGET="${HOME}/.codex"
 CODEX_AGENTS_SOURCE="${SCRIPT_DIR}/codex-support/AGENTS.md"
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
-EXCLUDE_DIRS=("static" "cli" "codex-support" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" ".git" ".github" ".agents" "node_modules" "__pycache__")
+
+# Hooks 관련 변수
+HOOKS_SOURCE="${SCRIPT_DIR}/hooks"
+HOOKS_TARGET="${HOME}/.claude/hooks"
+SETTINGS_FILE="${HOME}/.claude/settings.json"
+INSTALL_HOOKS=false
+HOOKS_ONLY=false
+UNINSTALL_HOOKS=false
 
 # 스킬 그룹 동적 탐색
 get_skill_groups() {
@@ -118,6 +126,13 @@ Codex 지원:
   --codex          Codex CLI 지원 설정
                    - ~/.codex/AGENTS.md에 스킬 가이드 추가
                    - ~/.codex/skills -> ~/.claude/skills 심링크 생성
+
+Hooks 설정:
+  --hooks          Claude Code hooks 설치
+                   - ~/.claude/hooks -> agent-skills/hooks 심링크 생성
+                   - ~/.claude/settings.json에 hooks 설정 병합
+  --hooks-only     hooks만 설치 (스킬 제외)
+  --uninstall-hooks hooks 제거
 
 예시:
   $(basename "$0")                          # 전체 설치
@@ -576,6 +591,134 @@ install_codex() {
     log_info "Skills: $codex_skills_target -> $claude_skills_source"
 }
 
+# Hooks 설치
+install_hooks() {
+    # hooks 디렉토리 확인
+    if [[ ! -d "$HOOKS_SOURCE" ]]; then
+        log_error "hooks 디렉토리가 없습니다: $HOOKS_SOURCE"
+        exit 1
+    fi
+
+    # DRY RUN 모드
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry "심링크 생성: $HOOKS_TARGET -> $HOOKS_SOURCE"
+        log_dry "settings.json 병합: $SETTINGS_FILE"
+        return
+    fi
+
+    # ~/.claude 디렉토리 생성
+    mkdir -p "$(dirname "$HOOKS_TARGET")"
+
+    # hooks 심링크 생성
+    if [[ -L "$HOOKS_TARGET" ]]; then
+        local current_target=$(readlink "$HOOKS_TARGET")
+        if [[ "$current_target" == "$HOOKS_SOURCE" ]]; then
+            log_info "hooks 심링크가 이미 올바르게 설정됨"
+        else
+            log_warn "기존 심링크 교체: $HOOKS_TARGET"
+            rm "$HOOKS_TARGET"
+            ln -s "$HOOKS_SOURCE" "$HOOKS_TARGET"
+            log_success "심링크 생성됨: ~/.claude/hooks -> $HOOKS_SOURCE"
+        fi
+    elif [[ -d "$HOOKS_TARGET" ]]; then
+        log_warn "기존 디렉토리를 백업합니다: ${HOOKS_TARGET}.backup"
+        mv "$HOOKS_TARGET" "${HOOKS_TARGET}.backup"
+        ln -s "$HOOKS_SOURCE" "$HOOKS_TARGET"
+        log_success "심링크 생성됨: ~/.claude/hooks -> $HOOKS_SOURCE"
+    else
+        ln -s "$HOOKS_SOURCE" "$HOOKS_TARGET"
+        log_success "심링크 생성됨: ~/.claude/hooks -> $HOOKS_SOURCE"
+    fi
+
+    # settings.json 병합
+    merge_hooks_settings
+}
+
+# settings.json에 hooks 설정 병합
+merge_hooks_settings() {
+    local hooks_template="${HOOKS_SOURCE}/settings.json.template"
+
+    if [[ ! -f "$hooks_template" ]]; then
+        log_warn "hooks 템플릿이 없습니다: $hooks_template"
+        return
+    fi
+
+    # jq 확인
+    if ! command -v jq &> /dev/null; then
+        log_warn "jq가 설치되지 않았습니다. settings.json 자동 병합을 건너뜁니다."
+        log_info "수동으로 병합하세요:"
+        log_info "  cat $hooks_template"
+        return
+    fi
+
+    if [[ -f "$SETTINGS_FILE" ]]; then
+        # 이미 hooks 설정이 있는지 확인
+        if jq -e '.hooks' "$SETTINGS_FILE" > /dev/null 2>&1; then
+            log_warn "settings.json에 이미 hooks 설정이 있습니다"
+            log_info "덮어쓰려면 다음 명령을 실행하세요:"
+            log_info "  jq -s '.[0] * .[1]' $SETTINGS_FILE $hooks_template > /tmp/settings.json && mv /tmp/settings.json $SETTINGS_FILE"
+        else
+            # hooks 설정 병합
+            local temp_file=$(mktemp)
+            if jq -s '.[0] * .[1]' "$SETTINGS_FILE" "$hooks_template" > "$temp_file" 2>/dev/null; then
+                mv "$temp_file" "$SETTINGS_FILE"
+                log_success "settings.json에 hooks 설정 병합됨"
+            else
+                rm -f "$temp_file"
+                log_error "settings.json 병합 실패"
+            fi
+        fi
+    else
+        # settings.json이 없으면 템플릿으로 생성
+        cp "$hooks_template" "$SETTINGS_FILE"
+        log_success "settings.json 생성됨: $SETTINGS_FILE"
+    fi
+}
+
+# Hooks 제거
+uninstall_hooks() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ -L "$HOOKS_TARGET" ]]; then
+            log_dry "심링크 제거: $HOOKS_TARGET"
+        else
+            log_dry "hooks 디렉토리가 심링크가 아님: $HOOKS_TARGET"
+        fi
+        log_dry "settings.json에서 hooks 설정 제거"
+        return
+    fi
+
+    # hooks 심링크 제거
+    if [[ -L "$HOOKS_TARGET" ]]; then
+        rm "$HOOKS_TARGET"
+        log_success "심링크 제거됨: ~/.claude/hooks"
+
+        # 백업이 있으면 복원 제안
+        if [[ -d "${HOOKS_TARGET}.backup" ]]; then
+            log_info "백업 디렉토리 발견: ${HOOKS_TARGET}.backup"
+            log_info "복원하려면: mv ${HOOKS_TARGET}.backup $HOOKS_TARGET"
+        fi
+    elif [[ -d "$HOOKS_TARGET" ]]; then
+        log_warn "심링크가 아닌 일반 디렉토리입니다: $HOOKS_TARGET"
+        log_info "수동으로 제거하세요: rm -rf $HOOKS_TARGET"
+    else
+        log_warn "~/.claude/hooks가 존재하지 않습니다"
+    fi
+
+    # settings.json에서 hooks 설정 제거
+    if [[ -f "$SETTINGS_FILE" ]] && command -v jq &> /dev/null; then
+        if jq -e '.hooks' "$SETTINGS_FILE" > /dev/null 2>&1; then
+            local temp_file=$(mktemp)
+            if jq 'del(.hooks)' "$SETTINGS_FILE" > "$temp_file" 2>/dev/null; then
+                mv "$temp_file" "$SETTINGS_FILE"
+                log_success "settings.json에서 hooks 설정 제거됨"
+            else
+                rm -f "$temp_file"
+                log_warn "settings.json에서 hooks 설정 제거 실패"
+            fi
+        fi
+    fi
+}
+
 # 스킬 설치
 install_skill() {
     local group="$1"
@@ -743,6 +886,19 @@ while [[ $# -gt 0 ]]; do
             INSTALL_CODEX=true
             shift
             ;;
+        --hooks)
+            INSTALL_HOOKS=true
+            shift
+            ;;
+        --hooks-only)
+            INSTALL_HOOKS=true
+            HOOKS_ONLY=true
+            shift
+            ;;
+        --uninstall-hooks)
+            UNINSTALL_HOOKS=true
+            shift
+            ;;
         -*)
             log_error "알 수 없는 옵션: $1"
             echo "도움말: $(basename "$0") --help"
@@ -766,8 +922,19 @@ if [[ "$UNINSTALL_CLI" == "true" ]]; then
     exit 0
 fi
 
+if [[ "$UNINSTALL_HOOKS" == "true" ]]; then
+    uninstall_hooks
+    exit 0
+fi
+
 if [[ "$LIST_MODE" == "true" ]]; then
     list_skills
+    exit 0
+fi
+
+# hooks-only 모드
+if [[ "$HOOKS_ONLY" == "true" ]]; then
+    install_hooks
     exit 0
 fi
 
@@ -787,8 +954,13 @@ if [[ "$INSTALL_CODEX" == "true" ]]; then
     echo ""
 fi
 
+if [[ "$INSTALL_HOOKS" == "true" ]]; then
+    install_hooks
+    echo ""
+fi
+
 # 스킬 설치 대상이 없고 다른 옵션만 있으면 종료
-if [[ ${#TARGETS[@]} -eq 0 && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true") ]]; then
+if [[ ${#TARGETS[@]} -eq 0 && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true" || "$INSTALL_HOOKS" == "true") ]]; then
     # 다른 설치 옵션만 실행한 경우
     exit 0
 fi
