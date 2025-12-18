@@ -24,7 +24,7 @@ echo "|------|-------------|"
 find "$CONTEXT_DIR" -name "*.md" -type f 2>/dev/null | head -5 | while read -r file; do
     filename=$(basename "$file")
     # 첫 번째 # 헤더에서 설명 추출
-    desc=$(grep -m1 "^#" "$file" 2>/dev/null | sed 's/^#\+\s*//' | head -c 50)
+    desc=$(grep -m1 "^#" "$file" 2>/dev/null | sed 's/^#\+\s*//' | cut -c 1-50)
     [[ -z "$desc" ]] && desc="(no description)"
     echo "| \`$filename\` | $desc |"
 done

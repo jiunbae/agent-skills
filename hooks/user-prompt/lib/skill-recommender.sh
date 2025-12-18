@@ -37,8 +37,6 @@ KEYWORD_MAP=(
 )
 
 # 키워드 매칭
-PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
-
 for entry in "${KEYWORD_MAP[@]}"; do
     IFS='|' read -ra parts <<< "$entry"
     skill_name="${parts[-2]}"
@@ -48,8 +46,8 @@ for entry in "${KEYWORD_MAP[@]}"; do
     keyword_count=$((${#parts[@]} - 2))
 
     for ((i=0; i<keyword_count; i++)); do
-        keyword=$(echo "${parts[$i]}" | tr '[:upper:]' '[:lower:]')
-        if echo "$PROMPT_LOWER" | grep -qi "$keyword"; then
+        keyword="${parts[$i]}"
+        if echo "$PROMPT" | grep -qi "$keyword"; then
             echo "> **Skill 추천**: \`$skill_name\` - $skill_desc"
             echo "> 사용: \`skill: $skill_name\`"
             exit 0

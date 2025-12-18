@@ -19,8 +19,11 @@ PATTERNS=(
 
     # HIGH - 빠른 조치 필요
     "password\s*[:=]\s*[\"'][^\"']{8,}[\"']|Hardcoded Password|HIGH"
+    "password\s*[:=]\s*[^\s]{8,}|Unquoted Hardcoded Password|HIGH"
     "api_key\s*[:=]\s*[\"'][^\"']+[\"']|Hardcoded API Key|HIGH"
+    "api_key\s*[:=]\s*[^\s]+|Unquoted Hardcoded API Key|HIGH"
     "secret\s*[:=]\s*[\"'][^\"']+[\"']|Hardcoded Secret|HIGH"
+    "secret\s*[:=]\s*[^\s]+|Unquoted Hardcoded Secret|HIGH"
     "mongodb(\+srv)?://[^:]+:[^@]+@|MongoDB Connection String|HIGH"
     "postgres://[^:]+:[^@]+@|PostgreSQL Connection String|HIGH"
     "mysql://[^:]+:[^@]+@|MySQL Connection String|HIGH"

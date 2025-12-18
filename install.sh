@@ -660,12 +660,13 @@ merge_hooks_settings() {
         else
             # hooks 설정 병합
             local temp_file=$(mktemp)
-            if jq -s '.[0] * .[1]' "$SETTINGS_FILE" "$hooks_template" > "$temp_file" 2>/dev/null; then
+            local jq_error
+            if jq_error=$(jq -s '.[0] * .[1]' "$SETTINGS_FILE" "$hooks_template" 2>&1 > "$temp_file"); then
                 mv "$temp_file" "$SETTINGS_FILE"
                 log_success "settings.json에 hooks 설정 병합됨"
             else
                 rm -f "$temp_file"
-                log_error "settings.json 병합 실패"
+                log_error "settings.json 병합 실패: $jq_error"
             fi
         fi
     else
@@ -708,12 +709,13 @@ uninstall_hooks() {
     if [[ -f "$SETTINGS_FILE" ]] && command -v jq &> /dev/null; then
         if jq -e '.hooks' "$SETTINGS_FILE" > /dev/null 2>&1; then
             local temp_file=$(mktemp)
-            if jq 'del(.hooks)' "$SETTINGS_FILE" > "$temp_file" 2>/dev/null; then
+            local jq_error
+            if jq_error=$(jq 'del(.hooks)' "$SETTINGS_FILE" 2>&1 > "$temp_file"); then
                 mv "$temp_file" "$SETTINGS_FILE"
                 log_success "settings.json에서 hooks 설정 제거됨"
             else
                 rm -f "$temp_file"
-                log_warn "settings.json에서 hooks 설정 제거 실패"
+                log_warn "settings.json에서 hooks 설정 제거 실패: $jq_error"
             fi
         fi
     fi
