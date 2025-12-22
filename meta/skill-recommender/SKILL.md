@@ -7,12 +7,22 @@ description: 사용자 요청에 적합한 스킬을 자동으로 인식하고 �
 
 ## Overview
 
-사용자가 명시적으로 스킬 사용을 요청하지 않았더라도, 현재 요청에 도움이 될 수 있는 설치된 스킬을 자동으로 인식하고 추천하는 메타 스킬입니다.
+사용자가 명시적으로 스킬 사용을 요청하지 않았더라도, 현재 요청에 도움이 될 수 있는 스킬을 자동으로 인식하고 추천하는 메타 스킬입니다.
+
+**Lazy Loading 아키텍처:**
+- `~/.claude/skills/`에는 이 스킬(skill-recommender)만 자동 로드됨
+- 다른 모든 스킬은 `~/.claude/skills-library/`에 위치
+- 간략한 인덱스 파일(`.skill-index.json`)로 빠른 검색
+- 사용자가 스킬 선택 시 Read 도구로 해당 스킬만 동적 로드
+
+**토큰 효율성:**
+- 기존: 모든 스킬 로드 ~50,000 토큰
+- Lazy: skill-recommender + 인덱스 ~3,000 토큰 (94% 감소)
 
 **핵심 기능:**
 - **자동 감지**: 사용자 요청에서 스킬 관련 키워드/패턴 탐지
-- **매칭**: 설치된 스킬의 description과 사용자 요청 비교
-- **추천**: 관련 스킬 발견 시 간결하게 제안
+- **인덱스 기반 매칭**: 경량 인덱스로 빠른 스킬 검색
+- **동적 로딩**: 선택된 스킬만 Read 도구로 로드
 - **비침습적**: 추천만 제공, 자동 실행하지 않음
 
 ## When to Use
@@ -30,27 +40,29 @@ description: 사용자 요청에 적합한 스킬을 자동으로 인식하고 �
 
 ## Workflow
 
-### Step 1: 스킬 인벤토리 로드
+### Step 1: 스킬 인덱스 로드
 
-설치된 스킬 목록을 빠르게 파악합니다.
+**인덱스 파일**: `~/.claude/skills/skill-recommender/.skill-index.json`
 
-```bash
-# 스킬 인벤토리 스캔 스크립트 실행
-~/.claude/skills/skill-recommender/scripts/scan_skills.sh
+인덱스 파일을 Read 도구로 로드합니다. 이 파일은 설치 시 자동 생성됩니다.
+
+```json
+{
+  "version": "1.0",
+  "count": 29,
+  "skills": [
+    {
+      "name": "git-commit-pr",
+      "desc": "Git 커밋 및 PR 생성 가이드",
+      "keywords": ["커밋", "commit", "PR", "pull request", "푸시"],
+      "path": "~/.claude/skills-library/git-commit-pr",
+      "group": "development"
+    }
+  ]
+}
 ```
 
-**출력 형식:**
-```
-skill-name|description (활성화 키워드 포함)
-```
-
-**예시 출력:**
-```
-git-commit-pr|Git 커밋 및 PR 생성 가이드. 사용자가 커밋, commit, PR, pull request 생성을 요청할 때...
-audio-processor|ffmpeg 기반 오디오 변환 및 처리. "오디오 변환", "wav 변환"...
-```
-
-> **Note**: description에 활성화 키워드가 포함되어 있으므로, description 텍스트에서 키워드를 추출하여 매칭합니다.
+> **토큰 효율성**: 전체 SKILL.md (~50,000 토큰) 대신 인덱스만 로드 (~1,500 토큰)
 
 ### Step 2: 키워드 매칭
 
@@ -107,6 +119,37 @@ audio-processor|ffmpeg 기반 오디오 변환 및 처리. "오디오 변환", "
 > - `skill-2`: 설명
 > 사용하려면: `skill: <skill-name>`
 ```
+
+### Step 5: 동적 스킬 로딩
+
+사용자가 추천된 스킬을 선택하면 (`skill: skill-name`), 해당 스킬을 동적으로 로드합니다.
+
+**로드 절차:**
+1. **인덱스에서 경로 확인**: `.skill-index.json`에서 스킬의 `path` 필드 조회
+2. **SKILL.md 로드**: Read 도구로 해당 스킬의 전체 SKILL.md 로드
+   ```
+   Read: ~/.claude/skills-library/{skill-name}/SKILL.md
+   ```
+3. **워크플로우 실행**: 로드된 스킬의 Workflow 섹션에 따라 작업 수행
+4. **필요시 추가 리소스 로드**: references/, templates/, scripts/ 등
+
+**예시 플로우:**
+```
+사용자: "커밋해줘"
+    ↓
+skill-recommender: 인덱스에서 "커밋" 키워드 → git-commit-pr 매칭
+    ↓
+Claude: > **Skill 추천**: `git-commit-pr`
+        > 사용하려면: `skill: git-commit-pr`
+    ↓
+사용자: "skill: git-commit-pr"
+    ↓
+Claude: Read ~/.claude/skills-library/git-commit-pr/SKILL.md
+    ↓
+git-commit-pr 워크플로우 실행
+```
+
+> **Note**: 스킬이 `~/.claude/skills/`에 직접 설치된 경우 (기존 방식), 이미 로드되어 있으므로 동적 로딩 단계가 생략됩니다.
 
 ---
 

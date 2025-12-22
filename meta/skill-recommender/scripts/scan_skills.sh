@@ -6,14 +6,18 @@
 #   ./scan_skills.sh           # 기본 스캔
 #   ./scan_skills.sh --refresh # 캐시 갱신
 #   ./scan_skills.sh --json    # JSON 형식 출력
+#   ./scan_skills.sh --index   # 인덱스 파일 출력 (lazy mode)
 #
 
 SKILLS_DIR="${HOME}/.claude/skills"
+LIBRARY_DIR="${HOME}/.claude/skills-library"
 CACHE_FILE="${SKILLS_DIR}/skill-recommender/.inventory_cache"
+INDEX_FILE="${SKILLS_DIR}/skill-recommender/.skill-index.json"
 
 # 옵션 파싱
 REFRESH=false
 JSON_OUTPUT=false
+INDEX_MODE=false
 
 for arg in "$@"; do
     case $arg in
@@ -23,8 +27,23 @@ for arg in "$@"; do
         --json)
             JSON_OUTPUT=true
             ;;
+        --index)
+            INDEX_MODE=true
+            ;;
     esac
 done
+
+# 인덱스 모드: 기존 인덱스 파일 출력
+if [[ "$INDEX_MODE" == "true" ]]; then
+    if [[ -f "$INDEX_FILE" ]]; then
+        cat "$INDEX_FILE"
+    else
+        echo "ERROR: Index file not found: $INDEX_FILE" >&2
+        echo "Run './install.sh --lazy' to generate the index." >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 # 스킬 디렉토리 존재 확인
 if [[ ! -d "$SKILLS_DIR" ]]; then
@@ -77,7 +96,11 @@ scan_skills() {
                 echo "$name|$description"
             fi
         fi
-    done < <(find -L "$SKILLS_DIR" -name "SKILL.md" -type f 2>/dev/null | sort)
+    # skills/와 skills-library/ 둘 다 검색
+    done < <({
+        find -L "$SKILLS_DIR" -name "SKILL.md" -type f 2>/dev/null
+        [[ -d "$LIBRARY_DIR" ]] && find -L "$LIBRARY_DIR" -name "SKILL.md" -type f 2>/dev/null
+    } | sort -u)
 }
 
 # 캐시 체크 (1시간 유효, JSON이 아니고 refresh가 아닌 경우)

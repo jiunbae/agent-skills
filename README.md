@@ -22,6 +22,40 @@ cd ~/workspace/agent-skills
 ./install.sh --list
 ```
 
+## Lazy Loading Mode (권장)
+
+토큰 효율성을 극대화하려면 lazy loading 모드를 사용하세요:
+
+```bash
+./install.sh --lazy --link-static
+```
+
+**동작 방식:**
+1. `~/.claude/skills/`에는 `skill-recommender`만 설치
+2. 나머지 스킬은 `~/.claude/skills-library/`에 설치
+3. 스킬 인덱스 자동 생성 (`.skill-index.json`)
+4. 사용자가 스킬 선택 시 동적으로 로드
+
+**장점:**
+
+| 항목 | 기존 (all) | Lazy Mode |
+|------|-----------|-----------|
+| 초기 로드 스킬 | 30개 전부 | 1개 (recommender) |
+| 토큰 사용량 | ~50,000 | ~3,000 |
+| 스킬 접근 | 즉시 | 선택 후 로드 |
+| 추천 기능 | 없음 | 인덱스 기반 |
+
+**역호환성:**
+- `--lazy` 옵션 없이 실행하면 기존 방식으로 설치
+- 자주 쓰는 스킬만 직접 설치하여 혼용 가능:
+
+```bash
+./install.sh --lazy                        # Lazy 모드 기본 설치
+./install.sh development/git-commit-pr     # 자주 쓰는 스킬은 직접 설치
+```
+
+---
+
 ## Installation Options
 
 ### 기본 설치
@@ -45,6 +79,7 @@ cd ~/workspace/agent-skills
 
 | 옵션 | 설명 |
 |------|------|
+| `--lazy` | Lazy loading 모드 (토큰 94% 절약) |
 | `--link-static` | `~/.agents` → `static/` 심링크 (글로벌 컨텍스트) |
 | `--codex` | Codex CLI 지원 (AGENTS.md + skills 심링크) |
 | `--cli` | `claude-skill` CLI 도구 설치 |

@@ -26,6 +26,7 @@ NC='\033[0m' # No Color
 # 기본값
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_DIR="${HOME}/.claude/skills"
+LIBRARY_DIR="${HOME}/.claude/skills-library"
 STATIC_TARGET="${HOME}/.agents"
 STATIC_SOURCE="${SCRIPT_DIR}/static"
 PREFIX=""
@@ -43,6 +44,7 @@ CLI_TARGET="${HOME}/.local/bin"
 INSTALL_CODEX=false
 CODEX_TARGET="${HOME}/.codex"
 CODEX_AGENTS_SOURCE="${SCRIPT_DIR}/codex-support/AGENTS.md"
+LAZY_MODE=false
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
 EXCLUDE_DIRS=("static" "cli" "codex-support" ".git" ".github" ".agents" "node_modules" "__pycache__")
@@ -119,6 +121,12 @@ Codex 지원:
                    - ~/.codex/AGENTS.md에 스킬 가이드 추가
                    - ~/.codex/skills -> ~/.claude/skills 심링크 생성
 
+Lazy Loading:
+  --lazy           Lazy loading 모드 (토큰 효율성 극대화)
+                   - skill-recommender만 ~/.claude/skills/에 설치
+                   - 나머지 스킬은 ~/.claude/skills-library/에 설치
+                   - 스킬 인덱스 자동 생성 (.skill-index.json)
+
 예시:
   $(basename "$0")                          # 전체 설치
   $(basename "$0") agents                   # agents 그룹만 설치
@@ -128,6 +136,7 @@ Codex 지원:
   $(basename "$0") --uninstall agents       # agents 그룹 삭제
   $(basename "$0") --list                   # 스킬 목록 표시
   $(basename "$0") --link-static            # static 심링크 설정
+  $(basename "$0") --lazy --link-static     # Lazy loading 모드 (권장)
 
 그룹 (자동 탐색):
 EOF
@@ -576,6 +585,139 @@ install_codex() {
     log_info "Skills: $codex_skills_target -> $claude_skills_source"
 }
 
+# 스킬을 라이브러리에 설치 (lazy mode용)
+install_skill_to_library() {
+    local group="$1"
+    local skill="$2"
+    local source_path="${SCRIPT_DIR}/${group}/${skill}"
+    local target_name="${PREFIX}${skill}${POSTFIX}"
+    local target_path="${LIBRARY_DIR}/${target_name}"
+
+    # 소스 확인
+    if [[ ! -d "$source_path" ]]; then
+        log_error "스킬을 찾을 수 없습니다: ${group}/${skill}"
+        return 1
+    fi
+
+    if [[ ! -f "${source_path}/SKILL.md" ]]; then
+        log_error "SKILL.md가 없습니다: ${group}/${skill}"
+        return 1
+    fi
+
+    # 이미 존재하는 경우 (심볼릭 링크 안전 제거)
+    if [[ -e "$target_path" || -L "$target_path" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_dry "기존 스킬 덮어쓰기: $target_name (library)"
+        else
+            if [[ -L "$target_path" ]]; then
+                unlink "$target_path"
+            else
+                rm -rf "$target_path"
+            fi
+        fi
+    fi
+
+    # 설치
+    if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ "$COPY_MODE" == "true" ]]; then
+            log_dry "복사: ${group}/${skill} -> library/${target_name}"
+        else
+            log_dry "심볼릭 링크: ${group}/${skill} -> library/${target_name}"
+        fi
+    else
+        if [[ "$COPY_MODE" == "true" ]]; then
+            cp -r "$source_path" "$target_path"
+            log_success "복사됨: ${group}/${skill} -> library/${target_name}"
+        else
+            ln -s "$source_path" "$target_path"
+            log_success "링크됨: ${group}/${skill} -> library/${target_name}"
+        fi
+    fi
+}
+
+# 스킬 인덱스 생성
+generate_skill_index() {
+    local index_file="${TARGET_DIR}/skill-recommender/.skill-index.json"
+    local generate_script="${SCRIPT_DIR}/meta/skill-recommender/scripts/generate_index.sh"
+
+    log_info "스킬 인덱스 생성 중..."
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry "인덱스 생성: $index_file"
+        return
+    fi
+
+    # generate_index.sh 스크립트 실행
+    if [[ -f "$generate_script" ]]; then
+        bash "$generate_script" \
+            --source "${SCRIPT_DIR}" \
+            --library "${LIBRARY_DIR}" \
+            --output "${index_file}"
+        log_success "인덱스 생성됨: ${index_file}"
+    else
+        log_error "인덱스 생성 스크립트를 찾을 수 없습니다: $generate_script"
+        return 1
+    fi
+}
+
+# Lazy 모드 설치
+install_lazy_mode() {
+    local groups=($(get_skill_groups))
+
+    log_info "Lazy loading 모드로 설치 중..."
+    log_info "  - skill-recommender -> ~/.claude/skills/"
+    log_info "  - 나머지 스킬 -> ~/.claude/skills-library/"
+    echo ""
+
+    # skills-library 디렉토리 생성
+    if [[ "$DRY_RUN" == "false" ]]; then
+        mkdir -p "$LIBRARY_DIR"
+    else
+        log_dry "디렉토리 생성: $LIBRARY_DIR"
+    fi
+
+    # 기존 스킬 정리 (skill-recommender와 .system 제외)
+    # 심볼릭 링크만 제거하고 실제 파일/디렉토리는 건드리지 않음
+    if [[ -d "$TARGET_DIR" ]]; then
+        for existing in "$TARGET_DIR"/*; do
+            [[ ! -e "$existing" && ! -L "$existing" ]] && continue
+            local skill_name=$(basename "$existing")
+            # skill-recommender, .system 디렉토리는 유지, 숨김 파일 제외
+            if [[ "$skill_name" != "skill-recommender" && "$skill_name" != ".system" && ! "$skill_name" =~ ^\. ]]; then
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    log_dry "기존 스킬 제거: $skill_name (skills/ -> library/로 이동)"
+                else
+                    # 심볼릭 링크인 경우 안전하게 제거 (unlink 사용)
+                    if [[ -L "$existing" ]]; then
+                        unlink "$existing"
+                    else
+                        rm -rf "$existing"
+                    fi
+                    log_info "기존 스킬 제거됨: $skill_name"
+                fi
+            fi
+        done
+    fi
+
+    # 모든 스킬 처리
+    for group in "${groups[@]}"; do
+        for skill in $(get_skills_in_group "$group"); do
+            if [[ "$skill" == "skill-recommender" ]]; then
+                # skill-recommender는 skills/에 설치
+                install_skill "$group" "$skill"
+            else
+                # 나머지는 library에 설치
+                install_skill_to_library "$group" "$skill"
+            fi
+        done
+    done
+
+    echo ""
+
+    # 인덱스 생성
+    generate_skill_index
+}
+
 # 스킬 설치
 install_skill() {
     local group="$1"
@@ -743,6 +885,10 @@ while [[ $# -gt 0 ]]; do
             INSTALL_CODEX=true
             shift
             ;;
+        --lazy)
+            LAZY_MODE=true
+            shift
+            ;;
         -*)
             log_error "알 수 없는 옵션: $1"
             echo "도움말: $(basename "$0") --help"
@@ -829,6 +975,8 @@ if [[ ${#TARGETS[@]} -eq 0 ]] || [[ "${TARGETS[0]}" == "all" ]]; then
                 uninstall_skill "$group" "$skill"
             done
         done
+    elif [[ "$LAZY_MODE" == "true" ]]; then
+        install_lazy_mode
     else
         install_all
     fi
