@@ -71,6 +71,7 @@ description: 사용자 요청에 적합한 스킬을 자동으로 인식하고 �
 **직접 키워드 매칭:**
 | 사용자 요청 패턴 | 매칭 스킬 |
 |-----------------|----------|
+| "내가 누구", "whoami", "내 정보", "내 프로필" | whoami |
 | "커밋", "commit", "PR" | git-commit-pr |
 | "제안서", "RFP", "입찰" | proposal-analyzer |
 | "오디오", "wav", "ffmpeg" | audio-processor |
