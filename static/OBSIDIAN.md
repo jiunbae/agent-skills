@@ -1,7 +1,7 @@
 # Obsidian 설정
 
 ## Vault 경로
-- **경로**: ~/Documents/<VAULT_NAME>
+- **경로**: ~/Library/Mobile Documents/com~apple~CloudDocs/Documents/<VAULT_NAME>
 
 ## 문서 설정
 - **프론트매터 생성**: true
