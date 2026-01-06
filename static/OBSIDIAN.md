@@ -1,7 +1,7 @@
 # Obsidian 설정
 
 ## Vault 경로
-- **경로**: /Users/jiun/Documents/s-lastorder
+- **경로**: /Users/june/Library/Mobile Documents/com~apple~CloudDocs/Documents/s-lastorder
 
 ## 문서 설정
 - **프론트매터 생성**: true

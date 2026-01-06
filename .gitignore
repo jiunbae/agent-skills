@@ -24,6 +24,7 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+.skill-index.json
 
 # Build artifacts (keep source, ignore builds)
 # *.zip files are intentionally NOT ignored - they're the packaged skills
@@ -54,3 +55,4 @@ TODO.md
 # Personal data (not for public repos)
 static/WHOAMI.md
 static/ME.md
+development/playwright/node_modules/
