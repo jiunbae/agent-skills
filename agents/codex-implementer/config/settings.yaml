@@ -3,19 +3,27 @@
 
 # Codex CLI 기본 옵션
 codex:
-  # 승인 모드
-  # - full-auto: 모든 작업 자동 승인 (권장)
-  # - auto-edit: 파일 편집만 자동 승인
-  # - suggest-edit: 편집 제안만 (사용자 승인 필요)
-  approval_mode: "full-auto"
+  # Full-auto 모드 (--full-auto 플래그)
+  # 자동 승인 + workspace-write 샌드박스 조합 (권장)
+  full_auto: true
 
-  # 사용할 모델
-  # - o4-mini: 빠르고 비용 효율적 (권장)
+  # 샌드박스 모드 (--sandbox 옵션)
+  # - read-only: 읽기 전용
+  # - workspace-write: 작업 디렉토리 쓰기 허용 (기본)
+  # - danger-full-access: 전체 접근 (위험)
+  sandbox: "workspace-write"
+
+  # 사용할 모델 (-m 옵션)
+  # - gpt-5.2-codex: 최신 Codex 모델 (기본)
   # - gpt-4o: 높은 품질, 복잡한 작업에 적합
-  model: "o4-mini"
+  # - o4-mini: 빠르고 비용 효율적
+  model: "gpt-5.2-codex"
 
   # 작업당 타임아웃 (초)
   timeout: 300
+
+  # exec 서브커맨드 사용 (비대화형 모드)
+  use_exec: true
 
 # 구현 모드별 설정
 modes:
