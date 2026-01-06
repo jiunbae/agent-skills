@@ -32,6 +32,7 @@ description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니�
 | 보안 규칙, 보안 정책, 민감 정보, 커밋 금지, security | `SECURITY.md` | 보안 검증 규칙 (커밋 금지 패턴, 민감 정보) |
 | 코딩 스타일, 스타일 가이드, 코드 컨벤션, formatting | `STYLE.md` | 코딩 스타일 가이드 (포맷팅, 네이밍) |
 | 노션 설정, notion, 노션 페이지, 업로드 설정 | `NOTION.md` | Notion 연동 설정 (페이지 ID, 업로드 옵션) |
+| IaC, 배포 표준, kubernetes, k8s, 배포 설정, deploy, 인프라 | `IAC.md` | IaC 배포 표준화 가이드라인 (K8s, CI/CD, 환경변수) |
 
 ### 파일 상세 정보
 
