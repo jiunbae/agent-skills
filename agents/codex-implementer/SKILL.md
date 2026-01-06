@@ -63,10 +63,10 @@ export OPENAI_API_KEY="sk-..."
 ### Codex 승인 모드 설정
 
 ```bash
-# full-auto 모드 권장 (자율 실행)
-# suggest-edit: 편집 제안만
-# auto-edit: 파일 편집 자동 승인
-# full-auto: 모든 작업 자동 승인 (권장)
+# --full-auto 모드 권장 (자율 실행, 샌드박스 내)
+# --sandbox read-only: 읽기 전용 모드
+# --sandbox workspace-write: 작업 디렉토리 쓰기 허용 (기본)
+# --full-auto: 자동 승인 + workspace-write 샌드박스 (권장)
 ```
 
 ## Workflow
@@ -94,7 +94,7 @@ Claude 분석:
 분석 결과를 바탕으로 Codex를 호출합니다:
 
 ```bash
-codex -a full-auto "다음 기능을 구현해주세요:
+codex exec --full-auto "다음 기능을 구현해주세요:
 
 ## 요구사항
 - POST /api/auth/login 엔드포인트 생성
@@ -143,13 +143,13 @@ Claude 작업 분해:
 
 ```bash
 # Terminal 1
-codex -a full-auto "users CRUD API를 구현해주세요..."
+codex exec --full-auto "users CRUD API를 구현해주세요..."
 
 # Terminal 2 (동시 실행)
-codex -a full-auto "posts CRUD API를 구현해주세요..."
+codex exec --full-auto "posts CRUD API를 구현해주세요..."
 
 # Terminal 3 (동시 실행)
-codex -a full-auto "comments CRUD API를 구현해주세요..."
+codex exec --full-auto "comments CRUD API를 구현해주세요..."
 ```
 
 **Claude에서 병렬 실행:**
@@ -184,12 +184,12 @@ Phase 4: 테스트 작성
 
 ```bash
 # Phase 1
-codex -a full-auto "Phase 1: 기본 파일 구조와 스켈레톤 코드를 생성해주세요..."
+codex exec --full-auto "Phase 1: 기본 파일 구조와 스켈레톤 코드를 생성해주세요..."
 
 # Claude 검토 후...
 
 # Phase 2
-codex -a full-auto "Phase 2: 핵심 비즈니스 로직을 구현해주세요.
+codex exec --full-auto "Phase 2: 핵심 비즈니스 로직을 구현해주세요.
 기존 파일: [Phase 1에서 생성된 파일 목록]..."
 
 # 반복...
@@ -219,7 +219,7 @@ Claude 분석:
 #### Step 2: Codex 리팩토링 실행
 
 ```bash
-codex -a full-auto "다음 리팩토링을 수행해주세요:
+codex exec --full-auto "다음 리팩토링을 수행해주세요:
 
 ## 대상 파일
 services/userService.ts
@@ -251,7 +251,7 @@ Claude: 비밀번호 재설정 기능을 분석하고 Codex에게 구현을 위�
 Codex를 호출합니다...
 
 [Codex 실행]
-codex -a full-auto "비밀번호 재설정 기능을 구현해주세요:
+codex exec --full-auto "비밀번호 재설정 기능을 구현해주세요:
 1. POST /api/auth/forgot-password - 재설정 이메일 발송
 2. POST /api/auth/reset-password - 새 비밀번호 설정
 기존 auth 라우트 패턴을 따라주세요."
@@ -333,7 +333,7 @@ Claude: 버그를 분석하고 Codex에게 수정을 위임합니다.
 Codex를 호출합니다...
 
 [Codex 실행]
-codex -a full-auto "다음 버그를 수정해주세요:
+codex exec --full-auto "다음 버그를 수정해주세요:
 
 ## 버그 설명
 장바구니에서 상품 수량 변경 시 총액(totalPrice)이 업데이트되지 않음
@@ -365,8 +365,9 @@ codex -a full-auto "다음 버그를 수정해주세요:
 ```yaml
 # 권장 설정
 codex_options:
-  approval_mode: "full-auto"  # 자율 실행 (권장)
-  model: "o4-mini"            # 또는 "gpt-4o"
+  full_auto: true             # --full-auto 플래그 사용 (권장)
+  sandbox: "workspace-write"  # 샌드박스 모드
+  model: "gpt-5.2-codex"      # 또는 다른 모델
   timeout: 300                # 5분 타임아웃
 
 # 모드별 설정
@@ -415,19 +416,28 @@ parallel:
 # 기본 실행 (대화형)
 codex "프롬프트"
 
-# 승인 모드 지정
-codex -a full-auto "프롬프트"
-codex -a auto-edit "프롬프트"
-codex -a suggest-edit "프롬프트"
+# Full-auto 모드 (자동 승인 + workspace-write 샌드박스)
+codex --full-auto "프롬프트"
 
-# 비대화형 실행 (exec 서브커맨드)
+# 샌드박스 모드 지정
+codex --sandbox read-only "프롬프트"
+codex --sandbox workspace-write "프롬프트"
+codex --sandbox danger-full-access "프롬프트"
+
+# 비대화형 실행 (exec 서브커맨드) - 스크립트에서 권장
 codex exec "프롬프트"
 
-# 조합 예시 (대화형)
-codex -a full-auto "구현 프롬프트"
+# 조합 예시 (대화형 + full-auto)
+codex --full-auto "구현 프롬프트"
 
-# 조합 예시 (비대화형 - 스크립트에서 사용)
-codex exec -a full-auto "구현 프롬프트"
+# 조합 예시 (비대화형 + full-auto - 스크립트에서 사용)
+codex exec --full-auto "구현 프롬프트"
+
+# 모델 지정
+codex exec --full-auto -m gpt-4o "프롬프트"
+
+# 작업 디렉토리 지정
+codex exec --full-auto -C /path/to/project "프롬프트"
 ```
 
 ## Troubleshooting
@@ -442,7 +452,10 @@ codex --version
 echo $OPENAI_API_KEY
 
 # 직접 테스트 (비대화형)
-codex exec "Hello, world를 출력하는 Python 코드를 작성해"
+codex exec --full-auto "Hello, world를 출력하는 Python 코드를 작성해"
+
+# Git 레포지토리가 아닌 곳에서 실행 시
+codex exec --skip-git-repo-check --full-auto "프롬프트"
 ```
 
 ### 병렬 실행 시 파일 충돌

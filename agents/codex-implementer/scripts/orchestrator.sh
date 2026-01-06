@@ -12,7 +12,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Default settings
-APPROVAL_MODE="full-auto"
+FULL_AUTO=true
+SANDBOX_MODE="workspace-write"
 TIMEOUT=300
 OUTPUT_DIR="./codex_output"
 MAX_PARALLEL=3
@@ -23,7 +24,8 @@ usage() {
     echo ""
     echo "Options:"
     echo "  -t, --tasks FILE      Tasks file (JSON format, required)"
-    echo "  -a, --approval MODE   Approval mode: full-auto|auto-edit|suggest-edit (default: full-auto)"
+    echo "  -s, --sandbox MODE    Sandbox mode: read-only|workspace-write|danger-full-access (default: workspace-write)"
+    echo "  -f, --full-auto       Enable full-auto mode (default: enabled)"
     echo "  -p, --parallel N      Max parallel agents (default: 3)"
     echo "  -o, --output DIR      Output directory (default: ./codex_output)"
     echo "  -T, --timeout SEC     Timeout per task in seconds (default: 300)"
@@ -45,9 +47,17 @@ while [[ $# -gt 0 ]]; do
             TASKS_FILE="$2"
             shift 2
             ;;
-        -a|--approval)
-            APPROVAL_MODE="$2"
+        -s|--sandbox)
+            SANDBOX_MODE="$2"
             shift 2
+            ;;
+        -f|--full-auto)
+            FULL_AUTO=true
+            shift
+            ;;
+        --no-full-auto)
+            FULL_AUTO=false
+            shift
             ;;
         -p|--parallel)
             MAX_PARALLEL="$2"
@@ -102,7 +112,8 @@ echo "========================================"
 echo -e "${BLUE}  Codex Parallel Orchestrator${NC}"
 echo "========================================"
 echo "  Tasks file: $TASKS_FILE"
-echo "  Approval: $APPROVAL_MODE"
+echo "  Full-auto: $FULL_AUTO"
+echo "  Sandbox: $SANDBOX_MODE"
 echo "  Max parallel: $MAX_PARALLEL"
 echo "  Timeout: ${TIMEOUT}s"
 echo "  Output: $OUTPUT_DIR"
@@ -128,8 +139,16 @@ run_task() {
 
     echo -e "${BLUE}[${task_id}]${NC} Starting..."
 
+    # Build codex command
+    local codex_cmd="codex exec"
+    if [ "$FULL_AUTO" = true ]; then
+        codex_cmd="$codex_cmd --full-auto"
+    else
+        codex_cmd="$codex_cmd --sandbox $SANDBOX_MODE"
+    fi
+
     # Run codex with timeout
-    timeout "$TIMEOUT" codex -a "$APPROVAL_MODE" "$prompt" > "$output_file" 2>&1
+    timeout "$TIMEOUT" $codex_cmd "$prompt" > "$output_file" 2>&1
     local exit_code=$?
 
     if [ $exit_code -eq 0 ]; then
