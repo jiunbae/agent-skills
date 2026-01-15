@@ -1,6 +1,6 @@
-# claude-skill
+# CLI 도구
 
-CLI에서 Claude 스킬을 직접 실행하는 도구입니다.
+Agent Skills를 관리하고 실행하는 CLI 도구들입니다.
 
 ## 설치
 
@@ -8,10 +8,81 @@ CLI에서 Claude 스킬을 직접 실행하는 도구입니다.
 # install.sh 사용 (권장)
 ./install.sh --cli --alias=cs
 
-# 또는 직접 심링크 생성
-ln -sf /path/to/agent-skills/cli/claude-skill ~/.local/bin/claude-skill
-ln -sf /path/to/agent-skills/cli/claude-skill ~/.local/bin/cs  # 별칭
+# Core 스킬 + CLI 도구 설치 (권장 시작 방법)
+./install.sh --core --cli
 ```
+
+---
+
+# agent-skill
+
+워크스페이스별 동적 스킬 관리 도구입니다. 프로젝트마다 필요한 스킬만 로컬에 설치할 수 있습니다.
+
+## 사용법
+
+```bash
+# 현재 워크스페이스에 스킬 설치 (로컬)
+agent-skill install kubernetes-skill
+agent-skill install ml/                    # ml 그룹 전체
+
+# 전역 설치
+agent-skill install -g git-commit-pr
+
+# 스킬 목록 보기
+agent-skill list                           # 사용 가능한 모든 스킬
+agent-skill list --installed               # 설치된 스킬만
+agent-skill list --installed --local       # 현재 워크스페이스만
+
+# 스킬 제거
+agent-skill uninstall kubernetes-skill
+
+# 워크스페이스 초기화
+agent-skill init                           # .claude/skills/ 생성
+```
+
+## 스킬 로드 우선순위
+
+Claude는 스킬을 다음 순서로 로드합니다:
+1. `.claude/skills/` (현재 워크스페이스, 로컬)
+2. `~/.claude/skills/` (전역)
+
+로컬 스킬이 전역 스킬보다 우선합니다.
+
+## 옵션
+
+| 명령 | 옵션 | 설명 |
+|------|------|------|
+| `install` | `-g, --global` | 전역 설치 (~/.claude/skills/) |
+| `install` | `-f, --force` | 기존 스킬 덮어쓰기 |
+| `list` | `--installed` | 설치된 스킬만 표시 |
+| `list` | `--local` | 현재 워크스페이스 스킬만 |
+| `list` | `--global` | 전역 스킬만 |
+| `list` | `--groups` | 그룹 목록만 표시 |
+| `list` | `--json` | JSON 형식 출력 |
+
+## 워크플로우 예시
+
+```bash
+# 1. 새 프로젝트 시작
+cd my-k8s-project
+agent-skill init
+
+# 2. 필요한 스킬 설치
+agent-skill install kubernetes-skill
+agent-skill install integrations/slack-skill
+
+# 3. 설치 확인
+agent-skill list --installed --local
+
+# 4. Claude 실행 - 로컬 스킬 자동 로드
+claude
+```
+
+---
+
+# claude-skill
+
+CLI에서 Claude 스킬을 직접 실행하는 도구입니다.
 
 ## 사용법
 
@@ -33,6 +104,7 @@ cs -i "파일 수정해줘"
 
 # 설치된 스킬 목록
 cs --list
+cs --list --all --verbose    # 모든 스킬 상세 정보
 ```
 
 ## 옵션
@@ -41,8 +113,12 @@ cs --list
 |------|------|
 | `-s, --skill SKILL` | 사용할 스킬 이름 직접 지정 |
 | `-l, --list` | 설치된 스킬 목록 표시 |
+| `-a, --all` | 소스의 모든 스킬 표시 (--list와 함께) |
 | `-i, --interactive` | 권한 요청 모드 (기본: 자동 승인) |
 | `-v, --verbose` | 상세 출력 (도구 호출 표시) |
+| `-r, --result-only` | 최종 결과만 출력 |
+| `-j, --json` | JSON 형식 출력 (--list와 함께) |
+| `-p, --plain` | 스킬 이름만 출력 (--list와 함께) |
 | `--no-stream` | 스트리밍 비활성화 |
 | `--no-skill` | 스킬 매칭 없이 일반 모드로 실행 |
 
@@ -65,7 +141,7 @@ $ cs "내가 누구게"
 
 [스킬: whoami]
 
-**June** 님이시군요! 👋
+**June** 님이시군요!
 - 역할: Research Engineer & Fullstack Developer
 - 주력: Python, TypeScript/JavaScript
 ...
@@ -94,13 +170,22 @@ $ cs "보안 검사해줘"
 [도구 호출: 5회 | 소요: 12.3s | 비용: $0.0234]
 ```
 
+---
+
 ## 요구사항
 
-- Python 3.8+
+- Python 3.8+ (claude-skill용)
+- Bash (agent-skill용)
 - Claude Code CLI (`claude` 명령어)
-- 설치된 스킬 (`~/.claude/skills/`)
+- ~/.local/bin이 PATH에 포함되어야 함
 
 ## 문제 해결
+
+### PATH 설정
+```bash
+# ~/.bashrc 또는 ~/.zshrc에 추가
+export PATH="$PATH:$HOME/.local/bin"
+```
 
 ### 스킬이 매칭되지 않음
 ```bash
@@ -111,13 +196,11 @@ cs --skill 스킬이름 "명령"
 cs --no-skill "명령"
 ```
 
-### 권한을 직접 확인하고 싶음
-```bash
-# -i 옵션으로 권한 요청 모드
-cs -i "명령"
-```
-
 ### 스킬 목록 확인
 ```bash
+# claude-skill로 확인
 cs --list
+
+# agent-skill로 확인
+agent-skill list --installed
 ```
