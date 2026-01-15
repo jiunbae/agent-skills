@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main
 curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --all --cli --static
 
 # 특정 버전 설치
-curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --version v2026.01.15
 
 # 제거
 curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --uninstall
