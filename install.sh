@@ -47,6 +47,18 @@ CODEX_AGENTS_SOURCE="${SCRIPT_DIR}/codex-support/AGENTS.md"
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
 EXCLUDE_DIRS=("static" "cli" "codex-support" ".git" ".github" ".agents" "node_modules" "__pycache__")
 
+# Core 스킬 (기본 전역 설치, 워크스페이스 공통 필수)
+CORE_SKILLS=(
+    "meta/skill-manager"
+    "meta/skill-recommender"
+    "development/git-commit-pr"
+    "context/context-manager"
+    "context/whoami"
+)
+
+# Core 모드 플래그
+CORE_MODE=false
+
 # 스킬 그룹 동적 탐색
 get_skill_groups() {
     local groups=()
@@ -104,6 +116,7 @@ usage() {
   --prefix PREFIX  스킬 이름 앞에 접두사 추가 (예: my-)
   --postfix POSTFIX 스킬 이름 뒤에 접미사 추가 (예: -dev)
   -t, --target DIR 대상 디렉토리 지정 (기본: ~/.claude/skills)
+  --core           Core 스킬만 전역 설치 (워크스페이스 공통)
 
 Static 관리:
   --link-static    static/ -> ~/.agents 심링크 생성
@@ -121,6 +134,7 @@ Codex 지원:
 
 예시:
   $(basename "$0")                          # 전체 설치
+  $(basename "$0") --core                   # Core 스킬만 설치 (권장)
   $(basename "$0") agents                   # agents 그룹만 설치
   $(basename "$0") agents development       # 여러 그룹 설치
   $(basename "$0") agents/planning-agents   # 특정 스킬만 설치
@@ -128,6 +142,14 @@ Codex 지원:
   $(basename "$0") --uninstall agents       # agents 그룹 삭제
   $(basename "$0") --list                   # 스킬 목록 표시
   $(basename "$0") --link-static            # static 심링크 설정
+  $(basename "$0") --core --cli             # Core 스킬 + CLI 도구 설치 (권장)
+
+Core 스킬 (워크스페이스 공통):
+  - meta/skill-manager           스킬 생태계 관리
+  - meta/skill-recommender       스킬 자동 추천
+  - development/git-commit-pr    Git 커밋/PR 가이드
+  - context/context-manager      프로젝트 컨텍스트 로드
+  - context/whoami               사용자 프로필 관리
 
 그룹 (자동 탐색):
 EOF
@@ -352,55 +374,61 @@ link_static() {
     log_success "심링크 생성됨: ~/.agents -> $STATIC_SOURCE"
 }
 
-# CLI 도구 설치
+# CLI 도구 설치 (claude-skill, agent-skill 모두)
 install_cli() {
-    local cli_source="${SCRIPT_DIR}/cli/claude-skill"
-    local cli_target="${CLI_TARGET}/claude-skill"
-
-    if [[ ! -f "$cli_source" ]]; then
-        log_error "CLI 스크립트를 찾을 수 없습니다: $cli_source"
-        exit 1
-    fi
+    local cli_tools=("claude-skill" "agent-skill")
 
     # 대상 디렉토리 생성
     if [[ "$DRY_RUN" == "true" ]]; then
         log_dry "디렉토리 생성: $CLI_TARGET"
-        log_dry "심링크 생성: $cli_target -> $cli_source"
+        for tool in "${cli_tools[@]}"; do
+            log_dry "심링크 생성: ${CLI_TARGET}/${tool} -> ${SCRIPT_DIR}/cli/${tool}"
+        done
         for alias_name in "${CLI_ALIASES[@]}"; do
-            log_dry "별칭 심링크: ${CLI_TARGET}/${alias_name} -> $cli_source"
+            log_dry "별칭 심링크: ${CLI_TARGET}/${alias_name} -> ${SCRIPT_DIR}/cli/claude-skill"
         done
         return
     fi
 
     mkdir -p "$CLI_TARGET"
 
-    # 기존 파일 처리
-    if [[ -e "$cli_target" ]]; then
-        log_warn "기존 파일 제거: $cli_target"
-        rm -f "$cli_target"
-    fi
+    # 각 CLI 도구 설치
+    for tool in "${cli_tools[@]}"; do
+        local cli_source="${SCRIPT_DIR}/cli/${tool}"
+        local cli_target="${CLI_TARGET}/${tool}"
 
-    # 심링크 생성
-    ln -s "$cli_source" "$cli_target"
-    log_success "CLI 도구 설치됨: $cli_target"
+        if [[ ! -f "$cli_source" ]]; then
+            log_warn "CLI 스크립트를 찾을 수 없습니다: $cli_source"
+            continue
+        fi
 
-    # 별칭 심링크 생성
+        # 기존 파일 처리
+        if [[ -e "$cli_target" ]]; then
+            log_warn "기존 파일 제거: $cli_target"
+            rm -f "$cli_target"
+        fi
+
+        # 심링크 생성
+        ln -s "$cli_source" "$cli_target"
+        log_success "CLI 도구 설치됨: $cli_target"
+    done
+
+    # 별칭 심링크 생성 (claude-skill용)
+    local claude_skill_source="${SCRIPT_DIR}/cli/claude-skill"
     for alias_name in "${CLI_ALIASES[@]}"; do
         local alias_target="${CLI_TARGET}/${alias_name}"
         if [[ -e "$alias_target" ]]; then
             log_warn "기존 별칭 제거: $alias_target"
             rm -f "$alias_target"
         fi
-        ln -s "$cli_source" "$alias_target"
+        ln -s "$claude_skill_source" "$alias_target"
         log_success "별칭 설치됨: $alias_target"
     done
 
     # 사용법 출력
-    if [[ ${#CLI_ALIASES[@]} -gt 0 ]]; then
-        log_info "사용법: claude-skill --help 또는 ${CLI_ALIASES[0]} --help"
-    else
-        log_info "사용법: claude-skill --help"
-    fi
+    log_info "사용법:"
+    log_info "  claude-skill --help  (스킬 실행)"
+    log_info "  agent-skill --help   (스킬 관리)"
 
     # PATH 확인
     if [[ ":$PATH:" != *":$CLI_TARGET:"* ]]; then
@@ -412,45 +440,42 @@ install_cli() {
 
 # CLI 도구 제거
 uninstall_cli() {
-    local cli_target="${CLI_TARGET}/claude-skill"
-    local cli_source="${SCRIPT_DIR}/cli/claude-skill"
+    local cli_tools=("claude-skill" "agent-skill")
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        if [[ -e "$cli_target" ]]; then
-            log_dry "CLI 도구 제거: $cli_target"
-        else
-            log_dry "CLI 도구가 설치되지 않음: $cli_target"
-        fi
-        # 별칭 심링크 찾기
-        if [[ -d "$CLI_TARGET" ]]; then
-            for link in "$CLI_TARGET"/*; do
-                if [[ -L "$link" && "$(readlink -f "$link")" == "$cli_source" && "$link" != "$cli_target" ]]; then
-                    log_dry "별칭 제거: $link"
-                fi
-            done
-        fi
+        for tool in "${cli_tools[@]}"; do
+            local cli_target="${CLI_TARGET}/${tool}"
+            if [[ -e "$cli_target" ]]; then
+                log_dry "CLI 도구 제거: $cli_target"
+            fi
+        done
         return
     fi
 
     local removed=false
 
-    # 메인 CLI 도구 제거
-    if [[ -e "$cli_target" ]]; then
-        rm -f "$cli_target"
-        log_success "CLI 도구 제거됨: $cli_target"
-        removed=true
-    fi
+    # CLI 도구들 제거
+    for tool in "${cli_tools[@]}"; do
+        local cli_target="${CLI_TARGET}/${tool}"
+        local cli_source="${SCRIPT_DIR}/cli/${tool}"
 
-    # 별칭 심링크 찾아서 제거 (claude-skill을 가리키는 모든 심링크)
-    if [[ -d "$CLI_TARGET" ]]; then
-        for link in "$CLI_TARGET"/*; do
-            if [[ -L "$link" && "$(readlink -f "$link")" == "$cli_source" ]]; then
-                rm -f "$link"
-                log_success "별칭 제거됨: $link"
-                removed=true
-            fi
-        done
-    fi
+        if [[ -e "$cli_target" ]]; then
+            rm -f "$cli_target"
+            log_success "CLI 도구 제거됨: $cli_target"
+            removed=true
+        fi
+
+        # 별칭 심링크 찾아서 제거
+        if [[ -d "$CLI_TARGET" ]]; then
+            for link in "$CLI_TARGET"/*; do
+                if [[ -L "$link" && "$(readlink -f "$link")" == "$cli_source" ]]; then
+                    rm -f "$link"
+                    log_success "별칭 제거됨: $link"
+                    removed=true
+                fi
+            done
+        fi
+    done
 
     if [[ "$removed" == "false" ]]; then
         log_warn "CLI 도구가 설치되지 않았습니다"
@@ -663,6 +688,27 @@ install_group() {
     done
 }
 
+# Core 스킬만 설치
+install_core() {
+    log_info "Core 스킬 설치 중... (${#CORE_SKILLS[@]}개)"
+    echo ""
+
+    for skill_path in "${CORE_SKILLS[@]}"; do
+        local group="${skill_path%%/*}"
+        local skill="${skill_path#*/}"
+
+        if [[ "$UNINSTALL" == "true" ]]; then
+            uninstall_skill "$group" "$skill"
+        else
+            install_skill "$group" "$skill"
+        fi
+    done
+
+    echo ""
+    log_info "Core 스킬만 설치됨. 추가 스킬은 워크스페이스에서:"
+    echo "  agent-skill install <skill-name>"
+}
+
 # 전체 설치
 install_all() {
     local groups=($(get_skill_groups))
@@ -743,6 +789,10 @@ while [[ $# -gt 0 ]]; do
             INSTALL_CODEX=true
             shift
             ;;
+        --core)
+            CORE_MODE=true
+            shift
+            ;;
         -*)
             log_error "알 수 없는 옵션: $1"
             echo "도움말: $(basename "$0") --help"
@@ -820,8 +870,11 @@ if [[ "$QUIET" == "false" && "$DRY_RUN" == "false" ]]; then
     echo ""
 fi
 
-# 대상이 없으면 전체 설치
-if [[ ${#TARGETS[@]} -eq 0 ]] || [[ "${TARGETS[0]}" == "all" ]]; then
+# Core 모드 또는 대상 없으면 설치
+if [[ "$CORE_MODE" == "true" ]]; then
+    # Core 스킬만 설치
+    install_core
+elif [[ ${#TARGETS[@]} -eq 0 ]] || [[ "${TARGETS[0]}" == "all" ]]; then
     if [[ "$UNINSTALL" == "true" ]]; then
         log_info "전체 스킬 삭제 중..."
         for group in "${SKILL_GROUPS[@]}"; do
