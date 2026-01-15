@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Count skills
+        id: skills
+        run: |
+          COUNT=$(find . -name "SKILL.md" -type f | wc -l | tr -d ' ')
+          echo "COUNT=$COUNT" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          # 스킬 그룹별 개수
+          AGENTS=$(find agents -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          DEVELOPMENT=$(find development -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          BUSINESS=$(find business -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          INTEGRATIONS=$(find integrations -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          ML=$(find ml -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          CONTEXT=$(find context -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          META=$(find meta -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          SECURITY=$(find security -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+
+          cat << EOF > release_notes.md
+          ## Agent Skills ${{ steps.version.outputs.VERSION }}
+
+          Claude Code와 Codex CLI 기능을 확장하는 커스텀 스킬 모음입니다.
+
+          ### Quick Install
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash
+          \`\`\`
+
+          ### Skills (${{ steps.skills.outputs.COUNT }}개)
+
+          | 그룹 | 스킬 수 |
+          |------|--------|
+          | agents | ${AGENTS} |
+          | development | ${DEVELOPMENT} |
+          | business | ${BUSINESS} |
+          | integrations | ${INTEGRATIONS} |
+          | ml | ${ML} |
+          | context | ${CONTEXT} |
+          | meta | ${META} |
+          | security | ${SECURITY} |
+
+          ### Changes
+
+          See [CHANGELOG](https://github.com/<GITHUB_USERNAME>/agent-skills/blob/main/CHANGELOG.md) for details.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Agent Skills ${{ steps.version.outputs.VERSION }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

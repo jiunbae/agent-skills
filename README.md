@@ -2,12 +2,28 @@
 
 Claude Code와 Codex CLI 기능을 확장하는 커스텀 스킬 모음입니다.
 
-## Quick Start
+## Quick Install (원격 설치)
+
+```bash
+# 권장: Core 스킬 + CLI 도구 (한 줄 설치)
+curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --core --cli
+
+# 전체 스킬 설치
+curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --all --cli --static
+
+# 특정 버전 설치
+curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --version v1.0.0
+
+# 제거
+curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --uninstall
+```
+
+## Manual Install (수동 설치)
 
 ```bash
 # 레포지토리 클론
-git clone <repository-url> ~/workspace/agent-skills
-cd ~/workspace/agent-skills
+git clone https://github.com/<GITHUB_USERNAME>/agent-skills.git ~/.agent-skills
+cd ~/.agent-skills
 
 # 권장: Core 스킬 + CLI 도구 설치
 ./install.sh --core --cli --link-static
@@ -238,7 +254,8 @@ cs --list --all --verbose         # 모든 스킬 상세
 
 ```
 agent-skills/
-├── install.sh              # 설치 스크립트
+├── setup.sh                # 원격 설치 스크립트 (curl)
+├── install.sh              # 로컬 설치 스크립트
 ├── README.md               # 이 문서
 │
 ├── agents/                 # AI 에이전트 스킬
