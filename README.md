@@ -9,17 +9,27 @@ Claude Code와 Codex CLI 기능을 확장하는 커스텀 스킬 모음입니다
 git clone <repository-url> ~/workspace/agent-skills
 cd ~/workspace/agent-skills
 
-# 전체 설치 (스킬 + static + codex 지원)
-./install.sh all --link-static --codex --cli
+# 권장: Core 스킬 + CLI 도구 설치
+./install.sh --core --cli --link-static
 
-# 또는 개별 설치
-./install.sh                    # 스킬만 설치
-./install.sh --link-static      # static 디렉토리 심링크
-./install.sh --codex            # Codex CLI 지원
-./install.sh --cli              # claude-skill CLI 도구
+# 또는 전체 설치 (모든 스킬)
+./install.sh all --link-static --codex --cli
 
 # 스킬 목록 확인
 ./install.sh --list
+```
+
+### 워크스페이스별 스킬 설치
+
+```bash
+# 프로젝트에서 필요한 스킬만 로컬 설치
+cd my-project
+agent-skill init                          # .claude/skills/ 생성
+agent-skill install kubernetes-skill      # 로컬에 설치
+agent-skill install ml/                   # 그룹 전체 설치
+
+# Claude 실행 - 로컬 스킬 자동 로드
+claude
 ```
 
 ## Installation Options
@@ -45,13 +55,27 @@ cd ~/workspace/agent-skills
 
 | 옵션 | 설명 |
 |------|------|
+| `--core` | Core 스킬만 전역 설치 (권장) |
 | `--link-static` | `~/.agents` → `static/` 심링크 (글로벌 컨텍스트) |
 | `--codex` | Codex CLI 지원 (AGENTS.md + skills 심링크) |
-| `--cli` | `claude-skill` CLI 도구 설치 |
+| `--cli` | `claude-skill` + `agent-skill` CLI 도구 설치 |
 | `--copy` | 심링크 대신 복사 |
 | `--dry-run` | 미리보기만 |
 | `--prefix NAME` | 스킬 이름 접두사 |
 | `--postfix NAME` | 스킬 이름 접미사 |
+
+### Core 스킬 (워크스페이스 공통)
+
+```bash
+./install.sh --core
+```
+
+**Core 스킬 목록:**
+- `meta/skill-manager` - 스킬 생태계 관리
+- `meta/skill-recommender` - 스킬 자동 추천
+- `development/git-commit-pr` - Git 커밋/PR 가이드
+- `context/context-manager` - 프로젝트 컨텍스트 로드
+- `context/whoami` - 사용자 프로필 관리
 
 ### 한 번에 전체 설치
 
@@ -97,19 +121,41 @@ Codex CLI에서도 동일한 스킬을 사용할 수 있습니다.
 
 ## CLI 도구
 
-`claude-skill` CLI로 스킬을 관리할 수 있습니다.
+### agent-skill (스킬 관리)
+
+워크스페이스별 동적 스킬 관리 도구입니다.
 
 ```bash
 # 설치
 ./install.sh --cli
 
+# 사용법
+agent-skill install kubernetes-skill      # 로컬 설치
+agent-skill install -g git-commit-pr      # 전역 설치
+agent-skill install ml/                   # 그룹 전체 설치
+agent-skill list                          # 스킬 목록
+agent-skill list --installed --local      # 로컬 설치 확인
+agent-skill uninstall kubernetes-skill    # 제거
+agent-skill init                          # 워크스페이스 초기화
+```
+
+**스킬 로드 우선순위:**
+1. `.claude/skills/` (현재 워크스페이스)
+2. `~/.claude/skills/` (전역)
+
+### claude-skill (스킬 실행)
+
+CLI에서 스킬을 직접 실행하는 도구입니다.
+
+```bash
 # 별칭 추가 (선택)
 ./install.sh --cli --alias=cs
 
 # 사용법
-claude-skill --list              # 스킬 목록
-claude-skill --skill planning    # 스킬 검색
-claude-skill --json              # JSON 출력
+cs "보안 검사해줘"                # Claude가 스킬 자동 선택
+cs --skill security-auditor "검사"  # 스킬 직접 지정
+cs --list                         # 스킬 목록
+cs --list --all --verbose         # 모든 스킬 상세
 ```
 
 ---
@@ -214,7 +260,8 @@ agent-skills/
 │   └── AGENTS.md          # Codex용 스킬 가이드
 │
 └── cli/                    # CLI 도구
-    └── claude-skill       # 스킬 관리 CLI
+    ├── agent-skill        # 워크스페이스별 스킬 관리
+    └── claude-skill       # 스킬 실행 CLI
 ```
 
 ---
@@ -309,5 +356,5 @@ Personal use. Individual skills may have their own licenses.
 
 ---
 
-**Last Updated**: 2025-12-15
-**Skills Count**: 30+
+**Last Updated**: 2026-01-15
+**Skills Count**: 33+

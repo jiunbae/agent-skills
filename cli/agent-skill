@@ -1,0 +1,581 @@
+#!/usr/bin/env bash
+#
+# agent-skill - 워크스페이스별 동적 스킬 관리 CLI
+#
+# 사용법:
+#   agent-skill install <skill>       # 현재 디렉토리의 .claude/skills/에 설치
+#   agent-skill install -g <skill>    # 전역 ~/.claude/skills/에 설치
+#   agent-skill uninstall <skill>     # 스킬 제거
+#   agent-skill list                  # 사용 가능한 스킬 목록
+#   agent-skill init                  # .claude/skills/ 디렉토리 생성
+#
+# 예시:
+#   agent-skill install kubernetes-skill
+#   agent-skill install ml/           # ml 그룹 전체
+#   agent-skill install -g git-commit-pr
+#   agent-skill list --installed
+#
+
+set -e
+
+# 색상 정의
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# 스크립트 위치에서 agent-skills 소스 디렉토리 찾기
+find_source_dir() {
+    local script_path="${BASH_SOURCE[0]}"
+
+    # 심링크 해제
+    while [[ -L "$script_path" ]]; do
+        local link_target
+        link_target=$(readlink "$script_path")
+        if [[ "$link_target" == /* ]]; then
+            script_path="$link_target"
+        else
+            script_path="$(dirname "$script_path")/$link_target"
+        fi
+    done
+
+    # cli/ 디렉토리의 부모가 agent-skills
+    local cli_dir
+    cli_dir=$(cd "$(dirname "$script_path")" && pwd)
+    echo "$(dirname "$cli_dir")"
+}
+
+SOURCE_DIR=$(find_source_dir)
+LOCAL_TARGET=".claude/skills"
+GLOBAL_TARGET="${HOME}/.claude/skills"
+
+# 제외 디렉토리
+EXCLUDE_DIRS=("static" "cli" "codex-support" ".git" ".github" ".agents" "node_modules" "__pycache__")
+
+# 로그 함수
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+
+# 사용법
+usage() {
+    cat << 'EOF'
+agent-skill - 워크스페이스별 동적 스킬 관리
+
+사용법:
+  agent-skill <command> [options] [arguments]
+
+Commands:
+  install <skill>     스킬 설치 (기본: 현재 디렉토리의 .claude/skills/)
+  uninstall <skill>   스킬 제거
+  list                사용 가능한 스킬 목록
+  init                .claude/skills/ 디렉토리 초기화
+  which <skill>       스킬 소스 경로 확인
+
+Install Options:
+  -g, --global        전역 설치 (~/.claude/skills/)
+  -f, --force         기존 스킬 덮어쓰기
+
+List Options:
+  --installed         설치된 스킬만 표시
+  --local             현재 디렉토리의 스킬만
+  --global            전역 스킬만
+  --groups            그룹 목록만 표시
+  --json              JSON 형식 출력
+
+예시:
+  agent-skill install kubernetes-skill    # 로컬에 설치
+  agent-skill install -g git-commit-pr    # 전역에 설치
+  agent-skill install ml/                 # ml 그룹 전체 설치
+  agent-skill install integrations/slack-skill  # 특정 스킬
+  agent-skill uninstall kubernetes-skill
+  agent-skill list --installed --local
+
+스킬 로드 우선순위:
+  1. .claude/skills/ (현재 디렉토리, 로컬)
+  2. ~/.claude/skills/ (전역)
+
+EOF
+    exit 0
+}
+
+# 스킬 그룹 목록
+get_groups() {
+    for dir in "${SOURCE_DIR}"/*/; do
+        local dirname
+        dirname=$(basename "$dir")
+        local excluded=false
+
+        for exclude in "${EXCLUDE_DIRS[@]}"; do
+            [[ "$dirname" == "$exclude" ]] && { excluded=true; break; }
+        done
+        [[ "$dirname" == .* ]] && excluded=true
+
+        if [[ "$excluded" == "false" && -d "$dir" ]]; then
+            # 스킬이 있는지 확인
+            for skill_dir in "$dir"/*/; do
+                if [[ -f "${skill_dir}SKILL.md" ]]; then
+                    echo "$dirname"
+                    break
+                fi
+            done
+        fi
+    done
+}
+
+# 그룹 내 스킬 목록
+get_skills_in_group() {
+    local group="$1"
+    local group_dir="${SOURCE_DIR}/${group}"
+
+    [[ ! -d "$group_dir" ]] && return
+
+    for skill_dir in "$group_dir"/*/; do
+        [[ -f "${skill_dir}SKILL.md" ]] && basename "$skill_dir"
+    done
+}
+
+# 스킬 경로 찾기 (group/skill 또는 skill 이름으로)
+find_skill_path() {
+    local query="$1"
+
+    # group/skill 형식
+    if [[ "$query" == *"/"* ]]; then
+        local group="${query%%/*}"
+        local skill="${query#*/}"
+
+        # 그룹만 지정 (끝에 / 있음)
+        if [[ -z "$skill" || "$skill" == "$group" ]]; then
+            if [[ -d "${SOURCE_DIR}/${group}" ]]; then
+                echo "GROUP:${group}"
+                return 0
+            fi
+        else
+            local path="${SOURCE_DIR}/${group}/${skill}"
+            if [[ -d "$path" && -f "${path}/SKILL.md" ]]; then
+                echo "$path"
+                return 0
+            fi
+        fi
+    else
+        # 스킬 이름만으로 검색
+        for group in $(get_groups); do
+            local path="${SOURCE_DIR}/${group}/${query}"
+            if [[ -d "$path" && -f "${path}/SKILL.md" ]]; then
+                echo "$path"
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
+
+# SKILL.md에서 description 추출
+get_description() {
+    local skill_md="$1"
+    [[ ! -f "$skill_md" ]] && return
+
+    # 간단한 추출 (Python 없이)
+    sed -n '/^---$/,/^---$/p' "$skill_md" | \
+        grep -E '^description:' | \
+        sed 's/^description:\s*//' | \
+        head -c 50
+}
+
+# 스킬 설치
+cmd_install() {
+    local global=false
+    local force=false
+    local targets=()
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -g|--global) global=true; shift ;;
+            -f|--force) force=true; shift ;;
+            -*) log_error "알 수 없는 옵션: $1"; exit 1 ;;
+            *) targets+=("$1"); shift ;;
+        esac
+    done
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        log_error "설치할 스킬을 지정하세요"
+        echo "예: agent-skill install kubernetes-skill"
+        exit 1
+    fi
+
+    # 대상 디렉토리 설정
+    local target_dir
+    if [[ "$global" == "true" ]]; then
+        target_dir="$GLOBAL_TARGET"
+        log_info "전역 설치: $target_dir"
+    else
+        target_dir="$LOCAL_TARGET"
+        log_info "로컬 설치: $(pwd)/$target_dir"
+    fi
+
+    # 디렉토리 생성
+    mkdir -p "$target_dir"
+
+    local installed=0
+    local failed=0
+
+    for target in "${targets[@]}"; do
+        local result
+        result=$(find_skill_path "$target")
+
+        if [[ -z "$result" ]]; then
+            log_error "스킬을 찾을 수 없습니다: $target"
+            failed=$((failed + 1))
+            continue
+        fi
+
+        # 그룹 전체 설치
+        if [[ "$result" == GROUP:* ]]; then
+            local group="${result#GROUP:}"
+            log_info "그룹 설치: $group"
+
+            for skill in $(get_skills_in_group "$group"); do
+                install_single_skill "${SOURCE_DIR}/${group}/${skill}" "$target_dir" "$force" && \
+                    installed=$((installed + 1)) || \
+                    failed=$((failed + 1))
+            done
+        else
+            # 단일 스킬 설치
+            install_single_skill "$result" "$target_dir" "$force" && \
+                installed=$((installed + 1)) || \
+                failed=$((failed + 1))
+        fi
+    done
+
+    echo ""
+    if [[ $installed -gt 0 ]]; then
+        log_success "$installed 개 스킬 설치됨"
+    fi
+    if [[ $failed -gt 0 ]]; then
+        log_warn "$failed 개 스킬 설치 실패"
+        exit 1
+    fi
+}
+
+# 단일 스킬 설치
+install_single_skill() {
+    local source_path="$1"
+    local target_dir="$2"
+    local force="$3"
+
+    local skill_name
+    skill_name=$(basename "$source_path")
+    local target_path="${target_dir}/${skill_name}"
+
+    # 이미 존재하는 경우
+    if [[ -e "$target_path" ]]; then
+        if [[ "$force" == "true" ]]; then
+            log_warn "덮어쓰기: $skill_name"
+            rm -rf "$target_path"
+        else
+            log_warn "이미 설치됨 (스킵): $skill_name (-f로 덮어쓰기)"
+            return 0
+        fi
+    fi
+
+    # 심링크 생성
+    ln -s "$source_path" "$target_path"
+    log_success "설치됨: $skill_name -> $(basename "$(dirname "$source_path")")"
+    return 0
+}
+
+# 스킬 제거
+cmd_uninstall() {
+    local global=false
+    local targets=()
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -g|--global) global=true; shift ;;
+            -*) log_error "알 수 없는 옵션: $1"; exit 1 ;;
+            *) targets+=("$1"); shift ;;
+        esac
+    done
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        log_error "제거할 스킬을 지정하세요"
+        exit 1
+    fi
+
+    local target_dir
+    if [[ "$global" == "true" ]]; then
+        target_dir="$GLOBAL_TARGET"
+    else
+        target_dir="$LOCAL_TARGET"
+    fi
+
+    local removed=0
+
+    for target in "${targets[@]}"; do
+        local skill_name
+        skill_name=$(basename "$target")
+        local skill_path="${target_dir}/${skill_name}"
+
+        if [[ -e "$skill_path" ]]; then
+            rm -rf "$skill_path"
+            log_success "제거됨: $skill_name"
+            removed=$((removed + 1))
+        else
+            log_warn "설치되지 않음: $skill_name"
+        fi
+    done
+
+    [[ $removed -gt 0 ]] && log_info "$removed 개 스킬 제거됨"
+}
+
+# 스킬 목록
+cmd_list() {
+    local show_installed=false
+    local show_local=false
+    local show_global=false
+    local show_groups=false
+    local json_output=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --installed) show_installed=true; shift ;;
+            --local) show_local=true; shift ;;
+            --global) show_global=true; shift ;;
+            --groups) show_groups=true; shift ;;
+            --json) json_output=true; shift ;;
+            -*) log_error "알 수 없는 옵션: $1"; exit 1 ;;
+            *) shift ;;
+        esac
+    done
+
+    # 그룹 목록만
+    if [[ "$show_groups" == "true" ]]; then
+        if [[ "$json_output" == "true" ]]; then
+            echo -n "["
+            local first=true
+            for group in $(get_groups); do
+                [[ "$first" == "true" ]] && first=false || echo -n ","
+                echo -n "\"$group\""
+            done
+            echo "]"
+        else
+            for group in $(get_groups); do
+                echo "$group"
+            done
+        fi
+        return
+    fi
+
+    # 설치된 스킬만
+    if [[ "$show_installed" == "true" ]]; then
+        list_installed_skills "$show_local" "$show_global" "$json_output"
+        return
+    fi
+
+    # 전체 스킬 목록
+    list_all_skills "$json_output"
+}
+
+# 설치된 스킬 목록
+list_installed_skills() {
+    local show_local="$1"
+    local show_global="$2"
+    local json_output="$3"
+
+    local local_skills=()
+    local global_skills=()
+
+    # 로컬 스킬
+    if [[ -d "$LOCAL_TARGET" && ("$show_global" == "false" || "$show_local" == "true") ]]; then
+        for skill in "$LOCAL_TARGET"/*/; do
+            [[ -f "${skill}SKILL.md" || (-L "$(dirname "$skill")/$(basename "$skill")" && -f "$(readlink -f "$skill")/SKILL.md") ]] && \
+                local_skills+=("$(basename "$skill")")
+        done
+    fi
+
+    # 전역 스킬
+    if [[ -d "$GLOBAL_TARGET" && ("$show_local" == "false" || "$show_global" == "true") ]]; then
+        for skill in "$GLOBAL_TARGET"/*/; do
+            [[ -f "${skill}SKILL.md" || (-L "$(dirname "$skill")/$(basename "$skill")" && -f "$(readlink -f "$skill")/SKILL.md") ]] && \
+                global_skills+=("$(basename "$skill")")
+        done
+    fi
+
+    if [[ "$json_output" == "true" ]]; then
+        echo "{"
+        echo "  \"local\": [$(printf '"%s",' "${local_skills[@]}" | sed 's/,$//')],"
+        echo "  \"global\": [$(printf '"%s",' "${global_skills[@]}" | sed 's/,$//')]"
+        echo "}"
+        return
+    fi
+
+    echo ""
+    echo -e "${CYAN}설치된 스킬${NC}"
+    echo "========================================"
+
+    if [[ "$show_global" != "true" && ${#local_skills[@]} -gt 0 ]]; then
+        echo -e "\n${YELLOW}로컬${NC} (.claude/skills/) - ${#local_skills[@]}개"
+        for skill in "${local_skills[@]}"; do
+            echo -e "  ${GREEN}✓${NC} $skill"
+        done
+    fi
+
+    if [[ "$show_local" != "true" && ${#global_skills[@]} -gt 0 ]]; then
+        echo -e "\n${YELLOW}전역${NC} (~/.claude/skills/) - ${#global_skills[@]}개"
+        for skill in "${global_skills[@]}"; do
+            echo -e "  ${GREEN}✓${NC} $skill"
+        done
+    fi
+
+    echo ""
+}
+
+# 스킬이 로컬에 설치되었는지 확인
+is_installed_local() {
+    local skill="$1"
+    [[ -d "$LOCAL_TARGET" && -e "$LOCAL_TARGET/$skill" ]]
+}
+
+# 스킬이 전역에 설치되었는지 확인
+is_installed_global() {
+    local skill="$1"
+    [[ -d "$GLOBAL_TARGET" && -e "$GLOBAL_TARGET/$skill" ]]
+}
+
+# 전체 스킬 목록
+list_all_skills() {
+    local json_output="$1"
+
+    if [[ "$json_output" == "true" ]]; then
+        echo "{"
+        local first_group=true
+        for group in $(get_groups); do
+            [[ "$first_group" == "true" ]] && first_group=false || echo ","
+            echo -n "  \"$group\": ["
+            local first_skill=true
+            for skill in $(get_skills_in_group "$group"); do
+                [[ "$first_skill" == "true" ]] && first_skill=false || echo -n ","
+                local status="available"
+                is_installed_local "$skill" && status="local"
+                is_installed_global "$skill" && status="global"
+                echo -n "{\"name\":\"$skill\",\"status\":\"$status\"}"
+            done
+            echo -n "]"
+        done
+        echo ""
+        echo "}"
+        return
+    fi
+
+    echo ""
+    echo -e "${CYAN}사용 가능한 스킬${NC}  (${GREEN}L${NC}=로컬 ${BLUE}G${NC}=전역 ${DIM}○${NC}=미설치)"
+    echo "========================================"
+
+    local total=0
+    local installed_count=0
+
+    for group in $(get_groups); do
+        local skills=($(get_skills_in_group "$group"))
+        local group_count=0
+
+        for skill in "${skills[@]}"; do
+            if is_installed_local "$skill" || is_installed_global "$skill"; then
+                group_count=$((group_count + 1))
+            fi
+        done
+
+        echo -e "\n${YELLOW}${group}/${NC} (${group_count}/${#skills[@]})"
+
+        for skill in "${skills[@]}"; do
+            local icon="${DIM}○${NC}"
+
+            if is_installed_local "$skill"; then
+                icon="${GREEN}L${NC}"
+                installed_count=$((installed_count + 1))
+            elif is_installed_global "$skill"; then
+                icon="${BLUE}G${NC}"
+                installed_count=$((installed_count + 1))
+            fi
+
+            printf "  %b %-24s\n" "$icon" "$skill"
+            total=$((total + 1))
+        done
+    done
+
+    echo ""
+    echo -e "${CYAN}요약${NC}: 전체 ${total}개 / 설치됨 ${installed_count}개"
+    echo ""
+    echo "설치 예시:"
+    echo "  agent-skill install kubernetes-skill     # 로컬"
+    echo "  agent-skill install -g git-commit-pr     # 전역"
+    echo "  agent-skill install ml/                  # 그룹 전체"
+    echo ""
+}
+
+# init 명령
+cmd_init() {
+    if [[ -d "$LOCAL_TARGET" ]]; then
+        log_info "이미 존재함: $LOCAL_TARGET"
+    else
+        mkdir -p "$LOCAL_TARGET"
+        log_success "생성됨: $LOCAL_TARGET"
+    fi
+
+    # .gitignore 추가 제안
+    if [[ -d ".git" && ! -f ".claude/.gitignore" ]]; then
+        mkdir -p ".claude"
+        echo "skills/" > ".claude/.gitignore"
+        log_info ".claude/.gitignore 생성됨 (skills/ 제외)"
+    fi
+}
+
+# which 명령
+cmd_which() {
+    local skill="$1"
+
+    if [[ -z "$skill" ]]; then
+        log_error "스킬 이름을 지정하세요"
+        exit 1
+    fi
+
+    local result
+    result=$(find_skill_path "$skill")
+
+    if [[ -n "$result" && "$result" != GROUP:* ]]; then
+        echo "$result"
+    else
+        log_error "스킬을 찾을 수 없습니다: $skill"
+        exit 1
+    fi
+}
+
+# 메인
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        install)    cmd_install "$@" ;;
+        uninstall)  cmd_uninstall "$@" ;;
+        list)       cmd_list "$@" ;;
+        init)       cmd_init "$@" ;;
+        which)      cmd_which "$@" ;;
+        -h|--help|help) usage ;;
+        *)
+            log_error "알 수 없는 명령: $command"
+            echo "사용법: agent-skill --help"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
