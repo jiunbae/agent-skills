@@ -120,6 +120,7 @@ claude-skill --json              # JSON 출력
 
 | 스킬 | 설명 |
 |------|------|
+| `background-implementer` | 백그라운드 병렬 구현 (컨텍스트 안전) |
 | `background-planner` | 백그라운드 병렬 기획 (컨텍스트 안전) |
 | `codex-implementer` | Codex CLI를 sub-agent로 활용한 구현 작업 |
 | `multi-llm-agent` | 여러 LLM 통합 협업 (OpenAI, Gemini, Ollama) |
