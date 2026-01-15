@@ -837,8 +837,8 @@ if [[ "$INSTALL_CODEX" == "true" ]]; then
     echo ""
 fi
 
-# 스킬 설치 대상이 없고 다른 옵션만 있으면 종료
-if [[ ${#TARGETS[@]} -eq 0 && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true") ]]; then
+# 스킬 설치 대상이 없고 다른 옵션만 있으면 종료 (단, Core 모드는 제외)
+if [[ ${#TARGETS[@]} -eq 0 && "$CORE_MODE" == "false" && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true") ]]; then
     # 다른 설치 옵션만 실행한 경우
     exit 0
 fi
