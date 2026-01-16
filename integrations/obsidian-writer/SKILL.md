@@ -11,23 +11,42 @@ description: Obsidian Vault에 문서를 업로드하는 스킬. 현재 프로�
 
 **핵심 기능:**
 - 현재 디렉토리(pwd) 기반 프로젝트명 자동 감지
-- `workspace/{프로젝트명}/context/` 경로에 문서 저장
+- `workspace/{프로젝트명}/context/` 경로에 문서 저장 (기본값)
+- **경로 매핑 지원**: `~/.agents/OBSIDIAN.md`의 "프로젝트 경로 매핑" 테이블에서 커스텀 경로 사용
 - 프로젝트별 문서 체계적 관리
 - 프론트매터(YAML) 자동 생성
 
 **저장 구조:**
 ```
 Vault/
-└── workspace/
-    ├── agent-skills/
+├── workspace/                    # ~/workspace/* 프로젝트
+│   ├── agent-skills/
+│   │   └── context/
+│   └── other-project/
+│       └── context/
+└── workspace-vibe/               # ~/workspace-vibe/* 프로젝트
+    ├── colorpal/
     │   └── context/
-    │       ├── architecture.md
-    │       ├── api-design.md
-    │       └── meeting-notes.md
-    └── other-project/
+    ├── memory-ai/
+    │   └── context/
+    ├── GoalTracker/
+    │   └── context/
+    └── shared_services/
         └── context/
-            └── readme.md
 ```
+
+## 경로 매핑 (Path Mapping)
+
+`~/.agents/OBSIDIAN.md`의 "프로젝트 경로 매핑"에 따라 경로가 결정됩니다:
+
+| 로컬 경로 | Obsidian 경로 |
+|----------|--------------|
+| `~/workspace/{project}/` | `workspace/{project}/context/` |
+| `~/workspace-vibe/{service}/` | `workspace-vibe/{service}/context/` |
+
+예시:
+- `~/workspace/agent-skills/` → `workspace/agent-skills/context/`
+- `~/workspace-vibe/colorpal/` → `workspace-vibe/colorpal/context/`
 
 ## Prerequisites
 
