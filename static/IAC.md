@@ -173,8 +173,26 @@ MYAPP_ANALYTICS_GA_ID=G-XXXXXXXXXX
 
 ### 3.3 Sealed Secrets 사용
 
+> **현재 상태 (2026-01)**: 모든 프로덕션 서비스에 Sealed Secrets 적용 완료
+> - kurim, ssudam, mstoon, claude-code-cloud, issueboard, kongbu
+
+**구조:**
+```
+kubernetes/
+├── sealed-secrets/              # Controller 배포
+│   ├── namespace.yaml
+│   └── kustomization.yaml       # bitnami controller 참조
+│
+├── base/apps/{service}/
+│   ├── sealed-secrets.yaml      # 암호화된 Secret
+│   └── kustomization.yaml       # sealed-secrets.yaml 포함
+│
+└── bootstrap/apps/prod/
+    └── sealed-secrets.yaml      # ArgoCD Application
+```
+
+**SealedSecret 템플릿:**
 ```yaml
-# 암호화된 Secret 예시
 apiVersion: bitnami.com/v1alpha1
 kind: SealedSecret
 metadata:
@@ -184,19 +202,41 @@ spec:
   encryptedData:
     API_KEY: AgBx8xJ9k+G...==
     DB_PASSWORD: AgBvL2K9m+X...==
+  template:
+    metadata:
+      annotations:
+        # ArgoCD가 생성된 Secret을 무시하도록 설정 (필수!)
+        argocd.argoproj.io/compare-options: IgnoreExtraneous
+      name: myapp-secrets
+      namespace: myapp
+    type: Opaque
 ```
 
 **명령어:**
 ```bash
-# Sealed Secrets 설치
-helm install sealed-secrets -n kube-system sealed-secrets/sealed-secrets
+# 1. 클러스터에서 기존 Secret 추출 후 SealedSecret으로 변환
+kubectl get secret myapp-secrets -n myapp -o yaml | \
+  kubeseal --controller-name=sealed-secrets-controller \
+           --controller-namespace=sealed-secrets \
+           --format yaml > sealed-secrets.yaml
 
-# Secret 암호화
+# 2. 새 Secret 생성 후 변환
 kubectl create secret generic myapp-secrets \
   --from-literal=DB_PASSWORD=mypassword \
   --dry-run=client -o yaml | \
-  kubeseal -o yaml > secrets-sealed.yaml
+  kubeseal --controller-name=sealed-secrets-controller \
+           --controller-namespace=sealed-secrets \
+           --format yaml > sealed-secrets.yaml
+
+# 3. Controller 상태 확인
+kubectl get pods -n sealed-secrets
+kubectl logs -n sealed-secrets deployment/sealed-secrets-controller --tail=20
 ```
+
+**주의사항:**
+- SealedSecret 템플릿에 `argocd.argoproj.io/compare-options: IgnoreExtraneous` 필수
+- 기존 Secret 삭제 후 SealedSecret Controller가 새로 생성하도록 해야 함
+- Controller 재시작: `kubectl rollout restart deployment/sealed-secrets-controller -n sealed-secrets`
 
 ---
 
@@ -676,7 +716,157 @@ touch k8s/overlays/{development,staging,production}/kustomization.yaml
 
 ---
 
-## 9. ArgoCD Application 템플릿
+## 9. GitOps Branch 전략
+
+### 9.1 Branch 분리 원칙
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Git Repository                           │
+├─────────────────────────────────────────────────────────────────┤
+│  main branch ─────────────────────────────────────────────────► │
+│       │                                                         │
+│       │  (개발 완료 후 수동 merge)                               │
+│       ▼                                                         │
+│  release branch ──────────────────────────────────────────────► │
+└─────────────────────────────────────────────────────────────────┘
+
+main branch    → dev 환경 (자동 배포)
+release branch → prod 환경 (수동 sync)
+```
+
+### 9.2 환경별 설정
+
+| 환경 | Branch | ArgoCD syncPolicy | 도메인 |
+|------|--------|-------------------|--------|
+| **dev** | `main` | `automated: prune, selfHeal` | `*.internal.<YOUR_DOMAIN>` |
+| **prod** | `release` | 수동 sync | `*.<YOUR_DOMAIN>` |
+
+### 9.3 ArgoCD Application 설정
+
+**dev Application (자동 배포):**
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dev-{{APP_NAME}}
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/<GITHUB_USERNAME>/IaC.git
+    targetRevision: main                    # main branch
+    path: kubernetes/overlays/dev/{{APP_NAME}}
+  destination:
+    server: https://<DEV_CLUSTER_IP>:6443      # dev cluster
+    namespace: {{APP_NAME}}-dev
+  syncPolicy:
+    automated:                              # 자동 배포
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+```
+
+**prod Application (수동 배포):**
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{APP_NAME}}
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/<GITHUB_USERNAME>/IaC.git
+    targetRevision: release                 # release branch
+    path: kubernetes/overlays/prod/{{APP_NAME}}
+  destination:
+    server: https://kubernetes.default.svc  # prod cluster
+    namespace: {{APP_NAME}}
+  syncPolicy:                               # automated 없음 = 수동 sync
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+```
+
+### 9.4 배포 워크플로우
+
+```
+1. 개발자가 코드 변경 후 main에 push
+   └── GitHub → Gitea mirror sync (webhook)
+       └── dev 환경 자동 배포 (ArgoCD automated sync)
+
+2. dev 환경에서 테스트 완료 후 prod 배포 준비
+   └── main → release branch merge (수동)
+       └── prod overlay(kubernetes/overlays/prod/{{APP_NAME}}/kustomization.yaml)의 images.newTag 갱신
+       └── ArgoCD에서 prod 앱 수동 Sync 클릭
+
+3. prod 배포 완료
+```
+
+### 9.5 Release Branch 관리
+
+**main → release merge (프로덕션 배포 시):**
+```bash
+# 방법 1: Fast-forward merge
+git checkout release
+git merge main --ff-only
+git push origin release
+
+# 방법 2: GitHub/Gitea PR
+# main → release PR 생성 후 merge
+```
+
+**Hotfix (긴급 수정):**
+```bash
+# release branch에서 직접 수정
+git checkout release
+git commit -m "hotfix: critical bug fix"
+git push origin release
+
+# ArgoCD에서 prod 수동 Sync
+
+# main에도 반영
+git checkout main
+git merge release
+git push origin main
+```
+
+### 9.6 디렉토리 구조
+
+```
+kubernetes/
+├── bootstrap/
+│   └── apps/
+│       ├── dev/                    # dev 앱 정의
+│       │   ├── kustomization.yaml
+│       │   ├── ssudam.yaml         # targetRevision: main
+│       │   └── ...
+│       ├── prod/                   # prod 앱 정의
+│       │   ├── kustomization.yaml
+│       │   ├── ssudam.yaml         # targetRevision: release
+│       │   └── ...
+│       ├── dev-apps.yaml           # App of Apps (dev)
+│       └── prod-apps.yaml          # App of Apps (prod)
+│
+└── overlays/
+    ├── dev/                        # dev 환경 오버레이
+    │   └── ssudam/
+    │       ├── kustomization.yaml
+    │       ├── configmap.yaml      # dev 설정
+    │       └── ingress.yaml        # *.internal.<YOUR_DOMAIN>
+    │
+    └── prod/                       # prod 환경 오버레이
+        └── ssudam/
+            ├── kustomization.yaml
+            ├── configmap.yaml      # prod 설정
+            └── ingress.yaml        # *.<YOUR_DOMAIN>
+```
+
+---
+
+## 10. ArgoCD Application 템플릿 (Legacy)
+
+> **Note:** 새로운 앱 추가 시 섹션 9의 branch 분리 전략을 따르세요.
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -700,6 +890,45 @@ spec:
     syncOptions:
       - CreateNamespace=true
 ```
+
+---
+
+## 11. 서비스 현황 (2026-01-21)
+
+### 11.1 프로덕션 서비스 상태
+
+| 서비스 | 네임스페이스 | SealedSecret | 상태 |
+|--------|-------------|--------------|------|
+| kurim | kurim | kurim-secrets | Healthy |
+| ssudam | ssudam | ssudam-secrets | Healthy |
+| mstoon | mstoon | mstoon-secrets | Healthy |
+| claude-code-cloud | claude-code-cloud | claude-code-cloud-secrets | Healthy |
+| selectchatgpt | selectchatgpt | - | Healthy |
+| issueboard | issueboard | issueboard-secrets | Progressing |
+| kongbu | kongbu | kongbu-secrets | Progressing |
+
+### 11.2 인프라 컴포넌트
+
+| 컴포넌트 | 네임스페이스 | 버전 |
+|----------|-------------|------|
+| Sealed Secrets Controller | sealed-secrets | v0.27.1 |
+| ArgoCD | argocd | - |
+| Ingress NGINX | ingress-nginx | - |
+
+### 11.3 최근 변경사항
+
+**2026-01-21**
+- Sealed Secrets Controller 배포 (`kubernetes/sealed-secrets/`)
+- 모든 프로덕션 서비스에 SealedSecret 적용
+- ArgoCD IgnoreExtraneous annotation 추가 (Secret prune 방지)
+- celery-beat: writable volume 추가 (SecurityContext 호환)
+
+**관련 커밋:**
+- `07d5377` - chore: add SealedSecrets for all services
+- `d9bb4ac` - feat: add Sealed Secrets for GitOps secret management
+- `8e08f0a` - fix(ssudam): add writable volume for celery-beat schedule file
+- `d1e62e7` - feat: add SealedSecrets for issueboard and kongbu
+- `3a9c818` - fix: add ArgoCD IgnoreExtraneous annotation to all SealedSecrets
 
 ---
 
