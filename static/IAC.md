@@ -173,23 +173,83 @@ MYAPP_ANALYTICS_GA_ID=G-XXXXXXXXXX
 
 ### 3.3 Sealed Secrets 사용
 
-> **현재 상태 (2026-01)**: 모든 프로덕션 서비스에 Sealed Secrets 적용 완료
+> **현재 상태 (2026-01-22)**: 모든 프로덕션 서비스에 Sealed Secrets 적용 완료
 > - kurim, ssudam, mstoon, claude-code-cloud, issueboard, kongbu
+> - **중요**: dev 환경은 SealedSecret을 사용하지 않음 (수동 secret 복사 필요)
 
-**구조:**
+**구조 (2026-01-22 변경됨):**
 ```
 kubernetes/
-├── sealed-secrets/              # Controller 배포
+├── sealed-secrets/              # Controller 배포 (ArgoCD로 관리)
 │   ├── namespace.yaml
-│   └── kustomization.yaml       # bitnami controller 참조
+│   └── kustomization.yaml       # bitnami controller v0.27.1 참조
 │
-├── base/apps/{service}/
-│   ├── sealed-secrets.yaml      # 암호화된 Secret
-│   └── kustomization.yaml       # sealed-secrets.yaml 포함
+├── base/
+│   ├── apps/{service}/          # 공통 리소스 (SealedSecret 제외)
+│   │   ├── deployment.yaml
+│   │   ├── configmap.yaml
+│   │   └── kustomization.yaml   # sealed-secrets 미포함
+│   │
+│   └── sealed-secrets/{service}/ # prod 전용 SealedSecret (분리됨)
+│       ├── sealed-secrets.yaml
+│       └── kustomization.yaml
+│
+├── overlays/
+│   ├── dev/{service}/           # base/apps만 참조 → SealedSecret 없음
+│   │   └── kustomization.yaml
+│   │
+│   └── prod/{service}/          # base/apps + base/sealed-secrets 참조
+│       └── kustomization.yaml
 │
 └── bootstrap/apps/prod/
-    └── sealed-secrets.yaml      # ArgoCD Application
+    └── sealed-secrets.yaml      # ArgoCD Application (Controller 관리)
 ```
+
+**dev vs prod 차이:**
+```yaml
+# overlays/dev/{service}/kustomization.yaml
+resources:
+  - ../../../base/apps/{service}     # SealedSecret 없음
+  - ingress.yaml
+
+# overlays/prod/{service}/kustomization.yaml
+resources:
+  - ../../../base/apps/{service}
+  - ../../../base/sealed-secrets/{service}  # prod만 SealedSecret 포함
+  - ingress.yaml
+```
+
+**dev 환경 secrets 설정 (수동) - 외부 클러스터(<DEV_CLUSTER_IP>):**
+
+> **중요**: dev 클러스터(<DEV_CLUSTER_IP>)에는 SealedSecret CRD가 없습니다.
+> Secret은 로컬(prod) 클러스터에서 복사하여 수동으로 적용해야 합니다.
+
+```bash
+# 1. 로컬(prod)에서 Secret을 JSON으로 추출
+kubectl get secret {name}-secrets -n {service} -o json | \
+  jq '.metadata.namespace = "{service}-dev" |
+      del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp,
+          .metadata.annotations, .metadata.ownerReferences, .metadata.labels)' \
+  > /tmp/{service}-secrets.json
+
+# 2. 외부 dev 클러스터로 파일 전송
+scp /tmp/{service}-secrets.json root@<DEV_CLUSTER_IP>:/tmp/
+
+# 3. 외부 dev 클러스터에서 Secret 적용
+ssh root@<DEV_CLUSTER_IP> "kubectl apply -f /tmp/{service}-secrets.json"
+
+# 4. (선택) imagePullSecret도 필요한 경우
+kubectl get secret registry-jiun-dev -n {service} -o json | \
+  jq '.metadata.namespace = "{service}-dev" |
+      del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.annotations)' \
+  > /tmp/registry-secret.json
+scp /tmp/registry-secret.json root@<DEV_CLUSTER_IP>:/tmp/
+ssh root@<DEV_CLUSTER_IP> "kubectl apply -f /tmp/registry-secret.json"
+```
+
+**Secret이 없을 때 증상:**
+- Pod 상태: `CreateContainerConfigError`
+- 이벤트: `Error: secret "{name}-secrets" not found`
 
 **SealedSecret 템플릿:**
 ```yaml
@@ -716,9 +776,162 @@ touch k8s/overlays/{development,staging,production}/kustomization.yaml
 
 ---
 
-## 9. GitOps Branch 전략
+## 9. 클러스터 구성 및 ArgoCD 설정
 
-### 9.1 Branch 분리 원칙
+> **중요**: 이 섹션은 반드시 숙지해야 합니다. 잘못된 클러스터 설정은 배포 실패의 주요 원인입니다.
+
+### 9.1 클러스터 구성
+
+| 클러스터 | 주소 | 용도 | ArgoCD 설정 |
+|----------|------|------|-------------|
+| **prod (로컬 orbstack)** | `kubernetes.default.svc` (<PROD_CLUSTER_IP>) | 프로덕션 앱 | `server: https://kubernetes.default.svc` |
+| **dev (외부 k3s)** | `https://<DEV_CLUSTER_IP>:6443` | 개발 앱 | `server: https://<DEV_CLUSTER_IP>:6443` |
+
+### 9.2 ArgoCD Application 정의 시 주의사항
+
+**⚠️ 가장 중요한 설정: `destination.server`**
+
+```yaml
+# dev 앱 (kubernetes/bootstrap/apps/dev/*.yaml)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dev-{{APP_NAME}}
+spec:
+  destination:
+    server: https://<DEV_CLUSTER_IP>:6443  # ⚠️ 반드시 외부 dev 클러스터!
+    namespace: {{APP_NAME}}-dev
+
+# prod 앱 (kubernetes/bootstrap/apps/prod/*.yaml)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{APP_NAME}}
+spec:
+  destination:
+    server: https://kubernetes.default.svc  # ⚠️ 로컬 클러스터!
+    namespace: {{APP_NAME}}
+```
+
+**잘못된 설정의 증상:**
+- dev 앱이 로컬에서 ImagePullBackOff → registry 접근 불가
+- ArgoCD에서 Degraded 표시
+- 외부 클러스터에서는 정상 실행 중인데 ArgoCD 상태가 이상함
+
+### 9.3 외부 클러스터 등록 확인
+
+```bash
+# ArgoCD에 등록된 클러스터 확인
+kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster \
+  -o jsonpath='{range .items[*]}{.metadata.name}: {.data.server | @base64d}{"\n"}{end}'
+
+# 기대 결과:
+# k3s-cluster: https://<DEV_CLUSTER_IP>:6443
+```
+
+---
+
+## 10. Kustomize 리소스 중복 방지
+
+### 10.1 중복 오류 발생 원인
+
+```
+Error: may not add resource with an already registered id:
+SealedSecret.v1alpha1.bitnami.com/kongbu-secrets.kongbu
+```
+
+이 오류는 같은 리소스가 여러 경로에서 중복 참조될 때 발생합니다.
+
+### 10.2 올바른 구조
+
+```
+kubernetes/
+├── base/
+│   ├── apps/{service}/
+│   │   ├── kustomization.yaml   # ⚠️ SealedSecret, Ingress 미포함!
+│   │   ├── deployment.yaml
+│   │   ├── configmap.yaml
+│   │   └── service.yaml
+│   │
+│   └── sealed-secrets/{service}/  # prod 전용 SealedSecret (분리)
+│       ├── kustomization.yaml
+│       └── sealed-secrets.yaml
+│
+└── overlays/
+    ├── dev/{service}/
+    │   ├── kustomization.yaml   # base/apps만 참조
+    │   └── ingress.yaml
+    │
+    └── prod/{service}/
+        ├── kustomization.yaml   # base/apps + base/sealed-secrets 참조
+        └── ingress.yaml
+```
+
+### 10.3 체크리스트
+
+새 앱 추가 또는 기존 앱 수정 시:
+
+- [ ] `base/apps/{service}/kustomization.yaml`에 `sealed-secrets.yaml` 없음
+- [ ] `base/apps/{service}/kustomization.yaml`에 `ingress.yaml` 없음
+- [ ] `overlays/dev/{service}`는 `base/apps`만 참조
+- [ ] `overlays/prod/{service}`는 `base/apps` + `base/sealed-secrets` 참조
+- [ ] Ingress는 각 overlay에서 별도 정의
+
+### 10.4 검증 명령어
+
+```bash
+# 빌드 테스트 (오류 없이 통과해야 함)
+kubectl kustomize kubernetes/overlays/dev/{service}
+kubectl kustomize kubernetes/overlays/prod/{service}
+```
+
+---
+
+## 11. Stateful Deployment 가이드
+
+### 11.1 PVC 사용 Deployment의 Strategy
+
+PVC를 사용하는 단일 replica Deployment는 **반드시 `Recreate` strategy**를 사용해야 합니다.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # ⚠️ 필수! RollingUpdate 사용 금지
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    spec:
+      containers:
+        - name: mongodb
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mongodb-pvc
+```
+
+**RollingUpdate 사용 시 문제:**
+- 새 Pod가 PVC lock 획득 실패 → CrashLoopBackOff
+- 구 Pod와 신 Pod가 동시에 같은 PVC 접근 시도
+
+**해당하는 서비스:**
+- MongoDB (모든 앱)
+- PostgreSQL (단일 replica인 경우)
+- Redis (persistence 사용 시)
+
+---
+
+## 12. GitOps Branch 전략
+
+### 12.1 Branch 분리 원칙
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -864,7 +1077,7 @@ kubernetes/
 
 ---
 
-## 10. ArgoCD Application 템플릿 (Legacy)
+## 13. ArgoCD Application 템플릿 (Legacy)
 
 > **Note:** 새로운 앱 추가 시 섹션 9의 branch 분리 전략을 따르세요.
 
@@ -893,9 +1106,9 @@ spec:
 
 ---
 
-## 11. 서비스 현황 (2026-01-21)
+## 14. 서비스 현황 (2026-01-23)
 
-### 11.1 프로덕션 서비스 상태
+### 14.1 프로덕션 서비스 상태 (<PROD_CLUSTER_IP> 로컬)
 
 | 서비스 | 네임스페이스 | SealedSecret | 상태 |
 |--------|-------------|--------------|------|
@@ -904,18 +1117,63 @@ spec:
 | mstoon | mstoon | mstoon-secrets | Healthy |
 | claude-code-cloud | claude-code-cloud | claude-code-cloud-secrets | Healthy |
 | selectchatgpt | selectchatgpt | - | Healthy |
-| issueboard | issueboard | issueboard-secrets | Progressing |
-| kongbu | kongbu | kongbu-secrets | Progressing |
+| context | context | context-secrets | Healthy |
+| issueboard | issueboard | issueboard-secrets | Healthy |
+| kongbu | kongbu | kongbu-secrets | Healthy |
 
-### 11.2 인프라 컴포넌트
+### 14.2 개발 환경 서비스 상태 (<DEV_CLUSTER_IP> 외부)
 
-| 컴포넌트 | 네임스페이스 | 버전 |
-|----------|-------------|------|
-| Sealed Secrets Controller | sealed-secrets | v0.27.1 |
-| ArgoCD | argocd | - |
-| Ingress NGINX | ingress-nginx | - |
+| 서비스 | 네임스페이스 | 상태 | 비고 |
+|--------|-------------|------|------|
+| dev-kurim | kurim-dev | Healthy | |
+| dev-ssudam | ssudam-dev | Healthy | |
+| dev-mstoon | mstoon-dev | Healthy | |
+| dev-claude-code-cloud | claude-code-cloud-dev | Healthy | |
+| dev-selectchatgpt | selectchatgpt-dev | Healthy | |
+| dev-context | context-dev | Healthy | |
+| dev-issueboard | issueboard-dev | Healthy | |
+| dev-kongbu | kongbu-dev | Healthy | secrets 수동 복사 완료 |
 
-### 11.3 최근 변경사항
+### 14.3 인프라 컴포넌트
+
+| 컴포넌트 | 네임스페이스 | 버전 | ArgoCD 관리 |
+|----------|-------------|------|-------------|
+| Sealed Secrets Controller | sealed-secrets | v0.27.1 | ✓ (sealed-secrets app) |
+| ArgoCD | argocd | - | - |
+| Traefik Ingress | kube-system | - | - |
+
+### 14.4 최근 변경사항
+
+**2026-01-23 (추가)**
+- **dev 클러스터 Secret 일괄 생성**:
+  - context-dev, claude-code-cloud-dev, issueboard-dev, ssudam-dev 네임스페이스에 Secret 생성
+  - prod에서 `{service}-secrets`, `registry-creds` 추출 후 dev 클러스터에 적용
+  - CreateContainerConfigError → Running 상태로 복구
+
+**2026-01-23**
+- **ArgoCD Application 클러스터 설정 수정**:
+  - 모든 dev-* 앱의 destination.server를 `https://<DEV_CLUSTER_IP>:6443`로 수정
+  - 이전에 잘못 설정된 `kubernetes.default.svc`로 인해 ImagePullBackOff 발생
+- **Kustomize 중복 리소스 오류 수정**:
+  - kongbu: `base/apps/kongbu`에서 `sealed-secrets.yaml` 제거
+  - kurim: `overlays/prod/kurim`의 경로를 `apps/kurim` → `base/apps/kurim`으로 수정
+- **MongoDB Deployment Strategy 수정**:
+  - selectchatgpt의 mongodb를 `strategy: Recreate`로 변경
+  - PVC lock 충돌로 인한 CrashLoopBackOff 해결
+- **dev-kongbu Secret 생성**:
+  - prod에서 kongbu-secrets를 복사하여 dev 클러스터에 적용
+
+**2026-01-22**
+- **SealedSecrets 구조 분리**: `base/apps/*/sealed-secrets.yaml` → `base/sealed-secrets/*/`
+  - dev 환경에서 SealedSecret CRD 오류 해결
+  - prod overlay만 sealed-secrets 참조
+- **ArgoCD sealed-secrets Application**: `bootstrap/apps/prod/sealed-secrets.yaml`로 관리
+- **kongbu 수정**:
+  - postgres initContainer 추가 (권한 문제 해결)
+  - server /logs 볼륨 추가 (winston logger 지원)
+  - registry-jiun-dev imagePullSecret 추가
+- **ssudam celery-beat**: livenessProbe 수정 (inspect ping → schedule file check)
+- **ArgoCD repo-server 캐시 클리어**: 오래된 manifest 캐시 문제 해결
 
 **2026-01-21**
 - Sealed Secrets Controller 배포 (`kubernetes/sealed-secrets/`)
@@ -924,10 +1182,15 @@ spec:
 - celery-beat: writable volume 추가 (SecurityContext 호환)
 
 **관련 커밋:**
+- `7388020` - fix(selectchatgpt): use Recreate strategy for mongodb deployment
+- `b2b4d06` - fix(argocd): point dev apps to external cluster (<DEV_CLUSTER_IP>)
+- `08f3bb5` - fix(kustomize): resolve duplicate resource errors for kongbu and kurim
+- `066a5f0` - fix(kongbu): add /logs volume for winston logger
+- `1722558` - fix(ssudam): correct celery-beat livenessProbe
+- `1982399` - fix(kongbu): add initContainer to fix postgres data permissions
+- `2d45ee7` - refactor(secrets): separate SealedSecrets from base to fix dev env
 - `07d5377` - chore: add SealedSecrets for all services
-- `d9bb4ac` - feat: add Sealed Secrets for GitOps secret management
 - `8e08f0a` - fix(ssudam): add writable volume for celery-beat schedule file
-- `d1e62e7` - feat: add SealedSecrets for issueboard and kongbu
 - `3a9c818` - fix: add ArgoCD IgnoreExtraneous annotation to all SealedSecrets
 
 ---
