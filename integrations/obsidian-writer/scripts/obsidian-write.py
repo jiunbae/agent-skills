@@ -35,8 +35,36 @@ def get_config_path() -> Path:
 
 
 def get_project_name() -> str:
-    """현재 작업 디렉토리에서 프로젝트명 추출"""
+    """현재 작업 디렉토리에서 프로젝트명 추출
+
+    workspace 기반 경로에서는 workspace 바로 다음 디렉토리를 프로젝트명으로 사용.
+    예: ~/workspace/ssudam/server → 'ssudam'
+        ~/workspace-vibe/colorpal/src → 'colorpal'
+        ~/other/project → 'project' (기존 동작)
+    """
     cwd = Path.cwd()
+    home = Path.home()
+
+    # workspace 기본 경로들 (우선순위 순)
+    workspace_bases = [
+        home / "workspace-vibe",
+        home / "workspace",
+    ]
+
+    # 현재 경로가 workspace 하위인지 확인
+    for base in workspace_bases:
+        try:
+            # 상대 경로 계산
+            rel_path = cwd.relative_to(base)
+            # 첫 번째 디렉토리가 프로젝트명
+            parts = rel_path.parts
+            if parts:
+                return parts[0]
+        except ValueError:
+            # relative_to 실패 = 해당 base의 하위가 아님
+            continue
+
+    # workspace 외부에서는 기존 동작 유지
     return cwd.name
 
 
