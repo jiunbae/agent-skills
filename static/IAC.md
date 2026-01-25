@@ -885,6 +885,71 @@ kubectl kustomize kubernetes/overlays/dev/{service}
 kubectl kustomize kubernetes/overlays/prod/{service}
 ```
 
+### 10.5 Deployment Selector Immutability 주의사항
+
+> **중요**: Kubernetes Deployment의 `spec.selector`는 **immutable**입니다. 한번 생성된 후에는 변경할 수 없습니다.
+
+**문제 상황:**
+```
+Deployment.apps "my-app" is invalid: spec.selector: Invalid value:
+field is immutable
+```
+
+**원인:** kustomize의 `labels` 섹션에서 `includeSelectors` 값이 변경되면 Deployment의 selector가 변경되어 위 오류 발생
+
+**권장 패턴:**
+
+```yaml
+# ✅ 권장: deployment.yaml에 selector 명시적 정의
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  selector:
+    matchLabels:
+      app: my-app  # 이 값은 절대 변경하지 않음
+  template:
+    metadata:
+      labels:
+        app: my-app
+```
+
+```yaml
+# ✅ 권장: kustomization.yaml에서 includeSelectors: false 고정
+labels:
+  - pairs:
+      env: prod
+      app.kubernetes.io/managed-by: argocd
+    includeSelectors: false  # ⚠️ 반드시 false! 절대 변경 금지
+```
+
+**금지 사항:**
+- [ ] `includeSelectors: true` 사용 금지 (기존에 true인 서비스는 유지하되, 신규 서비스는 false로)
+- [ ] 기존 서비스의 `includeSelectors` 값 변경 금지
+- [ ] selector에 포함된 label 값 변경 금지
+
+**오류 발생 시 복구 방법:**
+
+1. **기존 값으로 되돌리기 (권장, 다운타임 없음):**
+   ```bash
+   # 클러스터의 현재 selector 확인
+   kubectl get deployment -n {namespace} -o jsonpath='{range .items[*]}{.metadata.name}: {.spec.selector}{"\n"}{end}'
+
+   # kustomization.yaml의 includeSelectors 값을 클러스터와 일치하도록 복원
+   # 클러스터에 app.kubernetes.io/* 레이블이 있으면 includeSelectors: true
+   # 없으면 includeSelectors: false
+   ```
+
+2. **Deployment 삭제 후 재생성 (다운타임 발생):**
+   ```bash
+   kubectl delete deployment {name} -n {namespace}
+   # ArgoCD에서 Sync 실행
+   ```
+
+**체크리스트 (신규 서비스 추가 시):**
+- [ ] `base/apps/{service}/deployment.yaml`에 `selector.matchLabels` 명시
+- [ ] `base/apps/{service}/kustomization.yaml`에 `includeSelectors: false` 설정
+- [ ] `overlays/*/kustomization.yaml`에 `includeSelectors: false` 설정
+
 ---
 
 ## 11. Stateful Deployment 가이드
@@ -1145,6 +1210,11 @@ spec:
 ### 14.4 최근 변경사항
 
 **2026-01-23 (추가)**
+- **context prod Deployment selector 오류 수정**:
+  - `includeSelectors: false` → `true`로 복원
+  - 클러스터에 이미 `app.kubernetes.io/name`, `app.kubernetes.io/part-of` 레이블이 selector에 포함되어 있었음
+  - Deployment selector는 immutable이므로 기존 값과 일치시켜야 함
+  - 커밋: `c44fc9b` - fix(context): include kustomize labels in selectors
 - **dev 클러스터 Secret 일괄 생성**:
   - context-dev, claude-code-cloud-dev, issueboard-dev, ssudam-dev 네임스페이스에 Secret 생성
   - prod에서 `{service}-secrets`, `registry-creds` 추출 후 dev 클러스터에 적용
@@ -1182,6 +1252,7 @@ spec:
 - celery-beat: writable volume 추가 (SecurityContext 호환)
 
 **관련 커밋:**
+- `c44fc9b` - fix(context): include kustomize labels in selectors to match existing deployments
 - `7388020` - fix(selectchatgpt): use Recreate strategy for mongodb deployment
 - `b2b4d06` - fix(argocd): point dev apps to external cluster (<DEV_CLUSTER_IP>)
 - `08f3bb5` - fix(kustomize): resolve duplicate resource errors for kongbu and kurim
