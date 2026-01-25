@@ -17,6 +17,7 @@
 |------|------|----------|
 | `WHOAMI.md` | 사용자 프로필 (기술 스택, 선호도) | whoami |
 | `SECURITY.md` | 보안 규칙 (커밋 금지 패턴) | git-commit-pr |
+| `CONTEXT.md` | 프로젝트 컨텍스트 관리 표준 | context-manager |
 | `STYLE.md` | 코딩 스타일 가이드 | 전역 |
 
 ## 파일 상세
@@ -85,6 +86,16 @@
 - Functions: camelCase
 - Classes: PascalCase
 ...
+```
+
+### CONTEXT.md
+
+프로젝트 컨텍스트 관리 표준을 정의합니다. 암묵지 감소 및 에이전트 간 맥락 공유를 위한 `.context/` 디렉토리 활용 가이드를 제공합니다.
+
+**관리 방법:**
+- `context-manager` 스킬이 참조 및 업데이트 권장
+- [CONTEXT.md 상세 보기](./CONTEXT.md)
+
 ```
 
 ## 다른 머신에서 설정

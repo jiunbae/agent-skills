@@ -14,6 +14,9 @@ Automatically manage project context documentation stored in `context/` director
 3. **Loading** relevant context into the conversation
 4. **Updating** or creating documentation based on work completed
 
+**Core Goal: Reducing Implicit Knowledge (암묵지 감소)**
+The primary purpose of this skill is to capture and share knowledge that isn't explicitly visible in the code, such as design intent, background decisions, and implementation plans.
+
 ## When to Use
 
 This skill should be activated **at the start of every task** to ensure proper context awareness. It is especially critical when:
@@ -24,6 +27,10 @@ This skill should be activated **at the start of every task** to ensure proper c
 - Contributing to teams that maintain project documentation
 
 ## Workflow
+
+### Step 0: Reference Global Policy
+
+Before interacting with project-specific context, ensure you are familiar with the **Global Context Management Standard** located at `~/.agents/CONTEXT.md`. This document defines the expected structure and agent behavior for all projects.
 
 ### Step 1: Check for Context Directory
 
