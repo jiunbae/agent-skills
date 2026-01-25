@@ -11,14 +11,33 @@
 # 결과: ~/.agents -> agent-skills/static/
 ```
 
+## Sample 파일 사용
+
+민감한 개인 정보 보호를 위해 실제 설정 파일은 `.gitignore`에서 제외됩니다.
+`*.sample.md` 파일을 복사하여 실제 파일을 생성하세요:
+
+```bash
+# 각 sample 파일을 복사하여 실제 파일 생성
+cp NOTION.sample.md NOTION.md
+cp SECURITY.sample.md SECURITY.md
+cp OBSIDIAN.sample.md OBSIDIAN.md
+cp IAC.sample.md IAC.md
+cp CONTEXT.sample.md CONTEXT.md
+
+# 이후 각 파일을 실제 정보로 수정
+```
+
 ## 파일 목록
 
-| 파일 | 용도 | 관리 스킬 |
-|------|------|----------|
-| `WHOAMI.md` | 사용자 프로필 (기술 스택, 선호도) | whoami |
-| `SECURITY.md` | 보안 규칙 (커밋 금지 패턴) | git-commit-pr |
-| `CONTEXT.md` | 프로젝트 컨텍스트 관리 표준 | context-manager |
-| `STYLE.md` | 코딩 스타일 가이드 | 전역 |
+| 파일 | Sample | 용도 | 관리 스킬 |
+|------|--------|------|----------|
+| `WHOAMI.md` | - | 사용자 프로필 (기술 스택, 선호도) | whoami |
+| `NOTION.md` | `NOTION.sample.md` | Notion 연동 설정 | notion-summary |
+| `SECURITY.md` | `SECURITY.sample.md` | 보안 규칙 (커밋 금지 패턴) | git-commit-pr |
+| `OBSIDIAN.md` | `OBSIDIAN.sample.md` | Obsidian vault 리소스 목록 | obsidian-writer |
+| `IAC.md` | `IAC.sample.md` | IaC/Kubernetes 배포 가이드 | - |
+| `CONTEXT.md` | `CONTEXT.sample.md` | 프로젝트 컨텍스트 관리 표준 | context-manager |
+| `STYLE.md` | - | 코딩 스타일 가이드 | 전역 |
 
 ## 파일 상세
 
@@ -114,9 +133,10 @@ cd ~/workspace/agent-skills
 
 ## 주의사항
 
-- 이 디렉토리는 **Git으로 버전 관리**됩니다
-- 민감한 정보는 저장하지 마세요 (API 키, 비밀번호 등)
-- 민감 정보가 필요하면 `.gitignore`에 추가하거나 환경 변수 사용
+- `*.sample.md` 파일만 Git으로 버전 관리됩니다
+- 실제 설정 파일 (`*.md`, `!README.md`, `!*.sample.md`)은 `.gitignore`에서 제외됩니다
+- 민감한 정보 (페이지 ID, 클러스터 IP, 프로젝트 경로 등)는 실제 파일에만 기록하세요
+- API 키, 비밀번호는 환경 변수로 관리하세요
 
 ## 관련 스킬
 
