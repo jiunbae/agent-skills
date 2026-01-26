@@ -320,30 +320,43 @@ Bash({
 })
 ```
 
-### Step 4: 진행 상황 모니터링
+### Step 4: 결과 확인 안내 (모니터링 금지)
 
-사용자에게 모니터링 방법 안내:
+**IMPORTANT: Claude는 백그라운드 에이전트의 완료 여부를 주기적으로 모니터링하지 않습니다.**
+
+주기적 모니터링은 토큰 낭비가 심하므로, 에이전트 실행 후 사용자에게 **직접 확인 방법만 안내**합니다:
 
 ```markdown
-## 에이전트 실행 중
+## 에이전트 실행 완료
 
-3개의 에이전트가 백그라운드에서 기획을 진행 중입니다.
+{N}개의 에이전트가 백그라운드에서 기획을 시작했습니다.
 
-**진행 상황 확인:**
+**결과 확인 방법 (사용자가 직접):**
 \`\`\`bash
-# 상태 확인
-cat .context/plans/20260114_custom-workflow/status.json | jq
-
 # 완료된 파일 확인
 ls -la .context/plans/20260114_custom-workflow/*.md
 
-# 실시간 모니터링
-watch -n 5 'cat .context/plans/20260114_custom-workflow/status.json | jq .completed'
+# 상태 확인
+cat .context/plans/20260114_custom-workflow/status.json | jq
+
+# 특정 기획안 읽기
+cat .context/plans/20260114_custom-workflow/01-backend.md
 \`\`\`
 
-**완료되면 알려드릴게요!**
-또는 "진행 상황 확인해줘"라고 말씀해주세요.
+**결과 파일 위치:**
+- 상세 기획안: `.context/plans/{session}/01-backend.md`, `02-frontend.md`, ...
+- 요약: `.context/plans/{session}/01-backend-summary.md`, ...
+- 통합 기획안: `.context/plans/{session}/merged-plan.md`
+
+작업이 완료되면 위 파일들이 생성됩니다.
+확인 후 "결과 머지해줘" 또는 "기획 리뷰해줘"라고 요청해주세요.
 ```
+
+**Claude의 행동 규칙:**
+1. 에이전트 실행 후 **즉시 결과 확인 방법 안내** (위 템플릿)
+2. **주기적 모니터링 금지** - TaskOutput, Read로 완료 여부 반복 확인하지 않음
+3. **사용자가 명시적으로 요청할 때만** 결과 확인 수행
+4. 토큰 절약을 위해 요약 파일(`*-summary.md`)을 먼저 확인
 
 ### Step 5: 결과 머지
 
@@ -779,6 +792,8 @@ Bash({
 - 결과 검토 없이 바로 구현
 - **긴 프롬프트를 문자열로 직접 전달**
 - **전체 기획안을 그대로 메인 세션에 반환**
+- **주기적으로 에이전트 완료 여부 모니터링** (토큰 낭비)
+- **사용자 요청 없이 TaskOutput/Read로 결과 확인 반복**
 
 ## Troubleshooting
 
