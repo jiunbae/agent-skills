@@ -401,9 +401,52 @@ Bash({
 | Unit Tests | Gemini | Claude | 다양한 케이스 생성 |
 | Documentation | Gemini | Claude | 상세한 설명 |
 
-### Step 5: 결과 수집
+### Step 5: 결과 확인 안내 (모니터링 금지)
 
-모든 에이전트 완료 후 통합 결과 생성:
+**IMPORTANT: Claude는 백그라운드 에이전트의 완료 여부를 주기적으로 모니터링하지 않습니다.**
+
+주기적 모니터링은 토큰 낭비가 심하므로, 에이전트 실행 후 사용자에게 **직접 확인 방법만 안내**합니다:
+
+```markdown
+## 구현 에이전트 실행 완료
+
+{N}개의 에이전트가 백그라운드에서 구현을 시작했습니다.
+
+**결과 확인 방법 (사용자가 직접):**
+\`\`\`bash
+# 완료된 결과 파일 확인
+ls -la .context/impl/20260115_api-tokens/*.md
+
+# 상태 확인
+cat .context/impl/20260115_api-tokens/status.json | jq
+
+# 특정 구현 결과 확인
+cat .context/impl/20260115_api-tokens/01-migration-result.md
+
+# git으로 변경된 파일 확인
+git status
+\`\`\`
+
+**결과 파일 위치:**
+- 구현 결과: `.context/impl/{session}/01-migration-result.md`, `02-models-result.md`, ...
+- 상태 추적: `.context/impl/{session}/status.json`
+- 통합 요약: `.context/impl/{session}/summary.md`
+
+작업이 완료되면 위 파일들이 생성되고, 실제 코드 파일도 생성/수정됩니다.
+확인 후 "결과 확인해줘" 또는 "빌드 체크해줘"라고 요청해주세요.
+```
+
+**Claude의 행동 규칙:**
+1. 에이전트 실행 후 **즉시 결과 확인 방법 안내** (위 템플릿)
+2. **주기적 모니터링 금지** - TaskOutput, Read로 완료 여부 반복 확인하지 않음
+3. **사용자가 명시적으로 요청할 때만** 결과 확인 수행
+4. 토큰 절약을 위해 결과 요약 파일(`*-result.md`)을 먼저 확인
+
+---
+
+### 결과 통합 (사용자 요청 시)
+
+사용자가 결과 확인을 요청하면 통합 결과 생성:
 
 ```markdown
 # 구현 결과: {feature_name}
@@ -923,6 +966,8 @@ Bash({
 - 결과 검토 없이 다음 웨이브 진행
 - **긴 프롬프트를 문자열로 직접 전달**
 - **전체 출력을 그대로 반환**
+- **주기적으로 에이전트 완료 여부 모니터링** (토큰 낭비)
+- **사용자 요청 없이 TaskOutput/Read로 결과 확인 반복**
 
 ## Troubleshooting
 
