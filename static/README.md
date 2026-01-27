@@ -36,8 +36,9 @@ cp CONTEXT.sample.md CONTEXT.md
 | `SECURITY.md` | `SECURITY.sample.md` | 보안 규칙 (커밋 금지 패턴) | git-commit-pr |
 | `OBSIDIAN.md` | `OBSIDIAN.sample.md` | Obsidian vault 리소스 목록 | obsidian-writer |
 | `IAC.md` | `IAC.sample.md` | IaC/Kubernetes 배포 가이드 | - |
-| `VAULT.md` | - | Vaultwarden secrets 접근 가이드 | - |
+| `VAULT.md` | `VAULT.sample.md` | Vaultwarden secrets 접근 가이드 | - |
 | `CONTEXT.md` | `CONTEXT.sample.md` | 프로젝트 컨텍스트 관리 표준 | context-manager |
+| `SERVICES.md` | `SERVICES.sample.md` | 서비스/컨테이너 중앙 관리 (포트, 상태) | service-manager |
 | `STYLE.md` | - | 코딩 스타일 가이드 | 전역 |
 
 ## 파일 상세
