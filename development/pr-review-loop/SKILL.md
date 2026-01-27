@@ -16,6 +16,8 @@ PR 생성 후 리뷰가 달릴 때까지 대기하고, 리뷰 내용을 분석�
 - **리뷰 재요청**: 수정 후 `gh pr edit --add-reviewer`로 시스템적 리뷰 재요청
 - **반복 실행**: 수정 사항이 없을 때까지 자동 반복
 
+> ⚠️ **[중요]** PR 코멘트 작성 시 **반드시 마지막에 `/gemini review`를 포함**해야 Gemini가 다음 리뷰를 생성합니다. 이것을 빼먹으면 리뷰 루프가 중단됩니다!
+
 ## When to Use
 
 이 스킬은 다음 상황에서 활성화됩니다:
@@ -107,6 +109,12 @@ export PR_REVIEW_MAX_ATTEMPTS=10  # 최대 시도 횟수
 │  ┌──────────────┐                                           │
 │  │ 커밋 & 푸시  │                                           │
 │  └──────┬───────┘                                           │
+│         │                                                   │
+│         ▼                                                   │
+│  ┌──────────────────────────────────┐                       │
+│  │ ⚠️ PR 코멘트 작성                │                       │
+│  │ (반드시 /gemini review 포함!)    │                       │
+│  └──────┬───────────────────────────┘                       │
 │         │                                                   │
 │         ▼                                                   │
 │  ┌──────────────┐                                           │
@@ -262,14 +270,37 @@ gh api repos/{owner}/{repo}/pulls/<PR_NUMBER>/requested_reviewers \
 - 리뷰어 이름은 `Copilot` (대문자 C)으로 정확히 지정해야 함
 - 코멘트 방식(`@copilot /review`) 대신 시스템적 reviewer 요청 사용
 
-**선택적: PR에 수정 내용 코멘트 작성**
+---
+
+### ⚠️⚠️⚠️ [필수] PR 코멘트에 `/gemini review` 포함 ⚠️⚠️⚠️
+
+> **절대 잊지 마세요!** PR 코멘트 작성 시 마지막에 반드시 `/gemini review`를 포함해야 합니다.
+> 이것이 없으면 Gemini가 다음 리뷰를 생성하지 않아 루프가 중단됩니다!
+
 ```bash
+# ✅ 올바른 예시 - 반드시 /gemini review로 끝내야 함!
+gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
+
+**수정 내용:**
+- [변경 사항 1]
+- [변경 사항 2]
+
+/gemini review"
+```
+
+```bash
+# ❌ 잘못된 예시 - /gemini review 누락!
 gh pr comment <PR_NUMBER> --body "리뷰 피드백을 반영했습니다.
 
 **수정 내용:**
 - [변경 사항 1]
 - [변경 사항 2]"
+# ↑ 이렇게 하면 Gemini 리뷰가 트리거되지 않음!
 ```
+
+**체크리스트:**
+- [ ] 코멘트 마지막 줄에 `/gemini review` 포함했는가?
+- [ ] `/gemini review` 앞에 빈 줄이 있는가? (가독성)
 
 ---
 
@@ -315,6 +346,16 @@ Claude: PR #123의 리뷰를 대기합니다.
 
 ## 커밋 & 푸시
 commit: "fix: add error handling to validateToken"
+
+## PR 코멘트 작성 (⚠️ /gemini review 필수!)
+```
+리뷰 피드백을 반영했습니다.
+
+**수정 내용:**
+- validateToken에 try-catch 에러 핸들링 추가
+
+/gemini review   ← 이거 없으면 다음 리뷰 안 옴!
+```
 
 ## 리뷰 재요청
 `gh api ... --field 'reviewers[]=Copilot'` 실행 완료
@@ -409,11 +450,13 @@ Claude: ...
 - PR 생성 직후 실행하여 빠른 피드백 루프 구성
 - 명확한 커밋 메시지로 수정 내용 기록
 - 불확실한 수정은 보고와 함께 진행
+- **⚠️ PR 코멘트 작성 시 반드시 마지막에 `/gemini review` 포함**
 
 **DON'T:**
 - 너무 짧은 간격으로 확인 (API 제한 고려)
 - 아키텍처 변경 같은 대규모 수정을 자동화
 - 테스트 없이 수정 커밋
+- **❌ `/gemini review` 없이 PR 코멘트 작성 (리뷰 루프 중단됨!)**
 
 ---
 
