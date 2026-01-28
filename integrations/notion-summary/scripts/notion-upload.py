@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-notion-upload.py - Claude 세션 결과를 Notion에 업로드
+notion-upload.py - 마크다운 파일을 Notion에 업로드
 
 사용법:
-    notion-upload.py --check-config          # 설정 확인
-    notion-upload.py --summary "..." --changes "..." --project "..."
-    notion-upload.py --interactive           # 대화형 모드
+    notion-upload.py --check-config                    # 설정 확인
+    notion-upload.py --file "/path/to.md"              # 파일 업로드 (권장)
+    notion-upload.py --file "*.md" --project "name"    # 여러 파일 업로드
+    notion-upload.py --interactive                     # 대화형 모드
+
+원칙:
+    - 이미 저장된 파일을 그대로 업로드
+    - 내용 복사/재구성 없이 파일 경로만 전달
+    - Notion 블록 제한(100개) 초과 시 자동 분할
 """
 
 import os
@@ -194,16 +200,58 @@ def create_notion_database_item(notion, database_id, title, content_blocks):
 
 
 def text_to_blocks(text, block_type="paragraph"):
-    """텍스트를 Notion 블록으로 변환"""
+    """텍스트를 Notion 블록으로 변환 (원본 보존)"""
     blocks = []
     lines = text.split('\n')
+    in_code_block = False
+    code_content = []
+    code_language = ""
 
     for line in lines:
+        # 코드 블록 처리
+        if line.startswith('```'):
+            if not in_code_block:
+                in_code_block = True
+                code_language = line[3:].strip() or "plain text"
+                code_content = []
+            else:
+                # 코드 블록 종료 - 전체 코드를 하나의 블록으로
+                blocks.append({
+                    "type": "code",
+                    "code": {
+                        "rich_text": [{"text": {"content": '\n'.join(code_content)}}],
+                        "language": code_language if code_language in [
+                            "javascript", "python", "typescript", "java", "go",
+                            "rust", "bash", "shell", "json", "yaml", "markdown",
+                            "html", "css", "sql", "plain text"
+                        ] else "plain text"
+                    }
+                })
+                in_code_block = False
+                code_content = []
+            continue
+
+        if in_code_block:
+            code_content.append(line)
+            continue
+
+        # 빈 줄도 보존 (원본 유지)
         if not line.strip():
+            blocks.append({
+                "type": "paragraph",
+                "paragraph": {"rich_text": []}
+            })
             continue
 
         # 마크다운 헤딩 처리
-        if line.startswith('### '):
+        if line.startswith('#### '):
+            blocks.append({
+                "type": "heading_3",
+                "heading_3": {
+                    "rich_text": [{"text": {"content": line[5:]}}]
+                }
+            })
+        elif line.startswith('### '):
             blocks.append({
                 "type": "heading_3",
                 "heading_3": {
@@ -224,28 +272,66 @@ def text_to_blocks(text, block_type="paragraph"):
                     "rich_text": [{"text": {"content": line[2:]}}]
                 }
             })
-        elif line.startswith('- '):
+        elif line.startswith('- ') or line.startswith('* '):
             blocks.append({
                 "type": "bulleted_list_item",
                 "bulleted_list_item": {
                     "rich_text": [{"text": {"content": line[2:]}}]
                 }
             })
-        elif line.startswith('```'):
-            continue  # 코드 블록 시작/끝 무시
-        else:
+        elif re.match(r'^\d+\.\s', line):
+            # 번호 리스트
+            content = re.sub(r'^\d+\.\s', '', line)
             blocks.append({
-                "type": block_type,
-                "paragraph": {
-                    "rich_text": [{"text": {"content": line}}]
+                "type": "numbered_list_item",
+                "numbered_list_item": {
+                    "rich_text": [{"text": {"content": content}}]
                 }
             })
+        elif line.startswith('> '):
+            blocks.append({
+                "type": "quote",
+                "quote": {
+                    "rich_text": [{"text": {"content": line[2:]}}]
+                }
+            })
+        elif line.startswith('---') or line.startswith('***'):
+            blocks.append({"type": "divider", "divider": {}})
+        else:
+            # Notion 텍스트 제한: 2000자
+            if len(line) > 2000:
+                # 긴 줄은 분할
+                for i in range(0, len(line), 2000):
+                    blocks.append({
+                        "type": block_type,
+                        "paragraph": {
+                            "rich_text": [{"text": {"content": line[i:i+2000]}}]
+                        }
+                    })
+            else:
+                blocks.append({
+                    "type": block_type,
+                    "paragraph": {
+                        "rich_text": [{"text": {"content": line}}]
+                    }
+                })
 
     return blocks
 
 
-def upload_summary(summary, changes, project=None, dry_run=False):
-    """세션 결과를 Notion에 업로드"""
+def split_blocks_for_upload(blocks, max_blocks=100):
+    """블록을 Notion API 제한(100개)에 맞게 분할"""
+    if len(blocks) <= max_blocks:
+        return [blocks]
+
+    parts = []
+    for i in range(0, len(blocks), max_blocks):
+        parts.append(blocks[i:i + max_blocks])
+    return parts
+
+
+def upload_document(content, title=None, project=None, dry_run=False):
+    """문서 전체를 Notion에 업로드 (요약 없이 원본 그대로)"""
 
     # 설정 로드
     token = os.environ.get('NOTION_TOKEN')
@@ -262,80 +348,70 @@ def upload_summary(summary, changes, project=None, dry_run=False):
         return False
 
     # 민감 정보 확인
-    all_content = f"{summary}\n{changes}"
-    sensitive = check_sensitive_content(all_content)
+    sensitive = check_sensitive_content(content)
 
     if sensitive:
         print("⚠️  민감 정보 발견:")
         for s in sensitive[:5]:  # 최대 5개만 표시
             print(f"   - {s[:20]}...")
         print("\n민감 정보는 [REDACTED]로 마스킹됩니다.")
-        summary = mask_sensitive_content(summary)
-        changes = mask_sensitive_content(changes)
+        content = mask_sensitive_content(content)
 
     # 페이지 제목 생성
     today = datetime.now().strftime('%Y-%m-%d')
     project_name = project or (config and config.get('default_project', 'general'))
-    title = f"{today} - {project_name}"
+    page_title = title or f"{today} - {project_name}"
 
-    # 콘텐츠 블록 생성
-    blocks = []
+    # 문서 전체를 블록으로 변환
+    blocks = text_to_blocks(content)
 
-    # 세션 요약 섹션
-    blocks.append({
-        "type": "heading_2",
-        "heading_2": {
-            "rich_text": [{"text": {"content": "세션 요약"}}]
-        }
-    })
-    blocks.extend(text_to_blocks(summary))
-
-    # 구분선
-    blocks.append({"type": "divider", "divider": {}})
-
-    # 작업 결과 섹션
-    blocks.append({
-        "type": "heading_2",
-        "heading_2": {
-            "rich_text": [{"text": {"content": "작업 결과"}}]
-        }
-    })
-    blocks.extend(text_to_blocks(changes))
-
-    # 메타 정보
+    # 메타 정보 추가
     blocks.append({"type": "divider", "divider": {}})
     blocks.append({
         "type": "callout",
         "callout": {
-            "rich_text": [{"text": {"content": f"업로드: {datetime.now().strftime('%Y-%m-%d %H:%M')}"}}],
-            "icon": {"emoji": "🤖"}
+            "rich_text": [{"text": {"content": f"업로드: {datetime.now().strftime('%Y-%m-%d %H:%M')} | 원본 길이: {len(content):,}자"}}],
+            "icon": {"emoji": "📄"}
         }
     })
 
+    # 블록 분할 (Notion API 제한: 100블록)
+    block_parts = split_blocks_for_upload(blocks, max_blocks=100)
+
     if dry_run:
         print("\n## 미리보기 (Dry Run)\n")
-        print(f"제목: {title}")
+        print(f"제목: {page_title}")
         print(f"부모 페이지: {page_id}")
-        print(f"\n### 세션 요약\n{summary}")
-        print(f"\n### 작업 결과\n{changes}")
+        print(f"문서 길이: {len(content):,}자")
+        print(f"Notion 블록 수: {len(blocks)}")
+        if len(block_parts) > 1:
+            print(f"분할 페이지 수: {len(block_parts)}")
+        print(f"\n--- 문서 내용 (전체) ---\n{content}")
         return True
 
     # 실제 업로드
     try:
         notion = Client(auth=token)
         target_type = config.get('target_type', 'database') if config else 'database'
+        created_pages = []
 
-        if target_type == 'database':
-            new_page = create_notion_database_item(notion, page_id, title, blocks)
-        else:
-            new_page = create_notion_page(notion, page_id, title, blocks)
+        for i, part_blocks in enumerate(block_parts):
+            part_title = page_title if len(block_parts) == 1 else f"{page_title} (Part {i+1})"
 
-        page_url = new_page.get('url', 'N/A')
+            if target_type == 'database':
+                new_page = create_notion_database_item(notion, page_id, part_title, part_blocks)
+            else:
+                new_page = create_notion_page(notion, page_id, part_title, part_blocks)
+
+            created_pages.append(new_page)
 
         print(f"\n✅ 업로드 완료")
-        print(f"   제목: {title}")
-        print(f"   대상: {target_type}")
-        print(f"   URL: {page_url}")
+        print(f"   제목: {page_title}")
+        print(f"   문서 길이: {len(content):,}자")
+        print(f"   Notion 블록: {len(blocks)}개")
+        if len(created_pages) > 1:
+            print(f"   분할 페이지: {len(created_pages)}개")
+        print(f"   URL: {created_pages[0].get('url', 'N/A')}")
         return True
 
     except Exception as e:
@@ -343,60 +419,63 @@ def upload_summary(summary, changes, project=None, dry_run=False):
         return False
 
 
+# 하위 호환성을 위한 별칭
+def upload_summary(summary, changes, project=None, dry_run=False):
+    """(레거시) 세션 요약 업로드 - upload_document로 리다이렉트"""
+    content = f"# 세션 요약\n\n{summary}\n\n---\n\n# 작업 결과\n\n{changes}"
+    return upload_document(content, project=project, dry_run=dry_run)
+
+
 def interactive_mode():
-    """대화형 모드"""
-    print("## Notion 업로드 - 대화형 모드\n")
+    """대화형 모드 - 파일 경로 기반 업로드"""
+    print("## Notion 업로드 - 파일 업로드 모드\n")
 
     if not check_config():
         return
 
     print("\n---\n")
 
-    print("세션 요약을 입력하세요 (빈 줄 2번으로 종료):")
-    summary_lines = []
-    empty_count = 0
-    while empty_count < 2:
-        line = input()
-        if line == '':
-            empty_count += 1
-        else:
-            empty_count = 0
-            summary_lines.append(line)
-    summary = '\n'.join(summary_lines)
+    file_path_str = input("업로드할 마크다운 파일 경로: ").strip()
+    if not file_path_str:
+        print("파일 경로가 필요합니다.")
+        return
 
-    print("\n작업 결과를 입력하세요 (빈 줄 2번으로 종료):")
-    changes_lines = []
-    empty_count = 0
-    while empty_count < 2:
-        line = input()
-        if line == '':
-            empty_count += 1
-        else:
-            empty_count = 0
-            changes_lines.append(line)
-    changes = '\n'.join(changes_lines)
+    file_path = Path(file_path_str)
+    if not file_path.exists():
+        print(f"Error: 파일을 찾을 수 없습니다: {file_path_str}")
+        return
 
-    project = input("\n프로젝트명 (Enter로 기본값): ").strip() or None
+    content = file_path.read_text()
+    print(f"\n📄 {file_path_str} ({len(content):,}자)")
+
+    title = input(f"\n문서 제목 (Enter로 '{file_path.stem}' 사용): ").strip() or file_path.stem
+    project = input("프로젝트명 (Enter로 기본값): ").strip() or None
 
     print("\n미리보기:")
-    upload_summary(summary, changes, project, dry_run=True)
+    upload_document(content, title=title, project=project, dry_run=True)
 
     confirm = input("\n업로드하시겠습니까? (Y/n): ").strip().lower()
     if confirm in ('', 'y', 'yes'):
-        upload_summary(summary, changes, project, dry_run=False)
+        upload_document(content, title=title, project=project, dry_run=False)
     else:
         print("취소되었습니다.")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Claude 세션 결과를 Notion에 업로드',
+        description='마크다운 파일을 Notion에 업로드',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 예시:
   %(prog)s --check-config
-  %(prog)s --summary "작업 요약" --changes "변경 사항" --project "my-project"
+  %(prog)s --file "/path/to/document.md"
+  %(prog)s --file "plan.md" --title "설계서" --project "my-project"
   %(prog)s --interactive
+
+원칙:
+  - 이미 저장된 파일을 그대로 업로드 (--file 권장)
+  - 내용 복사 없이 파일 경로만 전달
+  - Notion 블록 제한(100개) 초과 시 자동 분할
         """
     )
 
@@ -404,14 +483,22 @@ def main():
                         help='설정 상태 확인')
     parser.add_argument('--interactive', '-i', action='store_true',
                         help='대화형 모드')
-    parser.add_argument('--summary', '-s', type=str,
-                        help='세션 요약 내용')
-    parser.add_argument('--changes', '-c', type=str,
-                        help='작업 결과/변경 사항')
+    parser.add_argument('--file', '-f', type=str,
+                        help='업로드할 마크다운 파일 경로 (권장)')
+    parser.add_argument('--title', '-t', type=str,
+                        help='문서 제목 (미지정 시 파일명 사용)')
     parser.add_argument('--project', '-p', type=str,
                         help='프로젝트명')
     parser.add_argument('--dry-run', action='store_true',
                         help='업로드 없이 미리보기만')
+
+    # 레거시/대안 옵션
+    parser.add_argument('--content', type=str,
+                        help='(대안) 직접 내용 전달 - --file 권장')
+    parser.add_argument('--summary', '-s', type=str,
+                        help='(레거시) 세션 요약')
+    parser.add_argument('--changes', '-c', type=str,
+                        help='(레거시) 변경 사항')
 
     args = parser.parse_args()
 
@@ -419,7 +506,21 @@ def main():
         check_config()
     elif args.interactive:
         interactive_mode()
+    elif args.file:
+        # 파일에서 읽기 (권장 방식)
+        file_path = Path(args.file)
+        if not file_path.exists():
+            print(f"Error: 파일을 찾을 수 없습니다: {args.file}")
+            sys.exit(1)
+        content = file_path.read_text()
+        title = args.title or file_path.stem
+        print(f"📄 {args.file} ({len(content):,}자)")
+        upload_document(content, title=title, project=args.project, dry_run=args.dry_run)
+    elif args.content:
+        print("💡 팁: --file 옵션으로 파일 경로를 직접 전달하는 것을 권장합니다.\n")
+        upload_document(args.content, title=args.title, project=args.project, dry_run=args.dry_run)
     elif args.summary and args.changes:
+        print("⚠️  --summary/--changes는 레거시 옵션입니다. --file 사용을 권장합니다.\n")
         upload_summary(args.summary, args.changes, args.project, args.dry_run)
     else:
         parser.print_help()
