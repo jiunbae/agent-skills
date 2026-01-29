@@ -2,13 +2,20 @@
 # English Coaching Hook - runs on every prompt submission
 # Rewrites user's prompt in natural English and shows vocabulary
 
-# Read stdin (user prompt) and check length
-# Skip coaching for long prompts (e.g., pasted logs) to avoid errors
+# Read stdin (user prompt) and check length + content
+# Skip coaching for non-text content (logs, cookies, JSON, etc.) to avoid errors
 MAX_LEN=2000
 input=$(cat)
 prompt_len=${#input}
 
+# Skip if prompt is too long (pasted logs, data, etc.)
 if [ "$prompt_len" -gt "$MAX_LEN" ]; then
+  exit 0
+fi
+
+# Skip if prompt looks like structured data rather than natural language
+# Matches: JSON objects/arrays, cookies, key=value pairs, stack traces, etc.
+if echo "$input" | grep -qE '^\s*[\[{]|cookie|=[A-Za-z0-9_%-]{20,}|"[a-z_]+":|at [A-Za-z]+\.|Traceback|Exception|Error:.*line [0-9]'; then
   exit 0
 fi
 
