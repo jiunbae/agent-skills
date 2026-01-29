@@ -55,10 +55,11 @@ EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" ".git" ".github" ".agents" 
 # Core 스킬 (기본 전역 설치, 워크스페이스 공통 필수)
 CORE_SKILLS=(
     "meta/skill-manager"
-    "meta/skill-recommender"
     "development/git-commit-pr"
     "context/context-manager"
     "context/whoami"
+    "security/security-auditor"
+    "context/static-index"
 )
 
 # Core 모드 플래그
