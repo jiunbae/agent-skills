@@ -5,5 +5,12 @@
     "event": "UserPromptSubmit",
     "type": "command",
     "statusMessage": "English coaching..."
+  },
+  "prompt-logger": {
+    "description": "Logs all prompts to MinIO for analytics (non-blocking)",
+    "script": "prompt-logger.sh",
+    "event": "UserPromptSubmit",
+    "type": "command",
+    "statusMessage": "Logging prompt..."
   }
 }
