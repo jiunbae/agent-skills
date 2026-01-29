@@ -34,38 +34,49 @@ def get_config_path() -> Path:
     return Path.home() / ".agents" / "OBSIDIAN.md"
 
 
-def get_project_name() -> str:
-    """현재 작업 디렉토리에서 프로젝트명 추출
+def get_project_info() -> tuple[str, str]:
+    """현재 작업 디렉토리에서 프로젝트명과 workspace 타입 추출
 
     workspace 기반 경로에서는 workspace 바로 다음 디렉토리를 프로젝트명으로 사용.
-    예: ~/workspace/ssudam/server → 'ssudam'
-        ~/workspace-vibe/colorpal/src → 'colorpal'
-        ~/other/project → 'project' (기존 동작)
+    예: ~/workspace/ssudam/server → ('ssudam', 'workspace')
+        ~/workspace-vibe/colorpal/src → ('colorpal', 'workspace-vibe')
+        ~/workspace-ext/clawdbot → ('clawdbot', 'workspace-ext')
+        ~/other/project → ('project', 'workspace') (기존 동작, 기본값)
+
+    Returns:
+        tuple: (project_name, workspace_type)
     """
     cwd = Path.cwd()
     home = Path.home()
 
     # workspace 기본 경로들 (우선순위 순)
     workspace_bases = [
-        home / "workspace-vibe",
-        home / "workspace",
+        (home / "workspace-vibe", "workspace-vibe"),
+        (home / "workspace-ext", "workspace-ext"),
+        (home / "workspace", "workspace"),
     ]
 
     # 현재 경로가 workspace 하위인지 확인
-    for base in workspace_bases:
+    for base, ws_type in workspace_bases:
         try:
             # 상대 경로 계산
             rel_path = cwd.relative_to(base)
             # 첫 번째 디렉토리가 프로젝트명
             parts = rel_path.parts
             if parts:
-                return parts[0]
+                return parts[0], ws_type
         except ValueError:
             # relative_to 실패 = 해당 base의 하위가 아님
             continue
 
-    # workspace 외부에서는 기존 동작 유지
-    return cwd.name
+    # workspace 외부에서는 기존 동작 유지 (workspace가 기본)
+    return cwd.name, "workspace"
+
+
+def get_project_name() -> str:
+    """현재 작업 디렉토리에서 프로젝트명 추출 (하위 호환성 유지)"""
+    project, _ = get_project_info()
+    return project
 
 
 def parse_config(config_path: Path) -> dict:
@@ -82,18 +93,27 @@ def parse_config(config_path: Path) -> dict:
 
     content = config_path.read_text(encoding="utf-8")
 
-    # Vault 경로 파싱
-    vault_match = re.search(r"\*\*경로\*\*:\s*(.+)", content)
+    # Vault 경로 파싱 및 ~ 경로 확장
+    vault_match = re.search(r"-\s*\*\*Vault\s*경로\*\*:\s*(.+)", content, re.I)
     if vault_match:
-        config["vault_path"] = vault_match.group(1).strip()
+        vault_path = vault_match.group(1).strip()
+        if vault_path.startswith("~/"):
+            vault_path = str(Path.home() / vault_path[2:])
+        elif vault_path.startswith("~"):
+            vault_path = str(Path.home() / vault_path[1:])
+        config["vault_path"] = vault_path
 
     # 프론트매터 생성
-    frontmatter_match = re.search(r"\*\*프론트매터 생성\*\*:\s*(true|false)", content, re.I)
+    frontmatter_match = re.search(
+        r"\*\*프론트매터 생성\*\*:\s*(true|false)", content, re.I
+    )
     if frontmatter_match:
         config["frontmatter"] = frontmatter_match.group(1).lower() == "true"
 
     # 태그 자동 생성
-    auto_tags_match = re.search(r"\*\*태그 자동 생성\*\*:\s*(true|false)", content, re.I)
+    auto_tags_match = re.search(
+        r"\*\*태그 자동 생성\*\*:\s*(true|false)", content, re.I
+    )
     if auto_tags_match:
         config["auto_tags"] = auto_tags_match.group(1).lower() == "true"
 
@@ -113,9 +133,10 @@ def check_config() -> bool:
     print("=== Obsidian Writer 설정 확인 ===\n")
 
     # 현재 프로젝트 정보
-    project_name = get_project_name()
+    project_name, workspace_type = get_project_info()
     print(f"📁 현재 프로젝트: {project_name}")
-    print(f"📂 현재 디렉토리: {Path.cwd()}\n")
+    print(f"📂 현재 디렉토리: {Path.cwd()}")
+    print(f"🗂️ Workspace 타입: {workspace_type}\n")
 
     # 설정 파일 확인
     if not config_path.exists():
@@ -141,8 +162,8 @@ def check_config() -> bool:
     print(f"✅ Vault 경로: {vault_path}")
 
     # 프로젝트 저장 경로 확인
-    context_path = vault_path / "workspace" / project_name / "context"
-    print(f"\n📁 문서 저장 경로: workspace/{project_name}/context/")
+    context_path = vault_path / workspace_type / project_name / "context"
+    print(f"\n📁 문서 저장 경로: {workspace_type}/{project_name}/context/")
     print(f"   {'✅ 존재' if context_path.exists() else '⚠️ 미존재 (자동 생성됨)'}")
 
     # 설정 값 출력
@@ -236,13 +257,16 @@ def write_document(
     content: str,
     subfolder: str = None,
     overwrite: bool = False,
+    workspace_type: str = "workspace",
 ) -> Path:
     """문서 파일 생성"""
-    # 경로 구성: workspace/{project}/context/{subfolder?}/{filename}
+    # 경로 구성: {workspace_type}/{project}/context/{subfolder?}/{filename}
     if subfolder:
-        file_path = vault_path / "workspace" / project / "context" / subfolder / filename
+        file_path = (
+            vault_path / workspace_type / project / "context" / subfolder / filename
+        )
     else:
-        file_path = vault_path / "workspace" / project / "context" / filename
+        file_path = vault_path / workspace_type / project / "context" / filename
 
     # 확장자 확인
     if not file_path.suffix:
@@ -268,7 +292,9 @@ def write_document(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Obsidian Vault에 프로젝트 문서 업로드")
+    parser = argparse.ArgumentParser(
+        description="Obsidian Vault에 프로젝트 문서 업로드"
+    )
     parser.add_argument("--check-config", action="store_true", help="설정 확인")
     parser.add_argument("--setup", action="store_true", help="대화형 설정")
     parser.add_argument("--title", help="문서 제목")
@@ -311,16 +337,24 @@ def main():
         print(f"❌ Vault 경로가 존재하지 않습니다: {vault_path}")
         sys.exit(1)
 
-    # 프로젝트명 결정
-    project = args.project or get_project_name()
-
-    # 파일명 결정
-    if args.filename:
-        filename = args.filename
-    elif args.title:
-        filename = slugify(args.title) + ".md"
+    # 프로젝트명 및 workspace 타입 결정
+    if args.project:
+        project = args.project
+        _, workspace_type = get_project_info()  # 현재 디렉토리 기준 workspace 타입
     else:
-        today = datetime.now().strftime("%Y-%m-%d")
+        project, workspace_type = get_project_info()
+
+    # 파일명 결정 (YYYY-MM-DD-{title} 형식으로 정렬 가능하도록)
+    today = datetime.now().strftime("%Y-%m-%d")
+    if args.filename:
+        # 사용자 지정 파일명: 날짜 prefix가 없으면 추가
+        if not re.match(r"^\d{4}-\d{2}-\d{2}-", args.filename):
+            filename = f"{today}-{args.filename}"
+        else:
+            filename = args.filename
+    elif args.title:
+        filename = f"{today}-{slugify(args.title)}.md"
+    else:
         filename = f"{today}-document.md"
 
     # 내용 구성
@@ -356,6 +390,7 @@ def main():
         content=final_content,
         subfolder=args.subfolder,
         overwrite=args.overwrite,
+        workspace_type=workspace_type,
     )
 
     # 상대 경로 계산
@@ -363,6 +398,7 @@ def main():
 
     print(f"✅ 업로드 완료: {relative_path}")
     print(f"📁 Vault: {vault_path}")
+    print(f"🗂️ Workspace: {workspace_type}")
     print(f"📂 프로젝트: {project}")
 
 

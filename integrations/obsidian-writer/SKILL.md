@@ -24,14 +24,15 @@ Vault/
 │   │   └── context/
 │   └── other-project/
 │       └── context/
-└── workspace-vibe/               # ~/workspace-vibe/* 프로젝트
-    ├── colorpal/
+├── workspace-vibe/               # ~/workspace-vibe/* 프로젝트
+│   ├── colorpal/
+│   │   └── context/
+│   └── shared_services/
+│       └── context/
+└── workspace-ext/                # ~/workspace-ext/* 외부 프로젝트
+    ├── clawdbot/
     │   └── context/
-    ├── memory-ai/
-    │   └── context/
-    ├── GoalTracker/
-    │   └── context/
-    └── shared_services/
+    └── vision-insight-api/
         └── context/
 ```
 
@@ -43,10 +44,12 @@ Vault/
 |----------|--------------|
 | `~/workspace/{project}/` | `workspace/{project}/context/` |
 | `~/workspace-vibe/{service}/` | `workspace-vibe/{service}/context/` |
+| `~/workspace-ext/{project}/` | `workspace-ext/{project}/context/` |
 
 예시:
 - `~/workspace/agent-skills/` → `workspace/agent-skills/context/`
 - `~/workspace-vibe/colorpal/` → `workspace-vibe/colorpal/context/`
+- `~/workspace-ext/clawdbot/` → `workspace-ext/clawdbot/context/`
 
 ## Prerequisites
 
