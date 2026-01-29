@@ -2,11 +2,14 @@
 # English Coaching Hook - runs on every prompt submission
 # Rewrites user's prompt in natural English and shows vocabulary
 
-# Read stdin (user prompt) and check length + content
+# Read stdin (JSON from Claude Code) and extract the prompt text
+# Input format: {"prompt": "user text here"}
+raw=$(cat)
+input=$(echo "$raw" | python3 -c "import sys,json; print(json.load(sys.stdin).get('prompt',''))" 2>/dev/null || echo "$raw")
+prompt_len=${#input}
+
 # Skip coaching for non-text content (logs, cookies, JSON, etc.) to avoid errors
 MAX_LEN=2000
-input=$(cat)
-prompt_len=${#input}
 
 # Skip if prompt is too long (pasted logs, data, etc.)
 if [ "$prompt_len" -gt "$MAX_LEN" ]; then
