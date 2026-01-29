@@ -199,6 +199,154 @@ def create_notion_database_item(notion, database_id, title, content_blocks):
     return new_page
 
 
+def parse_table_lines(table_lines):
+    """마크다운 테이블 라인을 Notion 테이블 블록으로 변환"""
+    if not table_lines:
+        return []
+
+    # 행 파싱: | 로 분할
+    rows = []
+    for i, line in enumerate(table_lines):
+        stripped = line.strip()
+        # separator row (두 번째 줄: |---|---|) 스킵
+        if i == 1 and re.match(r'^\|[\s\-:|]+\|$', stripped):
+            continue
+        cells = [cell.strip() for cell in stripped.split('|')]
+        # 앞뒤 빈 요소 제거 (leading/trailing |)
+        if cells and cells[0] == '':
+            cells = cells[1:]
+        if cells and cells[-1] == '':
+            cells = cells[:-1]
+        rows.append(cells)
+
+    if not rows:
+        return []
+
+    col_count = max(len(row) for row in rows)
+
+    # Notion table_row children 생성
+    children = []
+    for row in rows:
+        padded = row + [''] * (col_count - len(row))
+        cells = [
+            parse_rich_text(cell)
+            for cell in padded[:col_count]
+        ]
+        children.append({
+            "type": "table_row",
+            "table_row": {"cells": cells}
+        })
+
+    # 100행 초과 시 여러 테이블로 분할
+    MAX_TABLE_ROWS = 100
+    if len(children) <= MAX_TABLE_ROWS:
+        return [{
+            "type": "table",
+            "table": {
+                "table_width": col_count,
+                "has_column_header": True,
+                "has_row_header": False,
+                "children": children
+            }
+        }]
+
+    # 큰 테이블 분할: 헤더 행을 각 청크에 포함
+    header_row = children[0]
+    data_rows = children[1:]
+    result = []
+    for i in range(0, len(data_rows), MAX_TABLE_ROWS - 1):
+        chunk = [header_row] + data_rows[i:i + MAX_TABLE_ROWS - 1]
+        result.append({
+            "type": "table",
+            "table": {
+                "table_width": col_count,
+                "has_column_header": True,
+                "has_row_header": False,
+                "children": chunk
+            }
+        })
+    return result
+
+
+def parse_rich_text(text):
+    """마크다운 인라인 서식을 Notion rich_text 배열로 변환
+
+    지원: **bold**, *italic*, `code`, ~~strikethrough~~, 일반 텍스트
+    중첩(예: **bold `code`**)은 미지원 — 단일 레벨만 처리
+    """
+    # 패턴: **bold**, *italic*, `code`, ~~strikethrough~~
+    pattern = re.compile(
+        r'(\*\*(.+?)\*\*)'       # bold
+        r'|(\*(.+?)\*)'          # italic
+        r'|(`(.+?)`)'            # inline code
+        r'|(~~(.+?)~~)'          # strikethrough
+    )
+
+    rich_text = []
+    last_end = 0
+
+    for m in pattern.finditer(text):
+        # 매치 전 일반 텍스트
+        if m.start() > last_end:
+            plain = text[last_end:m.start()]
+            if plain:
+                rich_text.append({"type": "text", "text": {"content": plain}})
+
+        if m.group(2) is not None:
+            # **bold**
+            rich_text.append({
+                "type": "text",
+                "text": {"content": m.group(2)},
+                "annotations": {"bold": True}
+            })
+        elif m.group(4) is not None:
+            # *italic*
+            rich_text.append({
+                "type": "text",
+                "text": {"content": m.group(4)},
+                "annotations": {"italic": True}
+            })
+        elif m.group(6) is not None:
+            # `code`
+            rich_text.append({
+                "type": "text",
+                "text": {"content": m.group(6)},
+                "annotations": {"code": True}
+            })
+        elif m.group(8) is not None:
+            # ~~strikethrough~~
+            rich_text.append({
+                "type": "text",
+                "text": {"content": m.group(8)},
+                "annotations": {"strikethrough": True}
+            })
+
+        last_end = m.end()
+
+    # 남은 텍스트
+    if last_end < len(text):
+        remaining = text[last_end:]
+        if remaining:
+            rich_text.append({"type": "text", "text": {"content": remaining}})
+
+    # 매치 없으면 원본 그대로
+    if not rich_text:
+        rich_text.append({"type": "text", "text": {"content": text}})
+
+    return rich_text
+
+
+# Notion 코드 블록 지원 언어 목록
+NOTION_LANGUAGES = [
+    "javascript", "python", "typescript", "java", "go",
+    "rust", "bash", "shell", "json", "yaml", "markdown",
+    "html", "css", "sql", "plain text", "mermaid",
+    "c", "c++", "c#", "ruby", "php", "swift", "kotlin",
+    "scala", "r", "dart", "elixir", "erlang", "haskell",
+    "lua", "perl", "powershell", "toml", "xml", "dockerfile",
+]
+
+
 def text_to_blocks(text, block_type="paragraph"):
     """텍스트를 Notion 블록으로 변환 (원본 보존)"""
     blocks = []
@@ -206,10 +354,20 @@ def text_to_blocks(text, block_type="paragraph"):
     in_code_block = False
     code_content = []
     code_language = ""
+    table_lines = []
+
+    def flush_table():
+        """축적된 테이블 라인을 Notion 블록으로 변환하여 blocks에 추가"""
+        nonlocal table_lines
+        if table_lines:
+            table_blocks = parse_table_lines(table_lines)
+            blocks.extend(table_blocks)
+            table_lines = []
 
     for line in lines:
         # 코드 블록 처리
         if line.startswith('```'):
+            flush_table()
             if not in_code_block:
                 in_code_block = True
                 code_language = line[3:].strip() or "plain text"
@@ -220,11 +378,7 @@ def text_to_blocks(text, block_type="paragraph"):
                     "type": "code",
                     "code": {
                         "rich_text": [{"text": {"content": '\n'.join(code_content)}}],
-                        "language": code_language if code_language in [
-                            "javascript", "python", "typescript", "java", "go",
-                            "rust", "bash", "shell", "json", "yaml", "markdown",
-                            "html", "css", "sql", "plain text"
-                        ] else "plain text"
+                        "language": code_language if code_language in NOTION_LANGUAGES else "plain text"
                     }
                 })
                 in_code_block = False
@@ -235,8 +389,16 @@ def text_to_blocks(text, block_type="paragraph"):
             code_content.append(line)
             continue
 
+        # 테이블 감지: |로 시작하고 |로 끝나는 줄
+        stripped = line.strip()
+        if stripped.startswith('|') and stripped.endswith('|'):
+            table_lines.append(line)
+            continue
+        else:
+            flush_table()
+
         # 빈 줄도 보존 (원본 유지)
-        if not line.strip():
+        if not stripped:
             blocks.append({
                 "type": "paragraph",
                 "paragraph": {"rich_text": []}
@@ -248,35 +410,45 @@ def text_to_blocks(text, block_type="paragraph"):
             blocks.append({
                 "type": "heading_3",
                 "heading_3": {
-                    "rich_text": [{"text": {"content": line[5:]}}]
+                    "rich_text": parse_rich_text(line[5:])
                 }
             })
         elif line.startswith('### '):
             blocks.append({
                 "type": "heading_3",
                 "heading_3": {
-                    "rich_text": [{"text": {"content": line[4:]}}]
+                    "rich_text": parse_rich_text(line[4:])
                 }
             })
         elif line.startswith('## '):
             blocks.append({
                 "type": "heading_2",
                 "heading_2": {
-                    "rich_text": [{"text": {"content": line[3:]}}]
+                    "rich_text": parse_rich_text(line[3:])
                 }
             })
         elif line.startswith('# '):
             blocks.append({
                 "type": "heading_1",
                 "heading_1": {
-                    "rich_text": [{"text": {"content": line[2:]}}]
+                    "rich_text": parse_rich_text(line[2:])
+                }
+            })
+        elif line.startswith('- [ ] ') or line.startswith('- [x] ') or line.startswith('- [X] '):
+            # 체크리스트
+            checked = line[3] in ('x', 'X')
+            blocks.append({
+                "type": "to_do",
+                "to_do": {
+                    "rich_text": parse_rich_text(line[6:]),
+                    "checked": checked
                 }
             })
         elif line.startswith('- ') or line.startswith('* '):
             blocks.append({
                 "type": "bulleted_list_item",
                 "bulleted_list_item": {
-                    "rich_text": [{"text": {"content": line[2:]}}]
+                    "rich_text": parse_rich_text(line[2:])
                 }
             })
         elif re.match(r'^\d+\.\s', line):
@@ -285,14 +457,14 @@ def text_to_blocks(text, block_type="paragraph"):
             blocks.append({
                 "type": "numbered_list_item",
                 "numbered_list_item": {
-                    "rich_text": [{"text": {"content": content}}]
+                    "rich_text": parse_rich_text(content)
                 }
             })
         elif line.startswith('> '):
             blocks.append({
                 "type": "quote",
                 "quote": {
-                    "rich_text": [{"text": {"content": line[2:]}}]
+                    "rich_text": parse_rich_text(line[2:])
                 }
             })
         elif line.startswith('---') or line.startswith('***'):
@@ -305,16 +477,19 @@ def text_to_blocks(text, block_type="paragraph"):
                     blocks.append({
                         "type": block_type,
                         "paragraph": {
-                            "rich_text": [{"text": {"content": line[i:i+2000]}}]
+                            "rich_text": parse_rich_text(line[i:i+2000])
                         }
                     })
             else:
                 blocks.append({
                     "type": block_type,
                     "paragraph": {
-                        "rich_text": [{"text": {"content": line}}]
+                        "rich_text": parse_rich_text(line)
                     }
                 })
+
+    # 루프 종료 후 남은 테이블 플러시
+    flush_table()
 
     return blocks
 
@@ -330,7 +505,7 @@ def split_blocks_for_upload(blocks, max_blocks=100):
     return parts
 
 
-def upload_document(content, title=None, project=None, dry_run=False):
+def upload_document(content, title=None, project=None, doc_type=None, dry_run=False):
     """문서 전체를 Notion에 업로드 (요약 없이 원본 그대로)"""
 
     # 설정 로드
@@ -357,10 +532,14 @@ def upload_document(content, title=None, project=None, dry_run=False):
         print("\n민감 정보는 [REDACTED]로 마스킹됩니다.")
         content = mask_sensitive_content(content)
 
-    # 페이지 제목 생성
+    # 페이지 제목 생성: {YYYY-MM-DD}-{type}-{title}
     today = datetime.now().strftime('%Y-%m-%d')
-    project_name = project or (config and config.get('default_project', 'general'))
-    page_title = title or f"{today} - {project_name}"
+    dtype = doc_type or 'document'
+    if title:
+        page_title = f"{today}-{dtype}-{title}"
+    else:
+        project_name = project or (config and config.get('default_project', 'general'))
+        page_title = f"{today}-{dtype}-{project_name}"
 
     # 문서 전체를 블록으로 변환
     blocks = text_to_blocks(content)
@@ -489,6 +668,8 @@ def main():
                         help='문서 제목 (미지정 시 파일명 사용)')
     parser.add_argument('--project', '-p', type=str,
                         help='프로젝트명')
+    parser.add_argument('--type', type=str, default=None,
+                        help='문서 타입 (summary, report, plan, analysis 등). 제목에 포함됨')
     parser.add_argument('--dry-run', action='store_true',
                         help='업로드 없이 미리보기만')
 
@@ -515,10 +696,10 @@ def main():
         content = file_path.read_text()
         title = args.title or file_path.stem
         print(f"📄 {args.file} ({len(content):,}자)")
-        upload_document(content, title=title, project=args.project, dry_run=args.dry_run)
+        upload_document(content, title=title, project=args.project, doc_type=args.type, dry_run=args.dry_run)
     elif args.content:
         print("💡 팁: --file 옵션으로 파일 경로를 직접 전달하는 것을 권장합니다.\n")
-        upload_document(args.content, title=args.title, project=args.project, dry_run=args.dry_run)
+        upload_document(args.content, title=args.title, project=args.project, doc_type=args.type, dry_run=args.dry_run)
     elif args.summary and args.changes:
         print("⚠️  --summary/--changes는 레거시 옵션입니다. --file 사용을 권장합니다.\n")
         upload_summary(args.summary, args.changes, args.project, args.dry_run)
