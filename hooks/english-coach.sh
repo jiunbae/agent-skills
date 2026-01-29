@@ -2,6 +2,16 @@
 # English Coaching Hook - runs on every prompt submission
 # Rewrites user's prompt in natural English and shows vocabulary
 
+# Read stdin (user prompt) and check length
+# Skip coaching for long prompts (e.g., pasted logs) to avoid errors
+MAX_LEN=2000
+input=$(cat)
+prompt_len=${#input}
+
+if [ "$prompt_len" -gt "$MAX_LEN" ]; then
+  exit 0
+fi
+
 cat <<'INSTRUCTION'
 [English Coach] Before responding to the user's task, do the following FIRST:
 
