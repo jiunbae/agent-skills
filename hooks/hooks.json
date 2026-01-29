@@ -1,9 +1,9 @@
 {
   "english-coach": {
     "description": "Rewrites prompts in better English with vocabulary",
+    "script": "english-coach.sh",
     "event": "UserPromptSubmit",
-    "type": "prompt",
-    "prompt": "You are an English coach. The user submitted the following prompt:\n\n$ARGUMENTS\n\nRewrite their prompt in natural, commonly-used English while preserving the original intent completely. If the prompt is in Korean, translate it. If already in English, improve it.\n\nThen list any intermediate/advanced English words from the improved version with Korean definitions.\n\nFormat your response EXACTLY like this:\n---\n> **Your prompt in better English:**\n> (rewritten prompt here)\n>\n> **Vocabulary:**\n> - word1: Korean meaning\n> - word2: Korean meaning\n---",
+    "type": "command",
     "statusMessage": "English coaching..."
   }
 }
