@@ -43,9 +43,14 @@ CLI_TARGET="${HOME}/.local/bin"
 INSTALL_CODEX=false
 CODEX_TARGET="${HOME}/.codex"
 CODEX_AGENTS_SOURCE="${SCRIPT_DIR}/codex-support/AGENTS.md"
+INSTALL_HOOKS=false
+UNINSTALL_HOOKS=false
+HOOKS_SOURCE="${SCRIPT_DIR}/hooks"
+HOOKS_TARGET="${HOME}/.claude/hooks"
+HOOKS_REGISTRY="${HOOKS_SOURCE}/hooks.json"
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
-EXCLUDE_DIRS=("static" "cli" "codex-support" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" ".git" ".github" ".agents" "node_modules" "__pycache__")
 
 # Core 스킬 (기본 전역 설치, 워크스페이스 공통 필수)
 CORE_SKILLS=(
@@ -127,6 +132,12 @@ CLI 도구:
   --alias=NAME     CLI 도구 별칭 추가 (여러 번 사용 가능, 예: --alias=cs)
   --uninstall-cli  claude-skill CLI 도구 및 별칭 제거
 
+Hooks:
+  --hooks          Claude Code hooks 설치 (~/.claude/hooks)
+                   - hook 스크립트 심링크/복사
+                   - settings.json에 hook 설정 자동 병합
+  --uninstall-hooks  설치된 hooks 제거
+
 Codex 지원:
   --codex          Codex CLI 지원 설정
                    - ~/.codex/AGENTS.md에 스킬 가이드 추가
@@ -143,6 +154,8 @@ Codex 지원:
   $(basename "$0") --list                   # 스킬 목록 표시
   $(basename "$0") --link-static            # static 심링크 설정
   $(basename "$0") --core --cli             # Core 스킬 + CLI 도구 설치 (권장)
+  $(basename "$0") --hooks                  # Hooks 설치
+  $(basename "$0") --core --cli --hooks     # Core + CLI + Hooks (풀 설치)
 
 Core 스킬 (워크스페이스 공통):
   - meta/skill-manager           스킬 생태계 관리
@@ -601,6 +614,285 @@ install_codex() {
     log_info "Skills: $codex_skills_target -> $claude_skills_source"
 }
 
+# Hooks 설치
+install_hooks() {
+    if [[ ! -f "$HOOKS_REGISTRY" ]]; then
+        log_error "hooks.json을 찾을 수 없습니다: $HOOKS_REGISTRY"
+        exit 1
+    fi
+
+    log_info "Hooks 설치 중..."
+
+    # hooks.json에서 hook 목록 파싱
+    local hook_names
+    hook_names=$(python3 -c "
+import json, sys
+with open('$HOOKS_REGISTRY') as f:
+    hooks = json.load(f)
+for name in hooks:
+    print(name)
+" 2>/dev/null)
+
+    if [[ -z "$hook_names" ]]; then
+        log_warn "설치할 hook이 없습니다"
+        return
+    fi
+
+    # command 타입 hook의 스크립트 파일 설치
+    while IFS= read -r hook_name; do
+        local hook_type
+        hook_type=$(python3 -c "
+import json
+with open('$HOOKS_REGISTRY') as f:
+    hooks = json.load(f)
+print(hooks['$hook_name'].get('type', 'command'))
+" 2>/dev/null)
+
+        # prompt 타입은 스크립트 파일 불필요
+        if [[ "$hook_type" != "command" ]]; then
+            log_info "등록: ${hook_name} (${hook_type} 타입, 스크립트 불필요)"
+            continue
+        fi
+
+        local script
+        script=$(python3 -c "
+import json
+with open('$HOOKS_REGISTRY') as f:
+    hooks = json.load(f)
+print(hooks['$hook_name'].get('script', ''))
+" 2>/dev/null)
+
+        if [[ -z "$script" ]]; then
+            continue
+        fi
+
+        # hooks 디렉토리 생성
+        if [[ "$DRY_RUN" == "false" ]]; then
+            mkdir -p "$HOOKS_TARGET"
+        fi
+
+        local source_path="${HOOKS_SOURCE}/${script}"
+        local target_path="${HOOKS_TARGET}/${script}"
+
+        if [[ ! -f "$source_path" ]]; then
+            log_warn "스크립트를 찾을 수 없습니다: $source_path"
+            continue
+        fi
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_dry "심링크: $source_path -> $target_path"
+        else
+            [[ -e "$target_path" ]] && rm -f "$target_path"
+
+            if [[ "$COPY_MODE" == "true" ]]; then
+                cp "$source_path" "$target_path"
+                chmod +x "$target_path"
+                log_success "복사됨: ${hook_name} (${script})"
+            else
+                ln -s "$source_path" "$target_path"
+                log_success "링크됨: ${hook_name} (${script})"
+            fi
+        fi
+    done <<< "$hook_names"
+
+    # settings.json에 hook 설정 병합
+    local settings_file="${HOME}/.claude/settings.json"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_dry "settings.json에 hook 설정 병합: $settings_file"
+        return
+    fi
+
+    # settings.json이 없으면 생성
+    if [[ ! -f "$settings_file" ]]; then
+        echo '{}' > "$settings_file"
+    fi
+
+    # Python으로 settings.json에 hooks 설정 병합
+    python3 - "$settings_file" "$HOOKS_REGISTRY" "$HOOKS_TARGET" << 'PYEOF'
+import json
+import sys
+import os
+
+settings_path = sys.argv[1]
+registry_path = sys.argv[2]
+hooks_target = sys.argv[3]
+
+with open(settings_path, 'r') as f:
+    settings = json.load(f)
+
+with open(registry_path, 'r') as f:
+    registry = json.load(f)
+
+if 'hooks' not in settings:
+    settings['hooks'] = {}
+
+for hook_name, hook_config in registry.items():
+    event = hook_config['event']
+    hook_type = hook_config.get('type', 'command')
+
+    if event not in settings['hooks']:
+        settings['hooks'][event] = []
+
+    # 중복 확인용 식별자 생성
+    if hook_type == 'command':
+        script_path = os.path.join(hooks_target, hook_config['script'])
+        identifier = f"bash {script_path}"
+        id_key = 'command'
+    else:  # prompt 타입
+        identifier = hook_config.get('prompt', '')[:80]
+        id_key = 'prompt'
+
+    # 기존에 같은 hook이 있는지 확인
+    already_exists = False
+    for entry in settings['hooks'][event]:
+        for h in entry.get('hooks', []):
+            if hook_type == 'command' and h.get('command') == identifier:
+                already_exists = True
+                break
+            if hook_type == 'prompt' and h.get('prompt', '')[:80] == identifier:
+                already_exists = True
+                break
+
+    if not already_exists:
+        # hook 엔트리 생성
+        h = {'type': hook_type}
+
+        if hook_type == 'command':
+            h['command'] = identifier
+        elif hook_type == 'prompt':
+            h['prompt'] = hook_config['prompt']
+
+        if 'statusMessage' in hook_config:
+            h['statusMessage'] = hook_config['statusMessage']
+        if 'model' in hook_config:
+            h['model'] = hook_config['model']
+
+        hook_entry = {'hooks': [h]}
+        if 'matcher' in hook_config:
+            hook_entry['matcher'] = hook_config['matcher']
+
+        settings['hooks'][event].append(hook_entry)
+
+with open(settings_path, 'w') as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+
+print(f"OK: {len(registry)} hook(s) registered")
+PYEOF
+
+    local result=$?
+    if [[ $result -eq 0 ]]; then
+        log_success "settings.json에 hook 설정 병합 완료"
+    else
+        log_error "settings.json 병합 실패"
+    fi
+
+    echo ""
+    log_info "설치된 hooks:"
+    while IFS= read -r hook_name; do
+        local desc
+        desc=$(python3 -c "
+import json
+with open('$HOOKS_REGISTRY') as f:
+    hooks = json.load(f)
+print(hooks['$hook_name'].get('description', ''))
+" 2>/dev/null)
+        log_info "  - ${hook_name}: ${desc}"
+    done <<< "$hook_names"
+}
+
+# Hooks 제거
+uninstall_hooks() {
+    log_info "Hooks 제거 중..."
+
+    if [[ ! -f "$HOOKS_REGISTRY" ]]; then
+        log_warn "hooks.json을 찾을 수 없습니다"
+        return
+    fi
+
+    local hook_names
+    hook_names=$(python3 -c "
+import json
+with open('$HOOKS_REGISTRY') as f:
+    hooks = json.load(f)
+for name in hooks:
+    print(name)
+" 2>/dev/null)
+
+    # command 타입 hook의 스크립트 파일 제거
+    while IFS= read -r hook_name; do
+        local script
+        script=$(python3 -c "
+import json
+with open('$HOOKS_REGISTRY') as f:
+    hooks = json.load(f)
+print(hooks['$hook_name'].get('script', ''))
+" 2>/dev/null)
+
+        if [[ -n "$script" ]]; then
+            local target_path="${HOOKS_TARGET}/${script}"
+            if [[ -e "$target_path" ]]; then
+                rm -f "$target_path"
+                log_success "스크립트 제거됨: ${script}"
+            fi
+        fi
+    done <<< "$hook_names"
+
+    # settings.json에서 hook 설정 제거
+    local settings_file="${HOME}/.claude/settings.json"
+    if [[ -f "$settings_file" ]]; then
+        python3 - "$settings_file" "$HOOKS_REGISTRY" "$HOOKS_TARGET" << 'PYEOF'
+import json
+import sys
+import os
+
+settings_path = sys.argv[1]
+registry_path = sys.argv[2]
+hooks_target = sys.argv[3]
+
+with open(settings_path, 'r') as f:
+    settings = json.load(f)
+
+with open(registry_path, 'r') as f:
+    registry = json.load(f)
+
+if 'hooks' not in settings:
+    sys.exit(0)
+
+for hook_name, hook_config in registry.items():
+    event = hook_config['event']
+    hook_type = hook_config.get('type', 'command')
+
+    if event not in settings['hooks']:
+        continue
+
+    if hook_type == 'command':
+        script_path = os.path.join(hooks_target, hook_config.get('script', ''))
+        command = f"bash {script_path}"
+        settings['hooks'][event] = [
+            entry for entry in settings['hooks'][event]
+            if not any(h.get('command') == command for h in entry.get('hooks', []))
+        ]
+    else:  # prompt 타입
+        prompt_prefix = hook_config.get('prompt', '')[:80]
+        settings['hooks'][event] = [
+            entry for entry in settings['hooks'][event]
+            if not any(h.get('prompt', '')[:80] == prompt_prefix for h in entry.get('hooks', []))
+        ]
+
+    if not settings['hooks'][event]:
+        del settings['hooks'][event]
+
+if not settings.get('hooks'):
+    del settings['hooks']
+
+with open(settings_path, 'w') as f:
+    json.dump(settings, f, indent=2, ensure_ascii=False)
+PYEOF
+        log_success "settings.json에서 hook 설정 제거됨"
+    fi
+}
+
 # 스킬 설치
 install_skill() {
     local group="$1"
@@ -785,6 +1077,14 @@ while [[ $# -gt 0 ]]; do
             UNINSTALL_CLI=true
             shift
             ;;
+        --hooks)
+            INSTALL_HOOKS=true
+            shift
+            ;;
+        --uninstall-hooks)
+            UNINSTALL_HOOKS=true
+            shift
+            ;;
         --codex)
             INSTALL_CODEX=true
             shift
@@ -816,6 +1116,11 @@ if [[ "$UNINSTALL_CLI" == "true" ]]; then
     exit 0
 fi
 
+if [[ "$UNINSTALL_HOOKS" == "true" ]]; then
+    uninstall_hooks
+    exit 0
+fi
+
 if [[ "$LIST_MODE" == "true" ]]; then
     list_skills
     exit 0
@@ -837,8 +1142,13 @@ if [[ "$INSTALL_CODEX" == "true" ]]; then
     echo ""
 fi
 
+if [[ "$INSTALL_HOOKS" == "true" ]]; then
+    install_hooks
+    echo ""
+fi
+
 # 스킬 설치 대상이 없고 다른 옵션만 있으면 종료 (단, Core 모드는 제외)
-if [[ ${#TARGETS[@]} -eq 0 && "$CORE_MODE" == "false" && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true") ]]; then
+if [[ ${#TARGETS[@]} -eq 0 && "$CORE_MODE" == "false" && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true" || "$INSTALL_HOOKS" == "true") ]]; then
     # 다른 설치 옵션만 실행한 경우
     exit 0
 fi
