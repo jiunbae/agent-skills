@@ -39,20 +39,29 @@ check_git_repo() {
 
 # 민감 정보 패턴 정의
 PATTERNS=(
-    # CRITICAL
+    # CRITICAL - API Keys & Tokens
     "sk-[a-zA-Z0-9]{20,}|OpenAI API Key|CRITICAL"
     "AKIA[A-Z0-9]{16}|AWS Access Key|CRITICAL"
     "ghp_[a-zA-Z0-9]{36}|GitHub Personal Token|CRITICAL"
     "xoxb-[0-9]{10,}|Slack Bot Token|CRITICAL"
     "AIza[0-9A-Za-z_-]{35}|Google API Key|CRITICAL"
     "-----BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE KEY-----|Private Key|CRITICAL"
-    # HIGH
-    "password\s*[:=]\s*[\"'][^\"']{8,}[\"']|Hardcoded Password|HIGH"
-    "api_key\s*[:=]\s*[\"'][^\"']+[\"']|Hardcoded API Key|HIGH"
-    "secret\s*[:=]\s*[\"'][^\"']+[\"']|Hardcoded Secret|HIGH"
+    # CRITICAL - Hardcoded Credentials (case-insensitive patterns below)
+    "[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\s*[:=]\s*[\"'][^\"']{4,}[\"']|Hardcoded Password|CRITICAL"
+    "_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]\s*[:=]\s*[\"'][^\"']{4,}[\"']|Hardcoded Password Variable|CRITICAL"
+    # HIGH - Other Secrets
+    "[Aa][Pp][Ii]_?[Kk][Ee][Yy]\s*[:=]\s*[\"'][^\"']+[\"']|Hardcoded API Key|HIGH"
+    "[Ss][Ee][Cc][Rr][Ee][Tt]\s*[:=]\s*[\"'][^\"']+[\"']|Hardcoded Secret|HIGH"
+    "[Tt][Oo][Kk][Ee][Nn]\s*[:=]\s*[\"'][^\"']{10,}[\"']|Hardcoded Token|HIGH"
     "mongodb(\+srv)?://[^:]+:[^@]+@|MongoDB Connection String|HIGH"
     "postgres://[^:]+:[^@]+@|PostgreSQL Connection String|HIGH"
     "mysql://[^:]+:[^@]+@|MySQL Connection String|HIGH"
+    # HIGH - PII (Personal Identifiable Information)
+    "/Users/[a-zA-Z0-9_-]+/|Hardcoded macOS User Path|HIGH"
+    "/home/[a-zA-Z0-9_-]+/|Hardcoded Linux User Path|HIGH"
+    "C:\\\\Users\\\\[a-zA-Z0-9_-]+\\\\|Hardcoded Windows User Path|HIGH"
+    # MEDIUM - Potentially Sensitive
+    "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}|Email Address in Code|MEDIUM"
 )
 
 # 위험 파일 패턴
@@ -74,6 +83,9 @@ DANGEROUS_FILES=(
 # 제외 경로
 EXCLUDE_DIRS="node_modules|vendor|\.git|dist|build|__pycache__|venv|\.venv"
 EXCLUDE_FILES="test|tests|__tests__|spec|mock|fixture|example"
+
+# 제외 패턴 (문서의 placeholder 등)
+EXCLUDE_PATTERNS="/Users/username|/home/username|example@|CHANGE_ME|your-|YOUR_|<YOUR_|placeholder"
 
 # 현재 코드 스캔
 scan_current_code() {
@@ -111,7 +123,7 @@ scan_current_code() {
     for entry in "${PATTERNS[@]}"; do
         IFS='|' read -r pattern desc severity <<< "$entry"
 
-        # grep으로 검색 (테스트/예시 제외)
+        # grep으로 검색 (테스트/예시/placeholder 제외)
         local matches=$(grep -rEn "$pattern" \
             --include="*.ts" --include="*.js" --include="*.py" \
             --include="*.yaml" --include="*.yml" --include="*.json" \
@@ -120,6 +132,7 @@ scan_current_code() {
             . 2>/dev/null | \
             grep -vE "$EXCLUDE_DIRS" | \
             grep -vE "$EXCLUDE_FILES" | \
+            grep -vE "$EXCLUDE_PATTERNS" | \
             head -5 || true)
 
         if [ -n "$matches" ]; then

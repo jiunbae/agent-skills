@@ -30,6 +30,18 @@ trigger_keywords:
 - 문제는 이 파일들이 **git에 tracked 되어 커밋에 포함**되는 경우입니다
 - `.gitignore`에 등록되어 있고 git에서 무시되면 안전합니다
 
+**탐지 대상 (v2.0 업데이트):**
+- API 키/토큰 (OpenAI, AWS, GitHub, Slack, Google 등)
+- 하드코딩된 비밀번호 (`PASSWORD`, `password`, `_PASSWORD` 등 대소문자 무관)
+- 개인 경로 (`/Users/username/`, `/home/username/` 등 실제 사용자명)
+- 이메일 주소 (코드 내 개인 이메일)
+- DB 연결 문자열 (MongoDB, PostgreSQL, MySQL)
+
+**자동 제외 (오탐 방지):**
+- `/Users/username` 같은 문서용 placeholder
+- `CHANGE_ME`, `your-api-key` 같은 예시 값
+- 테스트/예시 디렉토리 (`test/`, `examples/`, `fixtures/`)
+
 **git-commit-pr과의 차이점:**
 - `git-commit-pr`: 커밋 시점에 변경 사항만 검사 (실시간)
 - `security-auditor`: 전체 레포 + 히스토리 종합 감사 (정기 점검)
@@ -165,12 +177,18 @@ git ls-files | grep -iE "\.pem$|\.key$|\.p12$|\.pfx$"
 | `xoxb-[0-9]{10,}` | Slack Bot Token | CRITICAL |
 | `AIza[0-9A-Za-z-_]{35}` | Google API Key | CRITICAL |
 | `-----BEGIN (RSA\|OPENSSH) PRIVATE KEY-----` | Private Key | CRITICAL |
-| `password\s*[:=]\s*["'][^"']+["']` | 하드코딩된 비밀번호 | HIGH |
-| `api_key\s*[:=]\s*["'][^"']+["']` | 하드코딩된 API 키 | HIGH |
-| `secret\s*[:=]\s*["'][^"']+["']` | 하드코딩된 시크릿 | HIGH |
+| `[Pp]assword\s*[:=]\s*["'][^"']+["']` | 하드코딩된 비밀번호 (대소문자 무관) | CRITICAL |
+| `_[Pp]assword\s*[:=]\s*["'][^"']+["']` | 비밀번호 변수 (LOGIN_PASSWORD 등) | CRITICAL |
+| `[Aa]pi_?[Kk]ey\s*[:=]\s*["'][^"']+["']` | 하드코딩된 API 키 | HIGH |
+| `[Ss]ecret\s*[:=]\s*["'][^"']+["']` | 하드코딩된 시크릿 | HIGH |
+| `[Tt]oken\s*[:=]\s*["'][^"']{10,}["']` | 하드코딩된 토큰 | HIGH |
 | `mongodb(\+srv)?://[^:]+:[^@]+@` | MongoDB 연결 문자열 | HIGH |
 | `postgres://[^:]+:[^@]+@` | PostgreSQL 연결 문자열 | HIGH |
 | `mysql://[^:]+:[^@]+@` | MySQL 연결 문자열 | HIGH |
+| `/Users/[username]/` | 하드코딩된 macOS 사용자 경로 | HIGH |
+| `/home/[username]/` | 하드코딩된 Linux 사용자 경로 | HIGH |
+| `C:\\Users\\[username]\\` | 하드코딩된 Windows 사용자 경로 | HIGH |
+| `email@domain.com` | 코드 내 이메일 주소 | MEDIUM |
 
 ```bash
 # 민감 정보 패턴 검색
