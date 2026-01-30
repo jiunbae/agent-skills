@@ -41,7 +41,7 @@ description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니�
 #### WHOAMI.md
 - **경로**: `~/.agents/WHOAMI.md`
 - **용도**: 사용자의 개발 프로필 저장
-- **관리 스킬**: `whoami`
+- **템플릿**: `static/WHOAMI.sample.md`
 - **포함 정보**:
   - 기본 정보 (이름, 역할, 경력)
   - 프로그래밍 언어 (주력/부수)
@@ -250,8 +250,7 @@ agent-skills/
 
 | 스킬 | 참조하는 Static 파일 | 용도 |
 |------|---------------------|------|
-| whoami | WHOAMI.md | 프로필 읽기/쓰기 |
-| git-commit-pr | SECURITY.md | 커밋 전 보안 검증 |
+| git-commit-pr | SECURITY.md, WHOAMI.md | 커밋 전 보안 검증, 스타일 참조 |
 | context-manager | WHOAMI.md, STYLE.md | 프로젝트 컨텍스트 구성 |
 | planning-agents | WHOAMI.md | 사용자 역량 기반 기획 |
 | notion-summary | NOTION.md | Notion 업로드 설정 |
