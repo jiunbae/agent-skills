@@ -505,6 +505,53 @@ def split_blocks_for_upload(blocks, max_blocks=100):
     return parts
 
 
+def create_series_navigation_blocks(created_pages, current_index, page_title):
+    """시리즈 페이지 간 네비게이션 블록 생성"""
+    total_parts = len(created_pages)
+    blocks = [
+        {"type": "divider", "divider": {}},
+        {
+            "type": "callout",
+            "callout": {
+                "rich_text": [{"text": {"content": f"📚 시리즈: {page_title} ({current_index + 1}/{total_parts})"}}],
+                "icon": {"emoji": "📚"}
+            }
+        },
+        {
+            "type": "heading_3",
+            "heading_3": {
+                "rich_text": [{"text": {"content": "전체 시리즈 목록"}}]
+            }
+        }
+    ]
+
+    for i, page in enumerate(created_pages):
+        page_url = page.get('url', '')
+        part_title = f"Part {i + 1}"
+        if i == current_index:
+            # 현재 페이지는 굵게 표시 (링크 없음)
+            blocks.append({
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [
+                        {"type": "text", "text": {"content": f"👉 {part_title} (현재 페이지)"}, "annotations": {"bold": True}}
+                    ]
+                }
+            })
+        else:
+            # 다른 페이지는 링크로 표시
+            blocks.append({
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [
+                        {"type": "text", "text": {"content": part_title, "link": {"url": page_url}}}
+                    ]
+                }
+            })
+
+    return blocks
+
+
 def upload_document(content, title=None, project=None, doc_type=None, dry_run=False):
     """문서 전체를 Notion에 업로드 (요약 없이 원본 그대로)"""
 
@@ -565,6 +612,7 @@ def upload_document(content, title=None, project=None, doc_type=None, dry_run=Fa
         print(f"Notion 블록 수: {len(blocks)}")
         if len(block_parts) > 1:
             print(f"분할 페이지 수: {len(block_parts)}")
+            print(f"⚠️  시리즈 네비게이션이 각 페이지에 추가됩니다.")
         print(f"\n--- 문서 내용 (전체) ---\n{content}")
         return True
 
@@ -584,12 +632,23 @@ def upload_document(content, title=None, project=None, doc_type=None, dry_run=Fa
 
             created_pages.append(new_page)
 
+        # 분할된 경우 각 페이지에 시리즈 네비게이션 추가
+        if len(created_pages) > 1:
+            print(f"   시리즈 네비게이션 추가 중...")
+            for i, page in enumerate(created_pages):
+                nav_blocks = create_series_navigation_blocks(created_pages, i, page_title)
+                notion.blocks.children.append(
+                    block_id=page['id'],
+                    children=nav_blocks
+                )
+
         print(f"\n✅ 업로드 완료")
         print(f"   제목: {page_title}")
         print(f"   문서 길이: {len(content):,}자")
         print(f"   Notion 블록: {len(blocks)}개")
         if len(created_pages) > 1:
             print(f"   분할 페이지: {len(created_pages)}개")
+            print(f"   📚 시리즈 네비게이션: 각 페이지에 추가됨")
         print(f"   URL: {created_pages[0].get('url', 'N/A')}")
         return True
 
