@@ -58,3 +58,4 @@ static/*.md
 !static/README.md
 !static/*.sample.md
 development/playwright/node_modules/
+development/playwright/scripts/*.ts
