@@ -451,9 +451,8 @@ claude:
 | 스킬 | 연동 방식 |
 |------|-----------|
 | planning-agents | 멀티 에이전트 병렬 분석 엔진 |
-| whoami | 팀 역량과 BM 실행 가능성 매칭 |
 | proposal-analyzer | 사업 제안 검토 시 BM 분석 연계 |
-| static-index | 분석 기준 데이터 조회 |
+| static-index | WHOAMI.md에서 팀 역량 조회, BM 실행 가능성 매칭 |
 
 ## Troubleshooting
 

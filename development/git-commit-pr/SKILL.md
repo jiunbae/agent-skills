@@ -40,7 +40,7 @@ Git 커밋 및 PR 생성 시 보안 검증과 일관된 스타일을 적용하�
 
 | 파일 | 용도 | 관리 스킬 |
 |------|------|-----------|
-| `~/.agents/WHOAMI.md` | 커밋 스타일, 언어 선호도 | whoami |
+| `~/.agents/WHOAMI.md` | 커밋 스타일, 언어 선호도 | static-index |
 | `~/.agents/SECURITY.md` | 보안 검증 규칙 | static-index |
 
 ### 도구 요구사항
@@ -406,8 +406,7 @@ git config --global i18n.logOutputEncoding utf-8
 
 | 스킬 | 연동 방식 |
 |------|-----------|
-| whoami | 커밋 스타일, 언어 선호도 참조 |
-| static-index | SECURITY.md 위치 조회 |
+| static-index | WHOAMI.md 커밋 스타일 참조, SECURITY.md 보안 규칙 조회 |
 
 ---
 

@@ -91,7 +91,7 @@ claude
 - `meta/skill-recommender` - 스킬 자동 추천
 - `development/git-commit-pr` - Git 커밋/PR 가이드
 - `context/context-manager` - 프로젝트 컨텍스트 로드
-- `context/whoami` - 사용자 프로필 관리
+- `context/static-index` - 글로벌 컨텍스트 인덱스 (사용자 프로필 포함)
 
 ### 한 번에 전체 설치
 
@@ -238,8 +238,7 @@ cs --list --all --verbose         # 모든 스킬 상세
 | 스킬 | 설명 |
 |------|------|
 | `context-manager` | 프로젝트 컨텍스트 자동 로드 |
-| `static-index` | 글로벌 정적 컨텍스트 인덱스 |
-| `whoami` | 사용자 프로필 관리 |
+| `static-index` | 글로벌 정적 컨텍스트 인덱스 (사용자 프로필 포함) |
 
 ### 🔧 meta/ - 메타 스킬
 

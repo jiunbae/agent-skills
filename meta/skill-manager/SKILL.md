@@ -550,7 +550,7 @@ Claude: 전체 스킬의 토큰 효율성을 분석합니다...
 | 카테고리 | 목적 | 예시 |
 |----------|------|------|
 | agents/ | 멀티 에이전트, LLM 오케스트레이션 | multi-llm-agent, planning-agents |
-| context/ | 컨텍스트 관리, 사용자 정보 | context-manager, whoami, static-index |
+| context/ | 컨텍스트 관리, 사용자 정보 | context-manager, static-index |
 | development/ | 개발 도구, 워크플로우 | git-commit-pr, code-review |
 | business/ | 비즈니스 분석, 문서 처리 | proposal-analyzer |
 | meta/ | 스킬 관리, 메타 도구 | skill-manager |

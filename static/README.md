@@ -31,7 +31,7 @@ cp CONTEXT.sample.md CONTEXT.md
 
 | 파일 | Sample | 용도 | 관리 스킬 |
 |------|--------|------|----------|
-| `WHOAMI.md` | - | 사용자 프로필 (기술 스택, 선호도) | whoami |
+| `WHOAMI.md` | `WHOAMI.sample.md` | 사용자 프로필 (기술 스택, 선호도) | static-index |
 | `NOTION.md` | `NOTION.sample.md` | Notion 연동 설정 | notion-summary |
 | `SECURITY.md` | `SECURITY.sample.md` | 보안 규칙 (커밋 금지 패턴) | git-commit-pr |
 | `OBSIDIAN.md` | `OBSIDIAN.sample.md` | Obsidian vault 리소스 목록 | obsidian-writer |
@@ -66,7 +66,7 @@ cp CONTEXT.sample.md CONTEXT.md
 ```
 
 **관리 방법:**
-- `whoami` 스킬이 자동 생성/업데이트
+- `static-index` 스킬이 자동 생성/업데이트
 - 직접 편집 가능
 
 ### SECURITY.md
@@ -142,6 +142,6 @@ cd ~/workspace/agent-skills
 
 ## 관련 스킬
 
-- **whoami**: WHOAMI.md 생성/관리
+- **static-index**: WHOAMI.md 생성/관리
 - **git-commit-pr**: SECURITY.md 참조
 - **context-manager**: 프로젝트 컨텍스트 로드 시 참조

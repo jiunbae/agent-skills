@@ -139,7 +139,7 @@ $ cs "내가 누구게"
 스킬: Claude가 자동 선택
 명령: 내가 누구게
 
-[스킬: whoami]
+[스킬: static-index]
 
 **June** 님이시군요!
 - 역할: Research Engineer & Fullstack Developer
