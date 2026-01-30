@@ -34,6 +34,7 @@ description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니�
 | 노션 설정, notion, 노션 페이지, 업로드 설정 | `NOTION.md` | Notion 연동 설정 (페이지 ID, 업로드 옵션) |
 | IaC, 배포 표준, kubernetes, k8s, 배포 설정, deploy, 인프라 | `IAC.md` | IaC 배포 표준화 가이드라인 (K8s, CI/CD, 환경변수) |
 | 서비스 목록, 컨테이너 상태, 포트 매핑, docker, 실행 중인 서비스 | `SERVICES.md` | 서비스/컨테이너 중앙 관리 (포트, 상태, 이력) |
+| vault, vaultwarden, 시크릿, 비밀번호, API 키, credentials, 인증 정보 | `VAULT.md` | Vaultwarden 시크릿 관리 (API 키, DB 비밀번호, 인증 정보) |
 
 ### 파일 상세 정보
 
@@ -76,6 +77,17 @@ description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니�
   - 페이지 이름
   - 업로드 설정 (날짜별/프로젝트별 분류)
   - 콘텐츠 템플릿
+
+#### VAULT.md
+- **경로**: `~/.agents/VAULT.md`
+- **용도**: Vaultwarden 시크릿 관리 가이드
+- **관리 스킬**: `vault-secrets`
+- **포함 정보**:
+  - Vaultwarden 서버 접속 정보
+  - CLI 사용법 (vault-get, vault-set)
+  - 저장된 시크릿 목록 (API 키, DB credentials)
+  - 세션 관리 방법
+  - 새 시크릿 추가 가이드
 
 ## Prerequisites
 
@@ -219,6 +231,7 @@ static-index: SECURITY.md 파일을 참조하세요.
 ├── SECURITY.md              # 보안 규칙
 ├── STYLE.md                 # 코딩 스타일 (선택)
 ├── NOTION.md                # Notion 연동 설정
+├── VAULT.md                 # Vaultwarden 시크릿 가이드
 └── README.md                # 디렉토리 설명
 
 agent-skills/
@@ -226,6 +239,7 @@ agent-skills/
 │   ├── WHOAMI.md
 │   ├── SECURITY.md
 │   ├── NOTION.md
+│   ├── VAULT.md
 │   └── README.md
 └── context/
     └── static-index/
@@ -241,6 +255,9 @@ agent-skills/
 | context-manager | WHOAMI.md, STYLE.md | 프로젝트 컨텍스트 구성 |
 | planning-agents | WHOAMI.md | 사용자 역량 기반 기획 |
 | notion-summary | NOTION.md | Notion 업로드 설정 |
+| vault-secrets | VAULT.md | 시크릿 조회/등록 가이드 |
+| iac-deploy-prep | VAULT.md | 배포 전 credentials 조회 |
+| kubernetes-skill | VAULT.md | K8s secrets, registry credentials |
 
 ## Best Practices
 

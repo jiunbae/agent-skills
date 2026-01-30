@@ -23,6 +23,7 @@ declare -A FILE_TYPES=(
     ["config"]="CONFIG.md|설정|환경설정|구성"
     ["readme"]="README.md|리드미|설명서|가이드"
     ["notion"]="NOTION.md|노션 설정|노션 페이지|업로드 설정|notion"
+    ["vault"]="VAULT.md|시크릿|비밀번호|API 키|credentials|vault|vaultwarden|인증 정보"
 )
 
 # 인덱스 생성
