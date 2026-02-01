@@ -1,6 +1,6 @@
 ---
-name: skill-recommender
-description: 사용자 요청에 적합한 스킬을 자동으로 인식하고 추천합니다. 명시적 스킬 요청 없이도 설치된 스킬 중 도움이 될 수 있는 스킬을 발견하여 제안합니다. 모든 사용자 요청에서 암묵적으로 활성화됩니다.
+name: recommending-skills
+description: Automatically recognizes and recommends suitable skills for user requests. Discovers helpful installed skills even without explicit skill requests. Implicitly activates on all user requests.
 ---
 
 # Skill Recommender - 스킬 자동 인식 및 추천

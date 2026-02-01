@@ -1,6 +1,6 @@
 ---
-name: obsidian-tasks
-description: Obsidian Vault의 TaskManager에서 작업을 읽고 관리하는 스킬. Board.md(Kanban), Table.md(Dataview), Notes/* 를 지원하며 workspace 프로젝트와 자동 연동합니다. '작업 목록', '할일 조회', 'task 읽기', 'obsidian 작업' 요청 시 활성화됩니다.
+name: managing-obsidian-tasks
+description: Reads and manages tasks from Obsidian Vault's TaskManager. Supports Board.md (Kanban), Table.md (Dataview), Notes/*, with automatic workspace project sync. Use for "작업 목록", "할일 조회", "task 읽기", "obsidian 작업" requests.
 ---
 
 # Obsidian Tasks - TaskManager 연동

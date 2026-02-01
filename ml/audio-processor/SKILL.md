@@ -1,6 +1,6 @@
 ---
-name: audio-processor
-description: ffmpeg 기반 오디오 변환 및 처리. "오디오 변환", "wav 변환", "샘플레이트 변경", "모노 변환", "세그먼트 분할", "ffmpeg" 요청 시 활성화됩니다.
+name: processing-audio
+description: Converts and processes audio files using ffmpeg. Supports format conversion, sample rate changes, mono/stereo conversion, and segment splitting. Use for "오디오 변환", "wav 변환", "샘플레이트", "ffmpeg" requests.
 ---
 
 # Audio Processor 스킬

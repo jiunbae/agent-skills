@@ -1,6 +1,6 @@
 ---
-name: obsidian-writer
-description: Obsidian Vault에 문서를 업로드하는 스킬. 현재 프로젝트의 컨텍스트 문서를 workspace/{프로젝트명}/context/ 경로에 저장합니다. 'obsidian 업로드', 'obsidian에 저장', '옵시디언 문서', 'vault에 업로드' 요청 시 활성화됩니다.
+name: writing-to-obsidian
+description: Uploads documents to Obsidian Vault. Saves project context to workspace/{project}/context/, research/reports to articles/ with YYYY-MM-DD prefix. Use for "obsidian 업로드", "옵시디언 저장", "vault 업로드", "아티클 저장" requests.
 ---
 
 # Obsidian Writer - 프로젝트 문서 업로드
@@ -19,6 +19,9 @@ description: Obsidian Vault에 문서를 업로드하는 스킬. 현재 프로�
 **저장 구조:**
 ```
 Vault/
+├── articles/                     # 리서치, 리포트, 아티클 (날짜 prefix)
+│   ├── 2026-01-31-devin-ai-overview.md
+│   └── 2026-01-30-claude-code-review.md
 ├── workspace/                    # ~/workspace/* 프로젝트
 │   ├── agent-skills/
 │   │   └── context/
@@ -40,6 +43,13 @@ Vault/
 
 `~/.agents/OBSIDIAN.md`의 "프로젝트 경로 매핑"에 따라 경로가 결정됩니다:
 
+| 문서 유형 | Obsidian 경로 | 파일명 규칙 |
+|----------|--------------|------------|
+| **articles** (리서치/리포트) | `articles/` | `YYYY-MM-DD-{slug}.md` |
+| 프로젝트 문서 | `workspace/{project}/context/` | 자유 |
+
+### 프로젝트 경로 매핑
+
 | 로컬 경로 | Obsidian 경로 |
 |----------|--------------|
 | `~/workspace/{project}/` | `workspace/{project}/context/` |
@@ -50,6 +60,7 @@ Vault/
 - `~/workspace/agent-skills/` → `workspace/agent-skills/context/`
 - `~/workspace-vibe/colorpal/` → `workspace-vibe/colorpal/context/`
 - `~/workspace-ext/clawdbot/` → `workspace-ext/clawdbot/context/`
+- 리서치 리포트 → `articles/2026-01-31-devin-ai-overview.md`
 
 ## Prerequisites
 
@@ -142,7 +153,20 @@ Claude: 업로드합니다.
 - Vault: ~/Documents/ObsidianVault
 ```
 
-### 예시 3: 설정 없을 때
+### 예시 3: 리서치/리포트를 articles에 저장
+
+```
+사용자: Devin AI 리서치 결과 옵시디언에 저장해줘
+
+Claude: 리서치 리포트를 articles/ 폴더에 저장합니다.
+
+✅ 업로드 완료
+- 경로: articles/2026-01-31-devin-ai-overview.md
+- 유형: article (리서치/리포트)
+- 태그: [ai, software-engineer, cognition-labs, devin, article]
+```
+
+### 예시 4: 설정 없을 때
 
 ```
 사용자: 옵시디언 업로드해줘

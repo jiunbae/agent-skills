@@ -1,6 +1,6 @@
 ---
-name: static-index
-description: 글로벌 정적 컨텍스트 파일의 인덱스를 제공합니다. 다른 스킬이나 에이전트가 정보를 찾을 때 먼저 참조해야 할 파일을 자연어 쿼리로 찾아줍니다. "내 정보", "보안 규칙" 등의 요청에 적절한 static 파일 경로를 반환합니다.
+name: indexing-static-context
+description: Provides an index of global static context files in ~/.agents/. Returns appropriate static file paths for natural language queries like "내 정보", "보안 규칙". Use when other skills or agents need to locate reference information.
 ---
 
 # Static Index - 글로벌 컨텍스트 인덱스
