@@ -23,10 +23,12 @@ Multi-LLM background implementation with context-safe parallel execution.
 
 | Provider | Best For | Command |
 |----------|----------|---------|
-| **Claude** | Complex logic, APIs | `Task({ run_in_background: true })` |
-| **Codex** | DB migrations, models | `codex --approval-mode full-auto` |
-| **Gemini** | Tests, documentation | `gemini -m gemini-2.0-flash` |
+| **Claude** | Complex logic, APIs, Frontend | `Task({ run_in_background: true })` |
+| **Codex** | DB migrations, models | `codex exec --full-auto "prompt"` |
+| **Gemini** | Tests, documentation | `gemini -p "prompt" -s` (⚠️ limited file writes) |
 | **Ollama** | Simple utils, types | `ollama run codellama` |
+
+> **Note**: Gemini CLI currently has policy restrictions on file operations. Use Claude for tasks requiring file creation.
 
 ## Workflow
 
@@ -59,8 +61,15 @@ Task({
 
 **Codex (code generation):**
 ```bash
-codex --approval-mode full-auto \
+codex exec --full-auto \
   "Read and execute: .context/impl/{session}/tasks/02-task.md" &
+```
+
+**Gemini (tests/docs - limited):**
+```bash
+# ⚠️ Gemini has policy restrictions on file writes
+# Use Claude for file creation tasks instead
+gemini -p "Generate test plan for: .context/impl/{session}/tasks/03-task.md" -s
 ```
 
 ### Step 4: Guide User (NO MONITORING)
