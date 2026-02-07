@@ -252,7 +252,7 @@ agent-skills/
 |------|---------------------|------|
 | git-commit-pr | SECURITY.md, WHOAMI.md | 커밋 전 보안 검증, 스타일 참조 |
 | context-manager | WHOAMI.md, STYLE.md | 프로젝트 컨텍스트 구성 |
-| planning-agents | WHOAMI.md | 사용자 역량 기반 기획 |
+| background-planner | WHOAMI.md | 사용자 역량 기반 기획 |
 | notion-summary | NOTION.md | Notion 업로드 설정 |
 | vault-secrets | VAULT.md | 시크릿 조회/등록 가이드 |
 | iac-deploy-prep | VAULT.md | 배포 전 credentials 조회 |

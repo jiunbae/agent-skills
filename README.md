@@ -64,7 +64,7 @@ claude
 ./install.sh ml                 # ML/AI 도구
 
 # 특정 스킬만 설치
-./install.sh agents/planning-agents
+./install.sh agents/background-planner
 ```
 
 ### 추가 옵션
@@ -182,12 +182,8 @@ cs --list --all --verbose         # 모든 스킬 상세
 
 | 스킬 | 설명 |
 |------|------|
-| `background-implementer` | 백그라운드 병렬 구현 (컨텍스트 안전) |
-| `background-planner` | 백그라운드 병렬 기획 (컨텍스트 안전) |
-| `codex-implementer` | Codex CLI를 sub-agent로 활용한 구현 작업 |
-| `multi-llm-agent` | 여러 LLM 통합 협업 (OpenAI, Gemini, Ollama) |
-| `planning-agents` | 멀티 에이전트 병렬 기획 |
-| `plan-executor` | 자동 플래닝 워크플로우 실행 |
+| `background-implementer` | 백그라운드 병렬 구현 (멀티 LLM, 컨텍스트 안전) |
+| `background-planner` | 백그라운드 병렬 기획 (멀티 LLM, 컨텍스트 안전) |
 
 ### 🛠️ development/ - 개발 도구
 

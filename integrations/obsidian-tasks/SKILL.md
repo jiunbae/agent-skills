@@ -269,7 +269,7 @@ Claude: 작업을 완료 처리합니다.
 |------|----------|
 | obsidian-writer | 동일한 OBSIDIAN.md 설정 공유, workspace 경로 연동 |
 | mindcontext | 작업별 컨텍스트 자동 저장 |
-| plan-executor | 계획 수립 시 TaskManager에 작업 등록 |
+| background-planner | 계획 수립 시 TaskManager에 작업 등록 |
 | context-manager | 프로젝트 컨텍스트와 작업 매핑 |
 
 ## Resources

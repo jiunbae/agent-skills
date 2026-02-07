@@ -70,7 +70,7 @@ Options:
 Examples:
   ./install.ps1
   ./install.ps1 agents
-  ./install.ps1 agents/planning-agents development/git-commit-pr
+  ./install.ps1 agents/background-planner development/git-commit-pr
   ./install.ps1 --prefix my- --postfix -dev
   ./install.ps1 --list
 "@
