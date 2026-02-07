@@ -1,6 +1,6 @@
 ---
 name: implementing-in-background
-description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel implementation in the background. Separates independent tasks from planning docs, each agent writes code directly. Context-safe with auto-save. Use for "백그라운드 구현", "bg impl", "병렬 구현", "Codex로 구현" requests.
+description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel implementation in the background. Separates independent tasks from planning docs, each agent writes code directly. Context-safe with auto-save. Use for "백그라운드 구현", "bg impl", "병렬 구현", "Codex로 구현", "구현해줘", "코드 작성해줘" requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, TodoWrite, AskUserQuestion
 priority: high
 tags: [implementation, background, parallel-execution, autonomous, codex, gemini, multi-llm]

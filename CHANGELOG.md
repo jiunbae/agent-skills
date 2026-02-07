@@ -21,11 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--cli` 옵션이 `claude-skill`과 `agent-skill` 모두 설치
 
 ### Core Skills
-- `meta/skill-manager`
-- `meta/skill-recommender`
 - `development/git-commit-pr`
 - `context/context-manager`
-- `context/whoami`
+- `context/static-index`
+- `security/security-auditor`
+- `agents/background-implementer`
+- `agents/background-planner`
 
 ## [0.1.0] - 2026-01-15
 
@@ -37,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Static 디렉토리 (글로벌 컨텍스트)
 
 ### Skills by Category
-- **agents**: background-implementer, background-planner, codex-implementer, multi-llm-agent, plan-executor, planning-agents
+- **agents**: background-implementer, background-planner
 - **development**: context-worktree, git-commit-pr, multi-ai-code-review, playwright, pr-review-loop, task-master
 - **business**: bm-analyzer, document-processor, proposal-analyzer
 - **integrations**: appstore-connect, discord-skill, google-search-console, kubernetes-skill, notion-summary, obsidian-tasks, obsidian-writer, slack-skill

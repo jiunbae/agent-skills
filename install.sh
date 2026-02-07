@@ -7,7 +7,7 @@
 #   ./install.sh                     # 전체 설치
 #   ./install.sh agents              # agents 그룹만 설치
 #   ./install.sh agents development  # 여러 그룹 설치
-#   ./install.sh agents/planning-agents  # 특정 스킬만 설치
+#   ./install.sh agents/background-planner  # 특정 스킬만 설치
 #   ./install.sh --list              # 사용 가능한 스킬 목록
 #   ./install.sh --uninstall agents  # 삭제
 #   ./install.sh --link-static       # static 디렉토리 심링크
@@ -54,12 +54,12 @@ EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" ".git" ".github" ".agents" 
 
 # Core 스킬 (기본 전역 설치, 워크스페이스 공통 필수)
 CORE_SKILLS=(
-    "meta/skill-manager"
     "development/git-commit-pr"
     "context/context-manager"
-    "context/whoami"
-    "security/security-auditor"
     "context/static-index"
+    "security/security-auditor"
+    "agents/background-implementer"
+    "agents/background-planner"
 )
 
 # Core 모드 플래그
@@ -110,7 +110,7 @@ usage() {
 인자:
   그룹/스킬        설치할 그룹 또는 스킬 (기본: all)
                    예: agents, development, business
-                   예: agents/planning-agents, development/git-commit-pr
+                   예: agents/background-planner, development/git-commit-pr
 
 옵션:
   -h, --help       도움말 표시
@@ -149,7 +149,7 @@ Codex 지원:
   $(basename "$0") --core                   # Core 스킬만 설치 (권장)
   $(basename "$0") agents                   # agents 그룹만 설치
   $(basename "$0") agents development       # 여러 그룹 설치
-  $(basename "$0") agents/planning-agents   # 특정 스킬만 설치
+  $(basename "$0") agents/background-planner   # 특정 스킬만 설치
   $(basename "$0") --prefix "my-" agents    # 접두사 붙여서 설치
   $(basename "$0") --uninstall agents       # agents 그룹 삭제
   $(basename "$0") --list                   # 스킬 목록 표시
@@ -159,11 +159,12 @@ Codex 지원:
   $(basename "$0") --core --cli --hooks     # Core + CLI + Hooks (풀 설치)
 
 Core 스킬 (워크스페이스 공통):
-  - meta/skill-manager           스킬 생태계 관리
-  - meta/skill-recommender       스킬 자동 추천
-  - development/git-commit-pr    Git 커밋/PR 가이드
-  - context/context-manager      프로젝트 컨텍스트 로드
-  - context/whoami               사용자 프로필 관리
+  - development/git-commit-pr       Git 커밋/PR 가이드
+  - context/context-manager         프로젝트 컨텍스트 로드
+  - context/static-index            글로벌 설정 인덱스
+  - security/security-auditor       보안 감사
+  - agents/background-implementer   백그라운드 병렬 구현
+  - agents/background-planner       백그라운드 병렬 기획
 
 그룹 (자동 탐색):
 EOF
@@ -353,7 +354,7 @@ list_skills() {
     echo "설치 예시:"
     echo "  ./install.sh all              # 전체 설치"
     echo "  ./install.sh agents           # agents 그룹만"
-    echo "  ./install.sh agents/planning-agents  # 특정 스킬만"
+    echo "  ./install.sh agents/background-planner  # 특정 스킬만"
     echo "  ./install.sh --link-static    # static 심링크 설정"
     echo ""
 }
@@ -1200,7 +1201,7 @@ else
     # 지정된 대상 처리
     for target in "${TARGETS[@]}"; do
         if [[ "$target" == *"/"* ]]; then
-            # 특정 스킬 (예: agents/planning-agents)
+            # 특정 스킬 (예: agents/background-planner)
             group="${target%%/*}"
             skill="${target#*/}"
 

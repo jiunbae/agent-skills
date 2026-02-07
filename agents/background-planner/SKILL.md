@@ -1,6 +1,6 @@
 ---
 name: planning-in-background
-description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel planning in the background with auto-save. Agents continue running even when session hits context limits. Use for "백그라운드 기획", "bg plan", "병렬 기획", "멀티 AI 기획" requests.
+description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel planning in the background with auto-save. Agents continue running even when session hits context limits. Use for "백그라운드 기획", "bg plan", "병렬 기획", "멀티 AI 기획", "기획해줘", "N명이 기획", "계획", "플래닝", "plan", "설계" requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, TodoWrite, AskUserQuestion
 priority: high
 tags: [planning, background, parallel-execution, autonomous, multi-llm, codex, gemini]

@@ -65,8 +65,8 @@ audio-processor|ffmpeg 기반 오디오 변환 및 처리. "오디오 변환", "
 | "벤치마크", "모델 평가" | ml-benchmark |
 | "triton", "모델 서빙" | triton-deploy |
 | "보안 점검", "민감 정보" | security-auditor |
-| "여러 LLM", "멀티 에이전트" | multi-llm-agent |
-| "기획", "planning" | planning-agents |
+| "여러 LLM", "멀티 에이전트" | background-implementer, background-planner |
+| "기획", "planning" | background-planner |
 | "노션", "notion" | notion-summary |
 
 **컨텍스트 기반 매칭:**
@@ -143,7 +143,7 @@ Claude:
 
 Claude:
 > **관련 Skills**:
-> - `planning-agents`: 여러 AI가 병렬로 기획안 제시
+> - `background-planner`: 여러 AI가 병렬로 기획안 제시
 > - `context-worktree`: 새 브랜치에서 독립적으로 작업
 > 사용하려면: `skill: <skill-name>`
 
@@ -200,9 +200,7 @@ proposal-analyzer 스킬을 활성화합니다...
 # ~/.claude/skills/skill-recommender/config/settings.yaml
 sensitivity: medium  # low, medium, high
 max_recommendations: 3
-exclude_skills:
-  - callabo-init  # 프로젝트 특화 스킬 제외
-  - callabo-tmux
+exclude_skills: []
 ```
 
 ### 민감도별 동작
