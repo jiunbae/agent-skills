@@ -23,12 +23,14 @@ Multi-LLM background implementation with context-safe parallel execution.
 
 | Provider | Best For | Command |
 |----------|----------|---------|
-| **Claude** | Complex logic, APIs, Frontend | `Task({ run_in_background: true })` |
-| **Codex** | DB migrations, models | `codex exec --full-auto "prompt"` |
-| **Gemini** | Tests, documentation | `gemini -p "prompt" -s` (⚠️ limited file writes) |
+| **Claude** | Complex logic, APIs, multi-file changes | `Task({ run_in_background: true })` |
+| **Codex** | DB migrations, models, focused code gen | `nohup codex exec --full-auto -C {workdir} "prompt" > log 2>&1 &` |
+| **Gemini** | Tests, documentation, code review | `nohup gemini -p "prompt" --yolo -o text > log 2>/dev/null &` |
 | **Ollama** | Simple utils, types | `ollama run codellama` |
 
-> **Note**: Gemini CLI currently has policy restrictions on file operations. Use Claude for tasks requiring file creation.
+> **Gemini v0.26+**: Use `-p "prompt"` for non-interactive mode. Use `--yolo` for auto-approve file writes. Use `-o text` for clean output. Redirect stdout to capture: `> output.md`. Do NOT use `-s` (that's `--sandbox`, not silent).
+> **Codex v0.98+**: Use `codex exec --full-auto` for non-interactive. Use `-C dir` to set working directory. Use `-o file.md` to save last message. Use `nohup ... &` for background. Codex may time out exploring large codebases — prefer Claude for complex multi-file tasks.
+> **Claude subagents** are the most reliable for complex implementation. Always prefer Claude for tasks touching 3+ files or requiring deep codebase understanding.
 
 ## Workflow
 
@@ -61,16 +63,25 @@ Task({
 
 **Codex (code generation):**
 ```bash
-codex exec --full-auto \
-  "Read and execute: .context/impl/{session}/tasks/02-task.md" &
+nohup codex exec --full-auto \
+  -C /path/to/workdir \
+  -o .context/impl/{session}/02-result.md \
+  "Read and execute: .context/impl/{session}/tasks/02-task.md" \
+  > .context/impl/{session}/02-codex.log 2>&1 &
 ```
+> Use `-C dir` for working directory, `-o file` to save final message, `nohup ... &` for background. Always redirect both stdout and stderr to a log file.
 
-**Gemini (tests/docs - limited):**
+**Gemini (tests/docs/review):**
 ```bash
-# ⚠️ Gemini has policy restrictions on file writes
-# Use Claude for file creation tasks instead
-gemini -p "Generate test plan for: .context/impl/{session}/tasks/03-task.md" -s
+# For planning/review output (no file writes needed):
+nohup gemini -p "Review and generate test plan for: .context/impl/{session}/tasks/03-task.md" \
+  -o text > .context/impl/{session}/03-test-plan.md 2>/dev/null &
+
+# For file-writing tasks (auto-approve):
+nohup gemini -p "Implement: .context/impl/{session}/tasks/03-task.md" \
+  --yolo -o text > .context/impl/{session}/03-result.log 2>/dev/null &
 ```
+> Use `--yolo` when Gemini needs to write files. Without it, Gemini prompts for approval and hangs in background.
 
 ### Step 4: Guide User (NO MONITORING)
 

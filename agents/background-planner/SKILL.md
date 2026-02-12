@@ -24,10 +24,13 @@ Multi-LLM parallel planning with context-safe auto-save.
 
 | Provider | Best For | Command |
 |----------|----------|---------|
-| **Claude** | Complex analysis, architecture | `Task({ run_in_background: true })` |
-| **Codex** | Technical specs, code design | `codex --approval-mode full-auto` |
-| **Gemini** | Creative ideas, long docs | `gemini -m gemini-2.0-flash` |
+| **Claude** | Complex analysis, architecture, deep codebase reading | `Task({ run_in_background: true })` |
+| **Codex** | Technical specs, code design | `nohup codex exec --full-auto -o {output.md} "prompt" > log 2>&1 &` |
+| **Gemini** | Creative ideas, UX design, long docs | `nohup gemini -p "prompt" -o text > {output.md} 2>/dev/null &` |
 | **Ollama** | Sensitive data, local | `ollama run llama3.2` |
+
+> **Gemini v0.26+**: Use `-p "prompt"` for non-interactive, `-o text` for clean output, `--yolo` for auto-approve file writes. Redirect stdout to file: `> output.md`. Do NOT use `-s` (that's `--sandbox`, not silent).
+> **Codex v0.98+**: Use `codex exec --full-auto` for non-interactive. Use `-o file.md` to save last message. Use `nohup ... &` for background. Note: Codex may time out on large codebases — prefer Claude for complex tasks.
 
 ## Workflow
 
@@ -53,15 +56,18 @@ Task({
 
 **Codex:**
 ```bash
-codex --approval-mode full-auto \
-  "Plan ${topic} from technical perspective. Save to .context/plans/{session}/codex.md" &
+nohup codex exec --full-auto \
+  -o .context/plans/{session}/codex.md \
+  "Plan ${topic} from technical perspective." \
+  > .context/plans/{session}/codex.log 2>&1 &
 ```
 
 **Gemini:**
 ```bash
-gemini -m gemini-2.0-flash \
-  "Plan ${topic} creatively. Save to .context/plans/{session}/gemini.md" &
+nohup gemini -p "Plan ${topic} creatively. Output a well-structured markdown plan." \
+  -o text > .context/plans/{session}/gemini.md 2>/dev/null &
 ```
+> Note: Gemini `-p` runs non-interactively. `-o text` gives clean text output. Redirect stdout `>` to save to file. Use `--yolo` if the prompt requires file system access.
 
 ### Step 3: Guide User (NO POLLING)
 
