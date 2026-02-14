@@ -29,8 +29,26 @@ $InstallCli = $false
 $UninstallCli = $false
 $CliTarget = Join-Path $HOME '.local/bin'
 $CliAliases = @()
+$InstallCodex = $false
+$CodexTarget = Join-Path $HOME '.codex'
+$CodexAgentsSource = Join-Path $ScriptDir 'codex-support/AGENTS.md'
+$InstallHooks = $false
+$UninstallHooks = $false
+$HooksSource = Join-Path $ScriptDir 'hooks'
+$HooksTarget = Join-Path $HOME '.claude/hooks'
+$HooksRegistry = Join-Path $HooksSource 'hooks.json'
+$CoreMode = $false
+$CoreSkills = @(
+    'development/git-commit-pr',
+    'context/context-manager',
+    'context/static-index',
+    'security/security-auditor',
+    'agents/background-implementer',
+    'agents/background-planner',
+    'agents/background-reviewer'
+)
 $Targets = @()
-$ExcludeDirs = @('static', 'cli', '.git', '.github', '.agents', 'node_modules', '__pycache__')
+$ExcludeDirs = @('static', 'cli', 'codex-support', 'hooks', '.git', '.github', '.agents', 'node_modules', '__pycache__')
 
 function Normalize-Path {
     param([string]$Path)
@@ -61,17 +79,32 @@ Options:
   --prefix VALUE      Add prefix to installed skill names
   --postfix VALUE     Add postfix to installed skill names
   --target DIR        Install path (default: ~/.claude/skills)
+  --core              Install core skills only (workspace common)
+
+Static:
   --link-static       Link static/ -> ~/.agents
   --unlink-static     Remove ~/.agents link
-  --cli               Install claude-skill CLI (~/.local/bin)
+
+CLI:
+  --cli               Install claude-skill + agent-skill CLI (~/.local/bin)
   --alias NAME        Extra alias for CLI (repeatable)
   --uninstall-cli     Remove CLI and aliases
 
+Hooks:
+  --hooks             Install Claude Code hooks (~/.claude/hooks)
+  --uninstall-hooks   Remove installed hooks
+
+Codex:
+  --codex             Setup Codex CLI support (AGENTS.md + skills symlink)
+
 Examples:
   ./install.ps1
+  ./install.ps1 --core                    # Core skills only (recommended)
+  ./install.ps1 --core --cli --link-static  # Core + CLI + static
   ./install.ps1 agents
   ./install.ps1 agents/background-planner development/git-commit-pr
-  ./install.ps1 --prefix my- --postfix -dev
+  ./install.ps1 --hooks                   # Install hooks
+  ./install.ps1 --codex                   # Codex CLI support
   ./install.ps1 --list
 "@
     exit 0
@@ -289,6 +322,306 @@ function Install-All {
     }
 }
 
+function Install-Core {
+    Write-Info "Installing core skills... ($($CoreSkills.Count) skills)"
+    Write-Host ''
+
+    foreach ($skillPath in $CoreSkills) {
+        $parts = $skillPath -split '/', 2
+        $group = $parts[0]
+        $skill = $parts[1]
+
+        if ($Uninstall) {
+            Uninstall-Skill -Group $group -Skill $skill
+        } else {
+            Install-Skill -Group $group -Skill $skill
+        }
+    }
+
+    Write-Host ''
+    Write-Info "Core skills installed. For additional skills per workspace:"
+    Write-Host "  agent-skill install <skill-name>"
+}
+
+function Install-Codex {
+    if (-not (Test-Path -LiteralPath $CodexAgentsSource -PathType Leaf)) {
+        Write-ErrorMsg "Codex AGENTS.md not found: $CodexAgentsSource"
+        exit 1
+    }
+
+    $codexAgentsTarget = Join-Path $CodexTarget 'AGENTS.md'
+    $codexSkillsTarget = Join-Path $CodexTarget 'skills'
+    $claudeSkillsSource = Join-Path $HOME '.claude/skills'
+
+    if ($DryRun) {
+        Write-Dry "Ensure directory: $CodexTarget"
+        if (Test-Path -LiteralPath $codexAgentsTarget) {
+            Write-Dry "Append skill guide to AGENTS.md: $codexAgentsTarget"
+        } else {
+            Write-Dry "Create AGENTS.md: $codexAgentsTarget"
+        }
+        Write-Dry "Link: $codexSkillsTarget -> $claudeSkillsSource"
+        return
+    }
+
+    # Create ~/.codex directory
+    Ensure-Directory $CodexTarget
+
+    # Handle AGENTS.md
+    if (Test-Path -LiteralPath $codexAgentsTarget -PathType Leaf) {
+        $existingContent = Get-Content -LiteralPath $codexAgentsTarget -Raw
+        if ($existingContent -match 'Claude Skills \(SKILL\.md\)') {
+            Write-Warn "AGENTS.md already contains skill guide."
+            Write-Warn "Remove the existing skill section manually, then re-run."
+        } else {
+            Write-Info "Appending skill guide to existing AGENTS.md..."
+            $separator = "`n`n# ====================================================`n# Agent Skills Integration (auto-generated)`n# ====================================================`n`n"
+            $skillGuide = Get-Content -LiteralPath $CodexAgentsSource -Raw
+            Add-Content -LiteralPath $codexAgentsTarget -Value ($separator + $skillGuide)
+            Write-Success "Skill guide appended to AGENTS.md (existing content preserved)"
+        }
+    } else {
+        Copy-Item -LiteralPath $CodexAgentsSource -Destination $codexAgentsTarget
+        Write-Success "AGENTS.md created: $codexAgentsTarget"
+    }
+
+    # Skills symlink
+    if (-not (Test-Path -LiteralPath $claudeSkillsSource -PathType Container)) {
+        Write-Warn "Claude skills directory not found: $claudeSkillsSource"
+        Write-Info "Install skills first: ./install.ps1"
+    }
+
+    if (Test-Path -LiteralPath $codexSkillsTarget) {
+        $item = Get-Item -LiteralPath $codexSkillsTarget -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            $linkTarget = ''
+            $linkProp = $item.PSObject.Properties['LinkTarget']
+            if ($linkProp) { $linkTarget = $linkProp.Value }
+            if ($linkTarget -eq $claudeSkillsSource) {
+                Write-Info "Skills symlink already correctly set"
+            } else {
+                Write-Warn "Replacing existing symlink: $codexSkillsTarget"
+                Remove-Existing $codexSkillsTarget
+                $linkType = New-Link -Path $codexSkillsTarget -Target $claudeSkillsSource
+                Write-Success "Link created: ~/.codex/skills -> ~/.claude/skills ($linkType)"
+            }
+        } elseif ($item.PSIsContainer) {
+            $backup = "${codexSkillsTarget}.backup"
+            Write-Warn "Backing up existing directory to: $backup"
+            Move-Item -LiteralPath $codexSkillsTarget -Destination $backup -Force
+            $linkType = New-Link -Path $codexSkillsTarget -Target $claudeSkillsSource
+            Write-Success "Link created: ~/.codex/skills -> ~/.claude/skills ($linkType)"
+        }
+    } else {
+        try {
+            $linkType = New-Link -Path $codexSkillsTarget -Target $claudeSkillsSource
+            Write-Success "Link created: ~/.codex/skills -> ~/.claude/skills ($linkType)"
+        } catch {
+            Write-ErrorMsg "Failed to create codex skills link: $_"
+        }
+    }
+
+    Write-Host ''
+    Write-Info "Codex CLI can now use skills"
+    Write-Info "AGENTS.md: $codexAgentsTarget"
+    Write-Info "Skills: $codexSkillsTarget -> $claudeSkillsSource"
+}
+
+function Install-Hooks {
+    if (-not (Test-Path -LiteralPath $HooksRegistry -PathType Leaf)) {
+        Write-ErrorMsg "hooks.json not found: $HooksRegistry"
+        exit 1
+    }
+
+    Write-Info "Installing hooks..."
+
+    $registry = Get-Content -LiteralPath $HooksRegistry -Raw | ConvertFrom-Json
+
+    foreach ($hookName in $registry.PSObject.Properties.Name) {
+        $hookConfig = $registry.$hookName
+        $hookType = if ($hookConfig.PSObject.Properties['type']) { $hookConfig.type } else { 'command' }
+
+        if ($hookType -ne 'command') {
+            Write-Info "Registered: $hookName ($hookType type, no script needed)"
+            continue
+        }
+
+        $script = if ($hookConfig.PSObject.Properties['script']) { $hookConfig.script } else { '' }
+        if ([string]::IsNullOrEmpty($script)) { continue }
+
+        $sourcePath = Join-Path $HooksSource $script
+        $targetPath = Join-Path $HooksTarget $script
+
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            Write-Warn "Script not found: $sourcePath"
+            continue
+        }
+
+        if ($DryRun) {
+            Write-Dry "Link: $sourcePath -> $targetPath"
+        } else {
+            Ensure-Directory $HooksTarget
+            Remove-Existing $targetPath
+
+            if ($CopyMode) {
+                Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+                Write-Success "Copied: $hookName ($script)"
+            } else {
+                try {
+                    $linkType = New-Link -Path $targetPath -Target $sourcePath
+                    Write-Success "Linked: $hookName ($script) ($linkType)"
+                } catch {
+                    Write-ErrorMsg "Failed to link hook $hookName : $_"
+                }
+            }
+        }
+    }
+
+    # Merge hook settings into settings.json
+    $settingsFile = Join-Path $HOME '.claude/settings.json'
+
+    if ($DryRun) {
+        Write-Dry "Merge hook settings into: $settingsFile"
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $settingsFile -PathType Leaf)) {
+        Ensure-Directory (Split-Path $settingsFile -Parent)
+        '{}' | Set-Content -LiteralPath $settingsFile
+    }
+
+    $settings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+    if (-not $settings.PSObject.Properties['hooks']) {
+        $settings | Add-Member -MemberType NoteProperty -Name 'hooks' -Value ([PSCustomObject]@{})
+    }
+
+    foreach ($hookName in $registry.PSObject.Properties.Name) {
+        $hookConfig = $registry.$hookName
+        $event = $hookConfig.event
+        $hookType = if ($hookConfig.PSObject.Properties['type']) { $hookConfig.type } else { 'command' }
+
+        if (-not $settings.hooks.PSObject.Properties[$event]) {
+            $settings.hooks | Add-Member -MemberType NoteProperty -Name $event -Value @()
+        }
+
+        # Build identifier for dedup
+        if ($hookType -eq 'command') {
+            $scriptPath = Join-Path $HooksTarget $hookConfig.script
+            $identifier = "bash $scriptPath"
+        } else {
+            $identifier = if ($hookConfig.PSObject.Properties['prompt']) { $hookConfig.prompt.Substring(0, [Math]::Min(80, $hookConfig.prompt.Length)) } else { '' }
+        }
+
+        # Check for duplicates
+        $alreadyExists = $false
+        foreach ($entry in $settings.hooks.$event) {
+            foreach ($h in $entry.hooks) {
+                if ($hookType -eq 'command' -and $h.PSObject.Properties['command'] -and $h.command -eq $identifier) {
+                    $alreadyExists = $true; break
+                }
+                if ($hookType -eq 'prompt' -and $h.PSObject.Properties['prompt'] -and $h.prompt.Substring(0, [Math]::Min(80, $h.prompt.Length)) -eq $identifier) {
+                    $alreadyExists = $true; break
+                }
+            }
+        }
+
+        if (-not $alreadyExists) {
+            $h = [PSCustomObject]@{ type = $hookType }
+            if ($hookType -eq 'command') {
+                $h | Add-Member -MemberType NoteProperty -Name 'command' -Value $identifier
+            } elseif ($hookType -eq 'prompt') {
+                $h | Add-Member -MemberType NoteProperty -Name 'prompt' -Value $hookConfig.prompt
+            }
+            if ($hookConfig.PSObject.Properties['statusMessage']) {
+                $h | Add-Member -MemberType NoteProperty -Name 'statusMessage' -Value $hookConfig.statusMessage
+            }
+            if ($hookConfig.PSObject.Properties['model']) {
+                $h | Add-Member -MemberType NoteProperty -Name 'model' -Value $hookConfig.model
+            }
+
+            $hookEntry = [PSCustomObject]@{ hooks = @($h) }
+            if ($hookConfig.PSObject.Properties['matcher']) {
+                $hookEntry | Add-Member -MemberType NoteProperty -Name 'matcher' -Value $hookConfig.matcher
+            }
+
+            $settings.hooks.$event = @($settings.hooks.$event) + @($hookEntry)
+        }
+    }
+
+    $settings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsFile
+    Write-Success "Hook settings merged into settings.json"
+
+    Write-Host ''
+    Write-Info "Installed hooks:"
+    foreach ($hookName in $registry.PSObject.Properties.Name) {
+        $desc = if ($registry.$hookName.PSObject.Properties['description']) { $registry.$hookName.description } else { '' }
+        Write-Info "  - ${hookName}: $desc"
+    }
+}
+
+function Uninstall-Hooks {
+    Write-Info "Removing hooks..."
+
+    if (-not (Test-Path -LiteralPath $HooksRegistry -PathType Leaf)) {
+        Write-Warn "hooks.json not found"
+        return
+    }
+
+    $registry = Get-Content -LiteralPath $HooksRegistry -Raw | ConvertFrom-Json
+
+    # Remove hook script files
+    foreach ($hookName in $registry.PSObject.Properties.Name) {
+        $hookConfig = $registry.$hookName
+        $script = if ($hookConfig.PSObject.Properties['script']) { $hookConfig.script } else { '' }
+        if ([string]::IsNullOrEmpty($script)) { continue }
+
+        $targetPath = Join-Path $HooksTarget $script
+        if (Test-Path -LiteralPath $targetPath) {
+            Remove-Existing $targetPath
+            Write-Success "Script removed: $script"
+        }
+    }
+
+    # Remove hook settings from settings.json
+    $settingsFile = Join-Path $HOME '.claude/settings.json'
+    if (Test-Path -LiteralPath $settingsFile -PathType Leaf) {
+        $settings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+        if ($settings.PSObject.Properties['hooks']) {
+            foreach ($hookName in $registry.PSObject.Properties.Name) {
+                $hookConfig = $registry.$hookName
+                $event = $hookConfig.event
+                $hookType = if ($hookConfig.PSObject.Properties['type']) { $hookConfig.type } else { 'command' }
+
+                if (-not $settings.hooks.PSObject.Properties[$event]) { continue }
+
+                if ($hookType -eq 'command') {
+                    $scriptPath = Join-Path $HooksTarget $hookConfig.script
+                    $command = "bash $scriptPath"
+                    $settings.hooks.$event = @($settings.hooks.$event | Where-Object {
+                        -not ($_.hooks | Where-Object { $_.PSObject.Properties['command'] -and $_.command -eq $command })
+                    })
+                } else {
+                    $promptPrefix = if ($hookConfig.PSObject.Properties['prompt']) { $hookConfig.prompt.Substring(0, [Math]::Min(80, $hookConfig.prompt.Length)) } else { '' }
+                    $settings.hooks.$event = @($settings.hooks.$event | Where-Object {
+                        -not ($_.hooks | Where-Object { $_.PSObject.Properties['prompt'] -and $_.prompt.Substring(0, [Math]::Min(80, $_.prompt.Length)) -eq $promptPrefix })
+                    })
+                }
+
+                if ($settings.hooks.$event.Count -eq 0) {
+                    $settings.hooks.PSObject.Properties.Remove($event)
+                }
+            }
+
+            if ($settings.hooks.PSObject.Properties.Count -eq 0) {
+                $settings.PSObject.Properties.Remove('hooks')
+            }
+
+            $settings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsFile
+            Write-Success "Hook settings removed from settings.json"
+        }
+    }
+}
+
 function Link-Static {
     if (-not (Test-Path -LiteralPath $StaticSource -PathType Container)) {
         Write-ErrorMsg "Missing static directory: $StaticSource"
@@ -355,76 +688,97 @@ function Unlink-Static {
 }
 
 function Install-Cli {
-    $source = Join-Path $ScriptDir 'cli/claude-skill'
-    $target = Join-Path $CliTarget 'claude-skill'
-
-    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-        Write-ErrorMsg "CLI script not found: $source"
-        exit 1
-    }
+    $cliTools = @('claude-skill', 'agent-skill')
 
     if ($DryRun) {
         Write-Dry "Ensure directory: $CliTarget"
-        Write-Dry "Link CLI: $target -> $source"
-    } else {
-        Ensure-Directory $CliTarget
+        foreach ($tool in $cliTools) {
+            Write-Dry "Link CLI: $(Join-Path $CliTarget $tool) -> $(Join-Path $ScriptDir "cli/$tool")"
+        }
+        foreach ($alias in $CliAliases) {
+            Write-Dry "Alias -> $(Join-Path $CliTarget $alias)"
+        }
+        return
+    }
+
+    Ensure-Directory $CliTarget
+
+    foreach ($tool in $cliTools) {
+        $source = Join-Path $ScriptDir "cli/$tool"
+        $target = Join-Path $CliTarget $tool
+
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            Write-Warn "CLI script not found: $source"
+            continue
+        }
+
         Remove-Existing $target
         try {
             $linkType = New-Link -Path $target -Target $source
             Write-Success "CLI installed: $target ($linkType)"
         } catch {
-            Write-ErrorMsg "Failed to create CLI link: $_. Try running as admin or copy manually."
-            exit 1
+            Write-ErrorMsg "Failed to create CLI link for ${tool}: $_. Try running as admin or use --copy."
         }
     }
 
+    # Aliases point to claude-skill
+    $claudeSkillSource = Join-Path $ScriptDir 'cli/claude-skill'
     foreach ($alias in $CliAliases) {
         $aliasPath = Join-Path $CliTarget $alias
-        if ($DryRun) {
-            Write-Dry "Alias -> $aliasPath"
-            continue
-        }
         Remove-Existing $aliasPath
         try {
-            $linkType = New-Link -Path $aliasPath -Target $source
+            $linkType = New-Link -Path $aliasPath -Target $claudeSkillSource
             Write-Success "Alias installed: $aliasPath ($linkType)"
         } catch {
             Write-ErrorMsg ("Failed to create alias {0}: {1}" -f $alias, $_)
-            exit 1
         }
+    }
+
+    Write-Info "Usage:"
+    Write-Info "  claude-skill --help  (run skills)"
+    Write-Info "  agent-skill --help   (manage skills)"
+
+    if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $CliTarget })) {
+        Write-Warn "$CliTarget is not in PATH."
+        Write-Info "Add it to your PATH environment variable."
     }
 }
 
 function Uninstall-Cli {
-    $source = Join-Path $ScriptDir 'cli/claude-skill'
-    $target = Join-Path $CliTarget 'claude-skill'
-
+    $cliTools = @('claude-skill', 'agent-skill')
     $removed = $false
-    if (Test-Path -LiteralPath $target) {
-        if ($DryRun) {
-            Write-Dry "Remove CLI: $target"
-        } else {
-            Remove-Existing $target
-            Write-Success "Removed CLI: $target"
-        }
-        $removed = $true
-    }
 
-    if (Test-Path -LiteralPath $CliTarget -PathType Container) {
-        Get-ChildItem -Path $CliTarget -Force |
-            Where-Object {
-                $_.Attributes -band [IO.FileAttributes]::ReparsePoint -and
-                ($_.PSObject.Properties['LinkTarget'] -and $_.LinkTarget -eq $source)
-            } |
-            ForEach-Object {
-                if ($DryRun) {
-                    Write-Dry "Remove alias: $($_.FullName)"
-                } else {
-                    Remove-Existing $_.FullName
-                    Write-Success "Removed alias: $($_.FullName)"
-                }
-                $removed = $true
+    foreach ($tool in $cliTools) {
+        $source = Join-Path $ScriptDir "cli/$tool"
+        $target = Join-Path $CliTarget $tool
+
+        if (Test-Path -LiteralPath $target) {
+            if ($DryRun) {
+                Write-Dry "Remove CLI: $target"
+            } else {
+                Remove-Existing $target
+                Write-Success "Removed CLI: $target"
             }
+            $removed = $true
+        }
+
+        # Remove aliases pointing to this tool
+        if (Test-Path -LiteralPath $CliTarget -PathType Container) {
+            Get-ChildItem -Path $CliTarget -Force |
+                Where-Object {
+                    $_.Attributes -band [IO.FileAttributes]::ReparsePoint -and
+                    ($_.PSObject.Properties['LinkTarget'] -and $_.LinkTarget -eq $source)
+                } |
+                ForEach-Object {
+                    if ($DryRun) {
+                        Write-Dry "Remove alias: $($_.FullName)"
+                    } else {
+                        Remove-Existing $_.FullName
+                        Write-Success "Removed alias: $($_.FullName)"
+                    }
+                    $removed = $true
+                }
+        }
     }
 
     if (-not $removed) {
@@ -458,6 +812,10 @@ for ($i = 0; $i -lt $ScriptArgs.Count; $i++) {
         { $_ -like '--alias=*' } { $CliAliases += $arg.Split('=')[1]; continue }
         '--alias' { $CliAliases += $ScriptArgs[++$i]; continue }
         '--uninstall-cli' { $UninstallCli = $true; continue }
+        '--codex' { $InstallCodex = $true; continue }
+        '--hooks' { $InstallHooks = $true; continue }
+        '--uninstall-hooks' { $UninstallHooks = $true; continue }
+        '--core' { $CoreMode = $true; continue }
         default { $Targets += $arg }
     }
 }
@@ -467,11 +825,22 @@ $StaticSource = Normalize-Path $StaticSource
 $StaticTarget = Normalize-Path $StaticTarget
 $CliTarget = Normalize-Path $CliTarget
 
-if ($LinkStatic) { Link-Static; exit 0 }
+# Standalone uninstall operations (exit immediately)
 if ($UnlinkStatic) { Unlink-Static; exit 0 }
-if ($InstallCli) { Install-Cli; exit 0 }
 if ($UninstallCli) { Uninstall-Cli; exit 0 }
+if ($UninstallHooks) { Uninstall-Hooks; exit 0 }
 if ($ListMode) { List-Skills; exit 0 }
+
+# Combinable install options (run before skill installation)
+if ($LinkStatic) { Link-Static; Write-Host '' }
+if ($InstallCli) { Install-Cli; Write-Host '' }
+if ($InstallCodex) { Install-Codex; Write-Host '' }
+if ($InstallHooks) { Install-Hooks; Write-Host '' }
+
+# If only non-skill options were specified (no targets and not core mode), exit
+if ($Targets.Count -eq 0 -and -not $CoreMode -and ($LinkStatic -or $InstallCli -or $InstallCodex -or $InstallHooks)) {
+    exit 0
+}
 
 if (-not $DryRun) { Ensure-Directory $TargetDir }
 
@@ -490,7 +859,10 @@ $skillGroups = Get-SkillGroups
 
 $targetsArray = @($Targets)
 
-if ($targetsArray.Count -eq 0 -or $targetsArray[0] -eq 'all') {
+if ($CoreMode) {
+    # Core skills only
+    Install-Core
+} elseif ($targetsArray.Count -eq 0 -or $targetsArray[0] -eq 'all') {
     if ($Uninstall) {
         foreach ($group in $skillGroups) {
             foreach ($skill in Get-SkillsInGroup $group) {
