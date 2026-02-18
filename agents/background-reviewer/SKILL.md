@@ -79,9 +79,15 @@ Write `$REVIEW_DIR/review-brief.md`:
 
 **Codex (Native Review — PRIORITY):**
 ```bash
-# Codex has dedicated review capabilities
-# Option A: Using codex exec for non-interactive review
-codex exec --full-auto \
+# Codex v0.101+ has dedicated review capabilities (model: gpt-5.3-codex)
+
+# Option A: Using codex exec review (native review subcommand)
+nohup codex exec review \
+  > $REVIEW_DIR/codex-review.log 2>&1 &
+
+# Option B: Custom review via exec --full-auto
+nohup codex exec --full-auto \
+  --add-dir $REVIEW_DIR \
   "Review the git diff between main and HEAD. Focus on:
    1. Bugs and logic errors
    2. Race conditions and edge cases
@@ -89,14 +95,22 @@ codex exec --full-auto \
    4. Performance issues
    5. Type safety concerns
    Save your review to $REVIEW_DIR/codex-review.md
-   Format: ## Category / ### Finding / severity + description + suggestion" &
+   Format: ## Category / ### Finding / severity + description + suggestion" \
+  > $REVIEW_DIR/codex-exec.log 2>&1 &
 
-# Option B: If the diff is large, pass file list
-codex exec --full-auto \
+# Option C: If the diff is large, pass file list
+nohup codex exec --full-auto \
+  --add-dir $REVIEW_DIR \
   "Read $REVIEW_DIR/changed-files.txt and review each changed file.
    Focus on bugs, edge cases, and code quality.
-   Save findings to $REVIEW_DIR/codex-review.md" &
+   Save findings to $REVIEW_DIR/codex-review.md" \
+  > $REVIEW_DIR/codex-exec.log 2>&1 &
 ```
+> **Codex review notes:**
+> - Sandbox: `workspace-write` (reads anywhere, writes only to workspace + /tmp)
+> - Use `--add-dir $REVIEW_DIR` so Codex can write review files outside the workspace
+> - Always redirect logs: `> log 2>&1 &`
+> - Codex DOES write files in nohup mode — check the target directory, not just logs
 
 **Claude (Architecture + Security):**
 ```typescript

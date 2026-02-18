@@ -30,7 +30,7 @@ Multi-LLM parallel planning with context-safe auto-save.
 | **Ollama** | Sensitive data, local | `ollama run llama3.2` |
 
 > **Gemini v0.26+**: Use `-p "prompt"` for non-interactive, `-o text` for clean output, `--yolo` for auto-approve file writes. Redirect stdout to file: `> output.md`. Do NOT use `-s` (that's `--sandbox`, not silent).
-> **Codex v0.98+**: Use `codex exec --full-auto` for non-interactive. Use `-o file.md` to save last message. Use `nohup ... &` for background. Note: Codex may time out on large codebases — prefer Claude for complex tasks.
+> **Codex v0.101+** (model: gpt-5.3-codex): Use `codex exec --full-auto` for non-interactive. Use `-o file.md` to save last message. Use `nohup ... > log 2>&1 &` for background. Sandbox is `workspace-write` by default (reads anywhere, writes only to workspace + /tmp). Use `--add-dir <path>` for additional writable directories. Codex DOES write files in nohup mode — check the workspace for actual file outputs, not just the log.
 
 ## Workflow
 
