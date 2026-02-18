@@ -48,9 +48,12 @@ UNINSTALL_HOOKS=false
 HOOKS_SOURCE="${SCRIPT_DIR}/hooks"
 HOOKS_TARGET="${HOME}/.claude/hooks"
 HOOKS_REGISTRY="${HOOKS_SOURCE}/hooks.json"
+INSTALL_PERSONAS=false
+PERSONAS_SOURCE="${SCRIPT_DIR}/personas"
+PERSONAS_TARGET="${HOME}/.agents/personas"
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
-EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" "personas" ".git" ".github" ".agents" "node_modules" "__pycache__")
 
 # Core 스킬 (기본 전역 설치, 워크스페이스 공통 필수)
 CORE_SKILLS=(
@@ -140,6 +143,10 @@ Hooks:
                    - settings.json에 hook 설정 자동 병합
   --uninstall-hooks  설치된 hooks 제거
 
+Personas:
+  --personas       에이전트 페르소나 설치 (~/.agents/personas/)
+                   - 라이브러리 페르소나를 전역 설치
+
 Codex 지원:
   --codex          Codex CLI 지원 설정
                    - ~/.codex/AGENTS.md에 스킬 가이드 추가
@@ -181,11 +188,11 @@ EOF
 
 # 로그 함수
 log_info() {
-  [[ "$QUIET" == "false" ]] && echo -e "${BLUE}[INFO]${NC} $1"
+  [[ "$QUIET" == "false" ]] && echo -e "${BLUE}[INFO]${NC} $1" || true
 }
 
 log_success() {
-  [[ "$QUIET" == "false" ]] && echo -e "${GREEN}[OK]${NC} $1"
+  [[ "$QUIET" == "false" ]] && echo -e "${GREEN}[OK]${NC} $1" || true
 }
 
 log_warn() {
@@ -392,7 +399,7 @@ link_static() {
 
 # CLI 도구 설치 (claude-skill, agent-skill 모두)
 install_cli() {
-  local cli_tools=("claude-skill" "agent-skill")
+  local cli_tools=("claude-skill" "agent-skill" "agent-persona")
 
   # 대상 디렉토리 생성
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -456,7 +463,7 @@ install_cli() {
 
 # CLI 도구 제거
 uninstall_cli() {
-  local cli_tools=("claude-skill" "agent-skill")
+  local cli_tools=("claude-skill" "agent-skill" "agent-persona")
 
   if [[ "$DRY_RUN" == "true" ]]; then
     for tool in "${cli_tools[@]}"; do
@@ -615,6 +622,45 @@ install_codex() {
   log_info "Codex CLI에서 스킬을 사용할 수 있습니다"
   log_info "AGENTS.md: $codex_agents_target"
   log_info "Skills: $codex_skills_target -> $claude_skills_source"
+}
+
+# Personas 설치
+install_personas() {
+  if [[ ! -d "$PERSONAS_SOURCE" ]]; then
+    log_error "personas 디렉토리가 없습니다: $PERSONAS_SOURCE"
+    exit 1
+  fi
+
+  log_info "Personas 설치 중..."
+  mkdir -p "$PERSONAS_TARGET"
+
+  local installed=0
+  for persona_file in "$PERSONAS_SOURCE"/*.md; do
+    [[ -f "$persona_file" ]] || continue
+    local filename=$(basename "$persona_file")
+    [[ "$filename" == "README.md" ]] && continue
+
+    local target_path="${PERSONAS_TARGET}/${filename}"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log_dry "Link: $filename"
+      installed=$((installed + 1))
+      continue
+    fi
+
+    [[ -e "$target_path" ]] && rm -f "$target_path"
+
+    if [[ "$COPY_MODE" == "true" ]]; then
+      cp "$persona_file" "$target_path"
+    else
+      ln -s "$persona_file" "$target_path"
+    fi
+
+    log_success "설치됨: $filename"
+    installed=$((installed + 1))
+  done
+
+  log_info "$installed 개 페르소나 설치됨 ($PERSONAS_TARGET)"
 }
 
 # Hooks 설치
@@ -1084,6 +1130,10 @@ while [[ $# -gt 0 ]]; do
     INSTALL_HOOKS=true
     shift
     ;;
+  --personas)
+    INSTALL_PERSONAS=true
+    shift
+    ;;
   --uninstall-hooks)
     UNINSTALL_HOOKS=true
     shift
@@ -1150,8 +1200,13 @@ if [[ "$INSTALL_HOOKS" == "true" ]]; then
   echo ""
 fi
 
+if [[ "$INSTALL_PERSONAS" == "true" ]]; then
+  install_personas
+  echo ""
+fi
+
 # 스킬 설치 대상이 없고 다른 옵션만 있으면 종료 (단, Core 모드는 제외)
-if [[ ${#TARGETS[@]} -eq 0 && "$CORE_MODE" == "false" && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true" || "$INSTALL_HOOKS" == "true") ]]; then
+if [[ ${#TARGETS[@]} -eq 0 && "$CORE_MODE" == "false" && ("$LINK_STATIC" == "true" || "$INSTALL_CLI" == "true" || "$INSTALL_CODEX" == "true" || "$INSTALL_HOOKS" == "true" || "$INSTALL_PERSONAS" == "true") ]]; then
   # 다른 설치 옵션만 실행한 경우
   exit 0
 fi

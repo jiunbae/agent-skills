@@ -14,9 +14,29 @@ Multi-LLM background implementation with context-safe parallel execution.
 
 ```bash
 # 1. Analyze planning doc → extract tasks
-# 2. Create output dir: .context/impl/{timestamp}_{feature}/
-# 3. Run agents in background (run_in_background: true)
-# 4. Guide user to check results manually
+# 2. Create output dir: .context/impl/
+# 3. Determine round: R01, R02, ...
+# 4. Run agents in background → {round}-{agent}.md
+# 5. Guide user to check results manually
+```
+
+## Output Convention
+
+```
+.context/impl/
+├── R01-tasks.md               # Round 1: task decomposition
+├── R01-claude.md              # Round 1: Claude's implementation notes
+├── R01-codex.md               # Round 1: Codex's implementation notes
+├── R01-gemini.md              # Round 1: Gemini's implementation notes
+├── R01-summary.md             # Round 1: merged summary
+├── R02-claude.md              # Round 2: fixes/iterations
+└── R02-summary.md
+```
+
+**Round number** increments each implementation iteration:
+```bash
+mkdir -p .context/impl
+ROUND=$(printf "R%02d" $(( $(ls .context/impl/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
 ```
 
 ## Provider Selection
@@ -52,11 +72,17 @@ Wave 3 (after models): Handlers
 
 ### Step 3: Run Agents
 
+```bash
+mkdir -p .context/impl
+ROUND=$(printf "R%02d" $(( $(ls .context/impl/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
+```
+
 **Claude (complex logic):**
 ```typescript
 Task({
   subagent_type: "general-purpose",
-  prompt: `Read task file: .context/impl/{session}/tasks/01-task.md`,
+  prompt: `Read task file: .context/impl/${ROUND}-tasks.md
+Implement the assigned tasks and save implementation notes to .context/impl/${ROUND}-claude.md`,
   run_in_background: true
 })
 ```
@@ -72,11 +98,13 @@ cd /path/to/worktree-{feature} && pnpm install
 
 Then run Codex in each worktree:
 ```bash
+PROJ_DIR="$(pwd)"
 nohup codex exec --full-auto \
   -C /path/to/worktree-{feature} \
-  -o .context/impl/{session}/02-result.md \
-  "Read task file at /absolute/path/.context/impl/{session}/tasks/02-task.md and implement all described changes. Run tests to verify." \
-  > /absolute/path/.context/impl/{session}/02-codex.log 2>&1 &
+  --add-dir "${PROJ_DIR}/.context/impl" \
+  -o "${PROJ_DIR}/.context/impl/${ROUND}-codex.md" \
+  "Read task file at ${PROJ_DIR}/.context/impl/${ROUND}-tasks.md and implement all described changes. Run tests to verify." \
+  > "${PROJ_DIR}/.context/impl/${ROUND}-codex.log" 2>&1 &
 ```
 > **Key Codex notes:**
 > - Use `-C dir` for working directory (must be a git repo), `-o file` for last message, `nohup ... &` for background
@@ -90,12 +118,12 @@ nohup codex exec --full-auto \
 **Gemini (tests/docs/review):**
 ```bash
 # For planning/review output (no file writes needed):
-nohup gemini -p "Review and generate test plan for: .context/impl/{session}/tasks/03-task.md" \
-  -o text > .context/impl/{session}/03-test-plan.md 2>/dev/null &
+nohup gemini -p "Review and generate test plan for: .context/impl/${ROUND}-tasks.md" \
+  -o text > .context/impl/${ROUND}-gemini.md 2>/dev/null &
 
 # For file-writing tasks (auto-approve):
-nohup gemini -p "Implement: .context/impl/{session}/tasks/03-task.md" \
-  --yolo -o text > .context/impl/{session}/03-result.log 2>/dev/null &
+nohup gemini -p "Implement tasks from .context/impl/${ROUND}-tasks.md" \
+  --yolo -o text > .context/impl/${ROUND}-gemini.log 2>/dev/null &
 ```
 > Use `--yolo` when Gemini needs to write files. Without it, Gemini prompts for approval and hangs in background.
 
@@ -104,11 +132,16 @@ nohup gemini -p "Implement: .context/impl/{session}/tasks/03-task.md" \
 **IMPORTANT:** Don't poll for completion. Output this guide:
 
 ```markdown
-## Agents Running
+## Agents Running (${ROUND})
+
+| Agent  | Output |
+|--------|--------|
+| Claude | .context/impl/${ROUND}-claude.md |
+| Codex  | .context/impl/${ROUND}-codex.md |
+| Gemini | .context/impl/${ROUND}-gemini.md |
 
 Check results manually:
-- `ls .context/impl/{session}/*.md`
-- `cat .context/impl/{session}/status.json`
+- `ls .context/impl/${ROUND}-*.md`
 - `git status`
 
 When done, ask me to "확인해줘" or "빌드 체크"
@@ -125,14 +158,15 @@ See [references/token-efficiency.md](references/token-efficiency.md) for details
 ## Output Structure
 
 ```
-.context/impl/{timestamp}_{feature}/
-├── status.json
-├── tasks/
-│   ├── 01-migration-task.md
-│   └── 02-models-task.md
-├── 01-migration-result.md
-├── 02-models-result.md
-└── summary.md
+.context/impl/
+├── R01-tasks.md              # Round 1: task decomposition
+├── R01-claude.md             # Round 1: Claude implementation notes
+├── R01-codex.md              # Round 1: Codex implementation notes
+├── R01-gemini.md             # Round 1: Gemini test/review notes
+├── R01-summary.md            # Round 1: merged summary
+├── R02-tasks.md              # Round 2: follow-up tasks
+├── R02-claude.md
+└── R02-summary.md
 ```
 
 ## Best Practices

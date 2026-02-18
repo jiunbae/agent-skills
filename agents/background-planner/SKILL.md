@@ -14,10 +14,28 @@ Multi-LLM parallel planning with context-safe auto-save.
 
 ```bash
 # 1. Parse topic and perspectives
-# 2. Create: .context/plans/{timestamp}_{topic}/
-# 3. Run agents in background
-# 4. Each agent saves result to {agent_name}.md
+# 2. Create: .context/plans/
+# 3. Determine round: R01, R02, ...
+# 4. Run agents in background → {round}-{agent}.md
 # 5. Guide user to merge when ready
+```
+
+## Output Convention
+
+```
+.context/plans/
+├── R01-claude.md          # Round 1: Claude's plan
+├── R01-codex.md           # Round 1: Codex's plan
+├── R01-gemini.md          # Round 1: Gemini's plan
+├── R01-merged.md          # Round 1: merged plan
+├── R02-claude.md          # Round 2: refined after feedback
+└── R02-merged.md
+```
+
+**Round number** increments each planning iteration:
+```bash
+mkdir -p .context/plans
+ROUND=$(printf "R%02d" $(( $(ls .context/plans/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
 ```
 
 ## Provider Selection
@@ -37,8 +55,8 @@ Multi-LLM parallel planning with context-safe auto-save.
 ### Step 1: Setup
 
 ```bash
-mkdir -p .context/plans/{timestamp}_{topic}
-# Initialize status.json with agent list
+mkdir -p .context/plans
+ROUND=$(printf "R%02d" $(( $(ls .context/plans/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
 ```
 
 ### Step 2: Run Agents
@@ -49,7 +67,7 @@ Task({
   subagent_type: "general-purpose",
   prompt: `기획 주제: ${topic}
 관점: ${perspective}
-결과 저장: .context/plans/{session}/claude.md`,
+결과 저장: .context/plans/${ROUND}-claude.md`,
   run_in_background: true
 })
 ```
@@ -57,47 +75,42 @@ Task({
 **Codex:**
 ```bash
 nohup codex exec --full-auto \
-  -o .context/plans/{session}/codex.md \
-  "Plan ${topic} from technical perspective." \
-  > .context/plans/{session}/codex.log 2>&1 &
+  --add-dir .context/plans \
+  -o .context/plans/${ROUND}-codex.md \
+  "Plan ${topic} from technical perspective. Save to .context/plans/${ROUND}-codex.md" \
+  > .context/plans/${ROUND}-codex.log 2>&1 &
 ```
 
 **Gemini:**
 ```bash
 nohup gemini -p "Plan ${topic} creatively. Output a well-structured markdown plan." \
-  -o text > .context/plans/{session}/gemini.md 2>/dev/null &
+  -o text > .context/plans/${ROUND}-gemini.md 2>/dev/null &
 ```
 > Note: Gemini `-p` runs non-interactively. `-o text` gives clean text output. Redirect stdout `>` to save to file. Use `--yolo` if the prompt requires file system access.
 
 ### Step 3: Guide User (NO POLLING)
 
 ```markdown
-## Planning Agents Running
+## Planning Agents Running (${ROUND})
+
+| Agent  | Output |
+|--------|--------|
+| Claude | .context/plans/${ROUND}-claude.md |
+| Codex  | .context/plans/${ROUND}-codex.md |
+| Gemini | .context/plans/${ROUND}-gemini.md |
 
 Check results:
-- `ls .context/plans/{session}/*.md`
-- `cat .context/plans/{session}/status.json`
+- `ls .context/plans/${ROUND}-*.md`
 
 When ready, ask me to "머지해줘" or "결과 확인"
 ```
 
 ### Step 4: Merge (on request)
 
-Read all `{agent}.md` files and create `merged.md`:
+Read all `${ROUND}-*.md` plan files and create `.context/plans/${ROUND}-merged.md`:
 - Compare perspectives
 - Highlight agreements/conflicts
 - Synthesize final recommendation
-
-## Output Structure
-
-```
-.context/plans/{timestamp}_{topic}/
-├── status.json
-├── claude.md
-├── codex.md
-├── gemini.md
-└── merged.md
-```
 
 ## Best Practices
 

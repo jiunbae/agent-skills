@@ -24,6 +24,7 @@ declare -A FILE_TYPES=(
     ["readme"]="README.md|리드미|설명서|가이드"
     ["notion"]="NOTION.md|노션 설정|노션 페이지|업로드 설정|notion"
     ["vault"]="VAULT.md|시크릿|비밀번호|API 키|credentials|vault|vaultwarden|인증 정보"
+    ["persona"]="personas/|페르소나|persona|reviewer|에이전트 페르소나|agent persona|리뷰어 페르소나"
 )
 
 # 인덱스 생성
@@ -49,9 +50,11 @@ build_index() {
         local file_type="unknown"
         for type in "${!FILE_TYPES[@]}"; do
             local pattern=$(echo "${FILE_TYPES[$type]}" | cut -d'|' -f1)
-            if [[ "$filename" == *"$pattern"* ]]; then
-                file_type="$type"
-                break
+            if [[ "$pattern" == */ ]]; then
+                # 디렉토리 패턴: relpath로 매칭
+                [[ "$relpath" == ${pattern}* ]] && file_type="$type" && break
+            else
+                [[ "$filename" == *"$pattern"* ]] && file_type="$type" && break
             fi
         done
 
@@ -95,9 +98,10 @@ list_files() {
         local file_type="other"
         for type in "${!FILE_TYPES[@]}"; do
             local pattern=$(echo "${FILE_TYPES[$type]}" | cut -d'|' -f1)
-            if [[ "$filename" == *"$pattern"* ]]; then
-                file_type="$type"
-                break
+            if [[ "$pattern" == */ ]]; then
+                [[ "$relpath" == ${pattern}* ]] && file_type="$type" && break
+            else
+                [[ "$filename" == *"$pattern"* ]] && file_type="$type" && break
             fi
         done
 
@@ -133,7 +137,12 @@ search_files() {
         # 키워드 매칭
         if echo "$keywords_lower" | grep -qi "$query_lower"; then
             local pattern=$(echo "$keywords" | cut -d'|' -f1)
-            local file_path=$(find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1)
+            local file_path
+            if [[ "$pattern" == */ ]]; then
+                file_path=$(find "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1)
+            else
+                file_path=$(find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1)
+            fi
 
             if [ -n "$file_path" ] && [ -f "$file_path" ]; then
                 echo "### Match: $type"
@@ -184,7 +193,12 @@ get_file() {
 
     if [ -n "${FILE_TYPES[$type_lower]}" ]; then
         local pattern=$(echo "${FILE_TYPES[$type_lower]}" | cut -d'|' -f1)
-        local file_path=$(find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1)
+        local file_path
+        if [[ "$pattern" == */ ]]; then
+            file_path=$(find "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1)
+        else
+            file_path=$(find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1)
+        fi
 
         if [ -n "$file_path" ] && [ -f "$file_path" ]; then
             echo "$file_path"

@@ -1,23 +1,127 @@
 ---
 name: background-reviewer
-description: Orchestrates multi-LLM parallel code review using Claude, Codex, and Gemini. Each agent reviews from a different perspective (security, architecture, code quality). Codex uses its native /review feature. Use for "코드 리뷰", "리뷰해줘", "bg review", "멀티 리뷰", "background review" requests.
+description: Orchestrates multi-LLM parallel code review using Claude, Codex, and Gemini. Each agent reviews from a different perspective using agent personas (security, architecture, code quality, performance). Supports persona-based review via `agent-persona review`. Use for "코드 리뷰", "리뷰해줘", "bg review", "멀티 리뷰", "background review", "페르소나 리뷰" requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, AskUserQuestion
 priority: high
-tags: [review, code-review, background, parallel-execution, codex, gemini, multi-llm, quality]
+tags: [review, code-review, background, parallel-execution, codex, gemini, multi-llm, quality, persona]
 ---
 
 # Background Reviewer
 
-Multi-LLM parallel code review with specialized perspectives.
+Multi-LLM parallel code review with specialized agent personas.
 
 ## Quick Start
 
 ```bash
-# 1. Determine review scope (branch diff, uncommitted, specific files)
-# 2. Create: .context/reviews/{timestamp}_{scope}/
-# 3. Run review agents in background
-# 4. Each agent saves findings to {agent_name}-review.md
+# 1. Determine review scope and round number
+# 2. Create: .context/reviews/
+# 3. Run review agents with personas in background
+# 4. Each persona saves findings to {round}-{persona}.md
 # 5. Merge into prioritized findings when ready
+```
+
+## Output Convention
+
+```
+.context/reviews/
+├── R01-security-reviewer.md        # Round 1: security persona
+├── R01-architecture-reviewer.md    # Round 1: architecture persona
+├── R01-code-quality-reviewer.md    # Round 1: code quality persona
+├── R01-performance-reviewer.md     # Round 1: performance persona
+├── R01-merged.md                   # Round 1: merged findings
+├── R02-security-reviewer.md        # Round 2: after fixes, re-review
+└── R02-merged.md
+```
+
+**Round number** increments each time reviews are run (R01 = first pass, R02 = after fixes, R03 = final check).
+
+Detect next round:
+```bash
+ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
+# → R01, R02, R03, ...
+```
+
+## Persona-Based Review (Recommended)
+
+Each reviewer adopts a detailed agent persona from `.agents/personas/` or `~/.agents/personas/`. Personas define identity, review lens, evaluation framework, and output format — producing consistent, specialized reviews.
+
+### Available Personas
+
+```bash
+agent-persona list                    # See all available personas
+agent-persona show security-reviewer  # Preview a persona's focus
+```
+
+| Persona | Role | Focus |
+|---------|------|-------|
+| `security-reviewer` | Senior AppSec Engineer | OWASP, auth, injection, data exposure |
+| `architecture-reviewer` | Principal Architect | SOLID, coupling, API design, layer violations |
+| `code-quality-reviewer` | Staff Engineer | Readability, complexity, DRY, test coverage |
+| `performance-reviewer` | Performance Engineer | Memory, CPU, I/O, scalability |
+
+Custom personas can be created for project-specific needs:
+```bash
+agent-persona create db-reviewer --gemini "DBA with 15yr PostgreSQL optimization"
+agent-persona create frontend-a11y --ai "React accessibility specialist"
+```
+
+### Persona Quick Review (Single)
+
+```bash
+# Single persona review with auto-detected LLM
+agent-persona review security-reviewer
+
+# Specify LLM
+agent-persona review security-reviewer --gemini
+agent-persona review architecture-reviewer --codex
+
+# Review only staged changes
+agent-persona review security-reviewer --staged
+
+# Compare against a branch
+agent-persona review security-reviewer --base main
+
+# Save to file with round naming
+ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
+agent-persona review security-reviewer -o ".context/reviews/${ROUND}-security-reviewer.md"
+```
+
+### Parallel Persona Review (Multi-LLM)
+
+Run multiple personas simultaneously, each on a different LLM:
+
+```bash
+mkdir -p .context/reviews
+ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
+
+# Launch all personas in parallel — each on a different LLM
+agent-persona review security-reviewer --gemini -o ".context/reviews/${ROUND}-security-reviewer.md" &
+agent-persona review architecture-reviewer --codex -o ".context/reviews/${ROUND}-architecture-reviewer.md" &
+agent-persona review code-quality-reviewer --gemini -o ".context/reviews/${ROUND}-code-quality-reviewer.md" &
+agent-persona review performance-reviewer --codex -o ".context/reviews/${ROUND}-performance-reviewer.md" &
+wait
+
+echo "Round ${ROUND} reviews complete"
+ls -la .context/reviews/${ROUND}-*.md
+```
+
+### Persona Review via Claude Task Agent
+
+For Claude Code sessions, use Task agents with persona content:
+
+```typescript
+// Read persona file and pass as context
+Task({
+  subagent_type: "general-purpose",
+  prompt: `Adopt this persona completely and review the current git changes:
+
+$(cat .agents/personas/security-reviewer.md)
+
+Review the git diff (git diff HEAD) from this persona's perspective.
+Use the persona's Output Format for your review.
+Save to .context/reviews/${ROUND}-security-reviewer.md`,
+  run_in_background: true
+})
 ```
 
 ## Provider Selection & Perspectives
@@ -54,21 +158,21 @@ cat src/flows/engine/*.ts > /tmp/review-target.txt
 ### Step 1: Setup Review Session
 
 ```bash
-REVIEW_DIR=".context/reviews/$(date +%Y%m%d)_${SCOPE}"
-mkdir -p "$REVIEW_DIR"
+mkdir -p .context/reviews
+ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
 
 # Generate diff for reviewers
-git diff main...HEAD > "$REVIEW_DIR/diff.patch"
+git diff main...HEAD > ".context/reviews/${ROUND}-diff.patch"
 
 # List changed files
-git diff --name-only main...HEAD > "$REVIEW_DIR/changed-files.txt"
+git diff --name-only main...HEAD > ".context/reviews/${ROUND}-changed-files.txt"
 ```
 
 ### Step 2: Create Review Brief
 
-Write `$REVIEW_DIR/review-brief.md`:
+Write `.context/reviews/${ROUND}-brief.md`:
 ```markdown
-# Review Brief
+# Review Brief (${ROUND})
 - Branch: feat/dashboard
 - Base: main
 - Changed files: (list)
@@ -81,34 +185,27 @@ Write `$REVIEW_DIR/review-brief.md`:
 ```bash
 # Codex v0.101+ has dedicated review capabilities (model: gpt-5.3-codex)
 
-# Option A: Using codex exec review (native review subcommand)
-nohup codex exec review \
-  > $REVIEW_DIR/codex-review.log 2>&1 &
-
-# Option B: Custom review via exec --full-auto
+# Option A: Custom review via exec --full-auto (recommended)
 nohup codex exec --full-auto \
-  --add-dir $REVIEW_DIR \
+  --add-dir .context/reviews \
   "Review the git diff between main and HEAD. Focus on:
    1. Bugs and logic errors
    2. Race conditions and edge cases
    3. Error handling gaps
    4. Performance issues
    5. Type safety concerns
-   Save your review to $REVIEW_DIR/codex-review.md
+   Save your review to .context/reviews/${ROUND}-codex.md
    Format: ## Category / ### Finding / severity + description + suggestion" \
-  > $REVIEW_DIR/codex-exec.log 2>&1 &
+  > .context/reviews/${ROUND}-codex.log 2>&1 &
 
-# Option C: If the diff is large, pass file list
-nohup codex exec --full-auto \
-  --add-dir $REVIEW_DIR \
-  "Read $REVIEW_DIR/changed-files.txt and review each changed file.
-   Focus on bugs, edge cases, and code quality.
-   Save findings to $REVIEW_DIR/codex-review.md" \
-  > $REVIEW_DIR/codex-exec.log 2>&1 &
+# Option B: Using codex exec review (native review subcommand)
+nohup codex exec review \
+  -o .context/reviews/${ROUND}-codex.md \
+  > .context/reviews/${ROUND}-codex.log 2>&1 &
 ```
 > **Codex review notes:**
 > - Sandbox: `workspace-write` (reads anywhere, writes only to workspace + /tmp)
-> - Use `--add-dir $REVIEW_DIR` so Codex can write review files outside the workspace
+> - Use `--add-dir .context/reviews` so Codex can write review files
 > - Always redirect logs: `> log 2>&1 &`
 > - Codex DOES write files in nohup mode — check the target directory, not just logs
 
@@ -118,8 +215,8 @@ Task({
   subagent_type: "general-purpose",
   prompt: `You are a senior security and architecture reviewer.
 
-Read the review brief: $REVIEW_DIR/review-brief.md
-Read changed files listed in: $REVIEW_DIR/changed-files.txt
+Read the review brief: .context/reviews/${ROUND}-brief.md
+Read changed files listed in: .context/reviews/${ROUND}-changed-files.txt
 
 Review focus:
 1. **Security**: OWASP Top 10 (injection, XSS, SSRF, auth bypass, data exposure)
@@ -128,7 +225,7 @@ Review focus:
 4. **Data integrity**: Race conditions in concurrent access, transaction safety
 5. **Backward compatibility**: Breaking changes to existing APIs or types
 
-Output format: Save to $REVIEW_DIR/claude-review.md
+Output format: Save to .context/reviews/${ROUND}-claude.md
 Use ## Category / ### Finding / Severity (critical/high/medium/low) / Description / Suggestion`,
   run_in_background: true
 })
@@ -136,7 +233,7 @@ Use ## Category / ### Finding / Severity (critical/high/medium/low) / Descriptio
 
 **Gemini (UX + Consistency):**
 ```bash
-gemini -p "You are a code reviewer focused on developer experience and consistency.
+nohup gemini -p "You are a code reviewer focused on developer experience and consistency.
 
 Read the files changed between main and HEAD in this git repo.
 
@@ -147,33 +244,33 @@ Review focus:
 4. Documentation gaps (missing JSDoc, unclear function names)
 5. Code duplication and DRY violations
 
-Save your review to $REVIEW_DIR/gemini-review.md
-Format: ## Category / ### Finding / severity + description + suggestion" -s &
+Format: ## Category / ### Finding / severity + description + suggestion" \
+  -o text > .context/reviews/${ROUND}-gemini.md 2>/dev/null &
 ```
 
 ### Step 4: Guide User
 
 ```markdown
-## Review Agents Running
+## Review Agents Running (${ROUND})
 
-| Agent  | Perspective              | Status  |
-|--------|--------------------------|---------|
-| Codex  | Bugs + code quality      | Running |
-| Claude | Architecture + security  | Running |
-| Gemini | UX + consistency         | Running |
+| Agent  | Perspective              | Output |
+|--------|--------------------------|--------|
+| Codex  | Bugs + code quality      | .context/reviews/${ROUND}-codex.md |
+| Claude | Architecture + security  | .context/reviews/${ROUND}-claude.md |
+| Gemini | UX + consistency         | .context/reviews/${ROUND}-gemini.md |
 
 Check progress:
-- `ls $REVIEW_DIR/*-review.md`
+- `ls .context/reviews/${ROUND}-*.md`
 
 When ready: "머지해줘" or "리뷰 결과 확인"
 ```
 
 ### Step 5: Merge Reviews (on request)
 
-Read all `*-review.md` files and create `$REVIEW_DIR/merged-review.md`:
+Read all `${ROUND}-*.md` review files and create `.context/reviews/${ROUND}-merged.md`:
 
 ```markdown
-# Code Review Summary
+# Code Review Summary (${ROUND})
 
 ## Critical Findings (must fix)
 - [Finding from any agent, deduplicated]
@@ -199,14 +296,19 @@ Read all `*-review.md` files and create `$REVIEW_DIR/merged-review.md`:
 ## Output Structure
 
 ```
-.context/reviews/{timestamp}_{scope}/
-├── review-brief.md
-├── diff.patch
-├── changed-files.txt
-├── codex-review.md
-├── claude-review.md
-├── gemini-review.md
-└── merged-review.md
+.context/reviews/
+├── R01-brief.md                     # Round 1 review brief
+├── R01-diff.patch                   # Round 1 diff snapshot
+├── R01-changed-files.txt            # Round 1 changed files
+├── R01-security-reviewer.md         # Round 1 persona review
+├── R01-architecture-reviewer.md     # Round 1 persona review
+├── R01-codex.md                     # Round 1 generic agent review
+├── R01-claude.md                    # Round 1 generic agent review
+├── R01-gemini.md                    # Round 1 generic agent review
+├── R01-merged.md                    # Round 1 merged findings
+├── R02-security-reviewer.md         # Round 2 re-review after fixes
+├── R02-codex.md
+└── R02-merged.md                    # Round 2 merged
 ```
 
 ## Best Practices

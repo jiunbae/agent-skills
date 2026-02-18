@@ -53,7 +53,7 @@ LOCAL_TARGET=".claude/skills"
 GLOBAL_TARGET="${HOME}/.claude/skills"
 
 # 제외 디렉토리
-EXCLUDE_DIRS=("static" "cli" "codex-support" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" "codex-support" "personas" ".git" ".github" ".agents" "node_modules" "__pycache__")
 
 # 로그 함수
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }

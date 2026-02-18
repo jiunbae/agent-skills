@@ -35,6 +35,7 @@ description: Provides an index of global static context files in ~/.agents/. Ret
 | IaC, 배포 표준, kubernetes, k8s, 배포 설정, deploy, 인프라 | `IAC.md` | IaC 배포 표준화 가이드라인 (K8s, CI/CD, 환경변수) |
 | 서비스 목록, 컨테이너 상태, 포트 매핑, docker, 실행 중인 서비스 | `SERVICES.md` | 서비스/컨테이너 중앙 관리 (포트, 상태, 이력) |
 | vault, vaultwarden, 시크릿, 비밀번호, API 키, credentials, 인증 정보 | `VAULT.md` | Vaultwarden 시크릿 관리 (API 키, DB 비밀번호, 인증 정보) |
+| 페르소나 목록, 리뷰어 페르소나, agent persona, reviewer personas | `personas/` | 에이전트 페르소나 정의 (리뷰 렌즈, 평가 기준, 출력 포맷) |
 
 ### 파일 상세 정보
 
@@ -232,6 +233,10 @@ static-index: SECURITY.md 파일을 참조하세요.
 ├── STYLE.md                 # 코딩 스타일 (선택)
 ├── NOTION.md                # Notion 연동 설정
 ├── VAULT.md                 # Vaultwarden 시크릿 가이드
+├── personas/                # 에이전트 페르소나 (agent-persona로 관리)
+│   ├── security-reviewer.md
+│   ├── architecture-reviewer.md
+│   └── ...
 └── README.md                # 디렉토리 설명
 
 agent-skills/
