@@ -29,7 +29,7 @@ Multi-LLM background implementation with context-safe parallel execution.
 | **Ollama** | Simple utils, types | `ollama run codellama` |
 
 > **Gemini v0.26+**: Use `-p "prompt"` for non-interactive mode. Use `--yolo` for auto-approve file writes. Use `-o text` for clean output. Redirect stdout to capture: `> output.md`. Do NOT use `-s` (that's `--sandbox`, not silent).
-> **Codex v0.98+**: Use `codex exec --full-auto` for non-interactive. Use `-C dir` to set working directory. Use `-o file.md` to save last message. Use `nohup ... &` for background. Codex may time out exploring large codebases — prefer Claude for complex multi-file tasks.
+> **Codex v0.101+** (model: gpt-5.3-codex): Use `codex exec --full-auto` for non-interactive. Use `-C dir` to set working directory. Use `-o file.md` to save last message. Use `nohup ... > log 2>&1 &` for background. Sandbox is `workspace-write` by default (reads anywhere, writes only to workspace + /tmp). For parallel Codex agents, use **git worktrees** to give each agent an isolated workspace — this prevents file conflicts. Use `--add-dir <path>` if agents need to write outside the workspace.
 > **Claude subagents** are the most reliable for complex implementation. Always prefer Claude for tasks touching 3+ files or requiring deep codebase understanding.
 
 ## Workflow
@@ -62,14 +62,30 @@ Task({
 ```
 
 **Codex (code generation):**
+
+For parallel Codex agents, create git worktrees first:
+```bash
+# Create isolated worktree per agent
+git worktree add -b impl/{feature} /path/to/worktree-{feature} main
+cd /path/to/worktree-{feature} && pnpm install
+```
+
+Then run Codex in each worktree:
 ```bash
 nohup codex exec --full-auto \
-  -C /path/to/workdir \
+  -C /path/to/worktree-{feature} \
   -o .context/impl/{session}/02-result.md \
-  "Read and execute: .context/impl/{session}/tasks/02-task.md" \
-  > .context/impl/{session}/02-codex.log 2>&1 &
+  "Read task file at /absolute/path/.context/impl/{session}/tasks/02-task.md and implement all described changes. Run tests to verify." \
+  > /absolute/path/.context/impl/{session}/02-codex.log 2>&1 &
 ```
-> Use `-C dir` for working directory, `-o file` to save final message, `nohup ... &` for background. Always redirect both stdout and stderr to a log file.
+> **Key Codex notes:**
+> - Use `-C dir` for working directory (must be a git repo), `-o file` for last message, `nohup ... &` for background
+> - Always redirect both stdout and stderr to a log file (`> log 2>&1 &`)
+> - Sandbox: `workspace-write` (reads anywhere, writes only to workspace + /tmp)
+> - Use **absolute paths** for task files and log files (they're outside the worktree)
+> - Use `--add-dir <path>` if agent needs to write to additional directories
+> - Codex DOES write files successfully — don't mistake slow log output for failure; check worktree for actual file writes
+> - After completion, copy files from worktree to main, then clean up: `git worktree remove /path/to/worktree --force`
 
 **Gemini (tests/docs/review):**
 ```bash
