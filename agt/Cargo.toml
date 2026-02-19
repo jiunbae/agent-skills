@@ -1,0 +1,26 @@
+[package]
+name = "agt"
+version = "0.1.0"
+edition = "2021"
+description = "Agent Skills CLI — manage AI agent skills and personas"
+license = "MIT"
+repository = "https://github.com/jiunbae/agent-skills"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+ureq = "2"
+flate2 = "1"
+tar = "0.4"
+colored = "2"
+dirs = "5"
+anyhow = "1"
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1

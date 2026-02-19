@@ -28,6 +28,8 @@ Thumbs.db
 
 # Build artifacts (keep source, ignore builds)
 # *.zip files are intentionally NOT ignored - they're the packaged skills
+target/
+Cargo.lock
 
 # Logs
 *.log
