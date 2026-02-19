@@ -52,6 +52,10 @@ SOURCE_DIR=$(find_source_dir)
 LOCAL_TARGET=".claude/skills"
 GLOBAL_TARGET="${HOME}/.claude/skills"
 
+# 원격 설치 라이브러리 로드
+REMOTE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/remote.sh"
+[[ -f "$REMOTE_LIB" ]] && source "$REMOTE_LIB"
+
 # 제외 디렉토리
 EXCLUDE_DIRS=("static" "cli" "codex-support" "personas" ".git" ".github" ".agents" "node_modules" "__pycache__")
 
@@ -79,6 +83,7 @@ Commands:
 Install Options:
   -g, --global        전역 설치 (~/.claude/skills/)
   -f, --force         기존 스킬 덮어쓰기
+  --from SPEC         GitHub에서 원격 설치 (owner/repo/path[@ref])
 
 List Options:
   --installed         설치된 스킬만 표시
@@ -94,6 +99,12 @@ List Options:
   agent-skill install integrations/slack-skill  # 특정 스킬
   agent-skill uninstall kubernetes-skill
   agent-skill list --installed --local
+
+원격 설치:
+  agent-skill install --from jiunbae/agent-skills/agents/background-reviewer
+  agent-skill install -g --from jiunbae/agent-skills/development/git-commit-pr
+  agent-skill install --from jiunbae/agent-skills/agents/background-planner@v2026.02.19.1
+  agent-skill install --from someone/their-repo/skills/my-skill
 
 스킬 로드 우선순위:
   1. .claude/skills/ (현재 디렉토리, 로컬)
@@ -187,24 +198,80 @@ get_description() {
         head -c 50
 }
 
+# 원격 스킬 설치
+install_remote_skill() {
+    local spec="$1"
+    local target_dir="$2"
+    local force="$3"
+
+    if ! parse_remote_spec "$spec"; then
+        return 1
+    fi
+
+    log_info "원격 다운로드: ${REMOTE_OWNER}/${REMOTE_REPO}/${REMOTE_PATH}@${REMOTE_REF}"
+
+    local extracted_path
+    if ! extracted_path=$(fetch_remote_dir "$REMOTE_OWNER" "$REMOTE_REPO" "$REMOTE_PATH" "$REMOTE_REF"); then
+        log_error "스킬 다운로드 실패: $spec"
+        return 1
+    fi
+
+    # SKILL.md 존재 확인
+    if [[ ! -f "${extracted_path}/SKILL.md" ]]; then
+        log_error "SKILL.md를 찾을 수 없습니다: $spec"
+        rm -rf "$_REMOTE_TMP_DIR"
+        return 1
+    fi
+
+    local skill_name
+    skill_name=$(basename "$REMOTE_PATH")
+    local target_path="${target_dir}/${skill_name}"
+
+    # 이미 존재하는 경우
+    if [[ -e "$target_path" ]]; then
+        if [[ "$force" == "true" ]]; then
+            log_warn "덮어쓰기: $skill_name"
+            rm -rf "$target_path"
+        else
+            log_warn "이미 설치됨 (스킵): $skill_name (-f로 덮어쓰기)"
+            rm -rf "$_REMOTE_TMP_DIR"
+            return 0
+        fi
+    fi
+
+    # 복사 (원격은 심링크 불가)
+    cp -r "$extracted_path" "$target_path"
+    write_remote_metadata "$target_path" "$spec" "$REMOTE_REF"
+
+    # 정리
+    rm -rf "$_REMOTE_TMP_DIR"
+
+    log_success "설치됨 (원격): $skill_name ← ${REMOTE_OWNER}/${REMOTE_REPO}"
+    return 0
+}
+
 # 스킬 설치
 cmd_install() {
     local global=false
     local force=false
+    local remote_spec=""
     local targets=()
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             -g|--global) global=true; shift ;;
             -f|--force) force=true; shift ;;
+            --from) remote_spec="$2"; shift 2 ;;
             -*) log_error "알 수 없는 옵션: $1"; exit 1 ;;
             *) targets+=("$1"); shift ;;
         esac
     done
 
-    if [[ ${#targets[@]} -eq 0 ]]; then
+    # 원격 설치 또는 로컬 설치 중 하나는 필요
+    if [[ -z "$remote_spec" && ${#targets[@]} -eq 0 ]]; then
         log_error "설치할 스킬을 지정하세요"
         echo "예: agent-skill install kubernetes-skill"
+        echo "    agent-skill install --from owner/repo/path/to/skill"
         exit 1
     fi
 
@@ -223,6 +290,23 @@ cmd_install() {
 
     local installed=0
     local failed=0
+
+    # 원격 설치
+    if [[ -n "$remote_spec" ]]; then
+        install_remote_skill "$remote_spec" "$target_dir" "$force" && \
+            installed=$((installed + 1)) || \
+            failed=$((failed + 1))
+
+        echo ""
+        if [[ $installed -gt 0 ]]; then
+            log_success "$installed 개 스킬 설치됨"
+        fi
+        if [[ $failed -gt 0 ]]; then
+            log_warn "$failed 개 스킬 설치 실패"
+            exit 1
+        fi
+        return
+    fi
 
     for target in "${targets[@]}"; do
         local result
@@ -549,6 +633,16 @@ cmd_which() {
     if [[ -n "$result" && "$result" != GROUP:* ]]; then
         echo "$result"
     else
+        # 설치된 스킬 중 원격 설치 확인
+        for dir in "$LOCAL_TARGET" "$GLOBAL_TARGET"; do
+            if [[ -d "${dir}/${skill}" && -f "${dir}/${skill}/.remote-source" ]]; then
+                echo "${dir}/${skill}"
+                echo ""
+                log_info "원격 설치:"
+                cat "${dir}/${skill}/.remote-source"
+                return
+            fi
+        done
         log_error "스킬을 찾을 수 없습니다: $skill"
         exit 1
     fi

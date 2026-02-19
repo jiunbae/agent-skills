@@ -50,6 +50,10 @@ PERSONA_LIB="${SOURCE_DIR}/personas"
 GLOBAL_TARGET="${HOME}/.agents/personas"
 LOCAL_TARGET=".agents/personas"
 
+# 원격 설치 라이브러리 로드
+REMOTE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/remote.sh"
+[[ -f "$REMOTE_LIB" ]] && source "$REMOTE_LIB"
+
 # 로그 함수
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -76,6 +80,7 @@ Commands:
 Install Options:
   -g, --global        전역 설치 (~/.agents/personas/)
   -f, --force         기존 페르소나 덮어쓰기
+  --from SPEC         GitHub에서 원격 설치 (owner/repo/path[@ref])
 
 List Options:
   --installed         설치된 페르소나만 표시
@@ -117,6 +122,11 @@ Review Options:
   agent-persona review security-reviewer --gemini  # Gemini로 리뷰
   agent-persona review security-reviewer --staged  # staged만 리뷰
   agent-persona review security-reviewer -o review.md  # 파일로 저장
+
+원격 설치:
+  agent-persona install --from jiunbae/agent-skills/personas/security-reviewer
+  agent-persona install -g --from jiunbae/agent-skills/personas/architecture-reviewer
+  agent-persona install --from someone/their-repo/personas/my-reviewer@v1.0
 
 페르소나 경로:
   로컬: .agents/personas/ (프로젝트)
@@ -244,24 +254,76 @@ find_persona_path() {
     return 1
 }
 
+# 원격 페르소나 설치
+install_remote_persona() {
+    local spec="$1"
+    local target_dir="$2"
+    local force="$3"
+
+    if ! parse_remote_spec "$spec"; then
+        return 1
+    fi
+
+    log_info "원격 다운로드: ${REMOTE_OWNER}/${REMOTE_REPO}/${REMOTE_PATH}@${REMOTE_REF}"
+
+    # 페르소나 이름 추출 (.md 제거)
+    local persona_name
+    persona_name=$(basename "$REMOTE_PATH" .md)
+    local target_path="${target_dir}/${persona_name}.md"
+
+    # 이미 존재하는 경우
+    if [[ -e "$target_path" ]]; then
+        if [[ "$force" == "true" ]]; then
+            log_warn "덮어쓰기: ${persona_name}.md"
+            rm -f "$target_path"
+            rm -f "${target_dir}/${persona_name}.remote-source"
+        else
+            log_warn "이미 설치됨 (스킵): ${persona_name}.md (-f로 덮어쓰기)"
+            return 0
+        fi
+    fi
+
+    # 빠른 경로: raw URL로 단일 파일 다운로드
+    local remote_file_path="${REMOTE_PATH}"
+    [[ "$remote_file_path" != *.md ]] && remote_file_path="${remote_file_path}.md"
+
+    if fetch_remote_file "$REMOTE_OWNER" "$REMOTE_REPO" "$remote_file_path" "$REMOTE_REF" > "$target_path" 2>/dev/null; then
+        # frontmatter 검증
+        if head -1 "$target_path" | grep -q "^---"; then
+            write_remote_metadata "$target_path" "$spec" "$REMOTE_REF"
+            log_success "설치됨 (원격): ${persona_name}.md ← ${REMOTE_OWNER}/${REMOTE_REPO}"
+            return 0
+        fi
+    fi
+
+    # 실패 시 정리
+    rm -f "$target_path"
+    log_error "페르소나 다운로드 실패: $spec"
+    return 1
+}
+
 # install 명령
 cmd_install() {
     local global=false
     local force=false
+    local remote_spec=""
     local targets=()
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             -g|--global) global=true; shift ;;
             -f|--force) force=true; shift ;;
+            --from) remote_spec="$2"; shift 2 ;;
             -*) log_error "알 수 없는 옵션: $1"; exit 1 ;;
             *) targets+=("$1"); shift ;;
         esac
     done
 
-    if [[ ${#targets[@]} -eq 0 ]]; then
+    # 원격 설치 또는 로컬 설치 중 하나는 필요
+    if [[ -z "$remote_spec" && ${#targets[@]} -eq 0 ]]; then
         log_error "설치할 페르소나를 지정하세요"
         echo "예: agent-persona install security-reviewer"
+        echo "    agent-persona install --from owner/repo/personas/name"
         echo ""
         echo "사용 가능한 페르소나:"
         for p in $(get_library_personas); do
@@ -284,6 +346,23 @@ cmd_install() {
 
     local installed=0
     local failed=0
+
+    # 원격 설치
+    if [[ -n "$remote_spec" ]]; then
+        install_remote_persona "$remote_spec" "$target_dir" "$force" && \
+            installed=$((installed + 1)) || \
+            failed=$((failed + 1))
+
+        echo ""
+        if [[ $installed -gt 0 ]]; then
+            log_success "$installed 개 페르소나 설치됨"
+        fi
+        if [[ $failed -gt 0 ]]; then
+            log_warn "$failed 개 페르소나 설치 실패"
+            exit 1
+        fi
+        return
+    fi
 
     for target in "${targets[@]}"; do
         local name="${target%.md}"
@@ -808,6 +887,14 @@ cmd_which() {
         echo "$path -> $real_path"
     else
         echo "$path"
+    fi
+
+    # 원격 설치 메타데이터 표시
+    local remote_file="${path%.md}.remote-source"
+    if [[ -f "$remote_file" ]]; then
+        echo ""
+        log_info "원격 설치:"
+        cat "$remote_file"
     fi
 }
 

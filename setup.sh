@@ -28,7 +28,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # 기본값
-REPO="<GITHUB_USERNAME>/agent-skills"
+REPO="jiunbae/agent-skills"
 INSTALL_DIR="${HOME}/.agent-skills"
 VERSION="latest"
 INSTALL_CORE=false
