@@ -1,6 +1,6 @@
 {
   "name": "@open330/agt",
-  "version": "0.1.0",
+  "version": "2026.2.19",
   "description": "Agent Skills CLI — manage AI agent skills and personas",
   "bin": {
     "agt": "bin/agt.js"
@@ -9,10 +9,10 @@
     "postinstall": "node scripts/postinstall.js"
   },
   "optionalDependencies": {
-    "@open330/agt-darwin-arm64": "0.1.0",
-    "@open330/agt-darwin-x64": "0.1.0",
-    "@open330/agt-linux-x64": "0.1.0",
-    "@open330/agt-linux-arm64": "0.1.0"
+    "@open330/agt-darwin-arm64": "2026.2.19",
+    "@open330/agt-darwin-x64": "2026.2.19",
+    "@open330/agt-linux-x64": "2026.2.19",
+    "@open330/agt-linux-arm64": "2026.2.19"
   },
   "repository": {
     "type": "git",
