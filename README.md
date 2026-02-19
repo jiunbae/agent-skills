@@ -1,11 +1,6 @@
 <p align="center">
   <br>
-  <code>
-    ▄▀█ █▀▀ ▀█▀
-    █▀█ █▄█  █
-  </code>
-  <br><br>
-  <strong>A modular toolkit for extending AI coding agents</strong>
+  <img src="assets/banner.png" alt="agt — A modular toolkit for extending AI coding agents" width="720">
   <br><br>
   <a href="https://github.com/open330/agt/stargazers"><img src="https://img.shields.io/github/stars/open330/agt?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e" alt="Stars"></a>
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e" alt="Release"></a>
