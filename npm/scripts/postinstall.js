@@ -35,7 +35,7 @@ const pkg = JSON.parse(
   fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")
 );
 const version = `v${pkg.version}`;
-const repo = "jiunbae/agent-skills";
+const repo = "open330/agt";
 const asset = `agt-${rustTarget}.tar.gz`;
 const url = `https://github.com/${repo}/releases/download/${version}/${asset}`;
 
