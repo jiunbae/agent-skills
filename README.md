@@ -10,6 +10,7 @@
   <br><br>
   <a href="https://github.com/open330/agt/stargazers"><img src="https://img.shields.io/github/stars/open330/agt?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e" alt="Stars"></a>
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e" alt="Release"></a>
+  <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
   <img src="https://img.shields.io/badge/skills-33-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-8-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
@@ -27,7 +28,10 @@
 ## Quick Start 빠른 시작
 
 ```bash
-# One-line install / 원라인 설치
+# Install via npm / npm으로 설치
+npm install -g @open330/agt
+
+# Or one-line install / 또는 원라인 설치
 curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
 
 # Install a skill / 스킬 설치
@@ -77,6 +81,28 @@ agt run "보안 검사해줘"
 ---
 
 ## Installation 설치
+
+### npm (Recommended) npm 설치 (권장)
+
+```bash
+# Install globally / 전역 설치
+npm install -g @open330/agt
+
+# Verify / 확인
+agt version
+```
+
+Pre-built binaries for **macOS** (arm64, x64) and **Linux** (x64, arm64). No Rust toolchain required.
+
+macOS (arm64, x64) 및 Linux (x64, arm64) 사전 빌드 바이너리 포함. Rust 툴체인 불필요.
+
+| Package | Platform |
+|---------|----------|
+| `@open330/agt` | Main package (auto-selects platform) |
+| `@open330/agt-darwin-arm64` | macOS Apple Silicon |
+| `@open330/agt-darwin-x64` | macOS Intel |
+| `@open330/agt-linux-x64` | Linux x64 |
+| `@open330/agt-linux-arm64` | Linux arm64 |
 
 ### Remote Install 원격 설치
 
