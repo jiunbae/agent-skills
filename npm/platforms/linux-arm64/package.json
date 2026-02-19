@@ -1,0 +1,18 @@
+{
+  "name": "@open330/agt-linux-arm64",
+  "version": "0.1.0",
+  "description": "agt binary for Linux ARM64",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "bin": {
+    "agt": "bin/agt"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jiunbae/agent-skills"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

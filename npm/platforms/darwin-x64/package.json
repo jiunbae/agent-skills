@@ -1,0 +1,18 @@
+{
+  "name": "@open330/agt-darwin-x64",
+  "version": "0.1.0",
+  "description": "agt binary for macOS Intel (x64)",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "bin": {
+    "agt": "bin/agt"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jiunbae/agent-skills"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
