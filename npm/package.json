@@ -1,0 +1,27 @@
+{
+  "name": "@open330/agt",
+  "version": "0.1.0",
+  "description": "Agent Skills CLI — manage AI agent skills and personas",
+  "bin": {
+    "agt": "bin/agt.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "optionalDependencies": {
+    "@open330/agt-darwin-arm64": "0.1.0",
+    "@open330/agt-darwin-x64": "0.1.0",
+    "@open330/agt-linux-x64": "0.1.0",
+    "@open330/agt-linux-arm64": "0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jiunbae/agent-skills"
+  },
+  "keywords": ["agent", "skills", "personas", "cli", "ai"],
+  "author": "jiunbae",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

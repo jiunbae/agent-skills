@@ -1,0 +1,144 @@
+name: Release agt
+
+on:
+  push:
+    tags:
+      - 'agt-v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            npm_platform: darwin-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            npm_platform: darwin-x64
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            npm_platform: linux-x64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            npm_platform: linux-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install musl-tools (Linux x64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build (native)
+        if: matrix.target != 'aarch64-unknown-linux-musl'
+        run: cargo build --release --target ${{ matrix.target }} --manifest-path agt/Cargo.toml
+
+      - name: Build (cross)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: cd agt && cross build --release --target ${{ matrix.target }}
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp agt/target/${{ matrix.target }}/release/agt dist/agt
+          chmod +x dist/agt
+          tar -czf dist/agt-${{ matrix.target }}.tar.gz -C dist agt
+
+      - name: Copy to npm platform package
+        run: |
+          mkdir -p npm/platforms/${{ matrix.npm_platform }}/bin
+          cp dist/agt npm/platforms/${{ matrix.npm_platform }}/bin/agt
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/agt-${{ matrix.target }}.tar.gz
+
+      - name: Upload npm platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.npm_platform }}
+          path: npm/platforms/${{ matrix.npm_platform }}/
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: npm-artifacts
+
+      - name: Copy platform binaries
+        run: |
+          for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            mkdir -p npm/platforms/${platform}/bin
+            cp npm-artifacts/npm-${platform}/bin/agt npm/platforms/${platform}/bin/agt
+            chmod +x npm/platforms/${platform}/bin/agt
+          done
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#agt-v}" >> $GITHUB_OUTPUT
+
+      - name: Update package versions
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          # Update main package
+          cd npm
+          npm version ${VERSION} --no-git-tag-version
+          # Update all versions in optionalDependencies
+          node -e "
+            const pkg = require('./package.json');
+            for (const dep of Object.keys(pkg.optionalDependencies || {})) {
+              pkg.optionalDependencies[dep] = '${VERSION}';
+            }
+            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          cd ..
+          # Update platform packages
+          for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            cd npm/platforms/${platform}
+            npm version ${VERSION} --no-git-tag-version
+            cd ../../..
+          done
+
+      - name: Publish platform packages
+        run: |
+          for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            cd npm/platforms/${platform}
+            npm publish --access public || true
+            cd ../../..
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main package
+        run: cd npm && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

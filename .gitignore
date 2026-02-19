@@ -30,6 +30,10 @@ Thumbs.db
 # *.zip files are intentionally NOT ignored - they're the packaged skills
 target/
 Cargo.lock
+npm/bin/agt
+npm/bin/agt.exe
+npm/platforms/*/bin/agt
+npm/platforms/*/bin/agt.exe
 
 # Logs
 *.log
