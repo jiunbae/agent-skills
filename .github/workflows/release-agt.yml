@@ -111,7 +111,7 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           # Update main package
           cd npm
-          npm version ${VERSION} --no-git-tag-version
+          npm version ${VERSION} --no-git-tag-version --allow-same-version
           # Update all versions in optionalDependencies
           node -e "
             const pkg = require('./package.json');
@@ -124,7 +124,7 @@ jobs:
           # Update platform packages
           for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
             cd npm/platforms/${platform}
-            npm version ${VERSION} --no-git-tag-version
+            npm version ${VERSION} --no-git-tag-version --allow-same-version
             cd ../../..
           done
 
