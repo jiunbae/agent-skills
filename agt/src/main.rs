@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser)]
-#[command(name = "agt", about = "Agent Skills CLI — manage AI agent skills and personas")]
+#[command(name = "agt", about = "agt — A modular toolkit for extending AI coding agents")]
 #[command(version = VERSION)]
 struct Cli {
     #[command(subcommand)]

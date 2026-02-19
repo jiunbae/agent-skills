@@ -39,14 +39,14 @@ jobs:
           SECURITY=$(find security -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
 
           cat << EOF > release_notes.md
-          ## Agent Skills ${{ steps.version.outputs.VERSION }}
+          ## agt ${{ steps.version.outputs.VERSION }}
 
-          Claude Code와 Codex CLI 기능을 확장하는 커스텀 스킬 모음입니다.
+          A modular toolkit for extending AI coding agents.
 
           ### Quick Install
 
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash
           \`\`\`
 
           ### Skills (${{ steps.skills.outputs.COUNT }}개)
@@ -64,13 +64,13 @@ jobs:
 
           ### Changes
 
-          See [CHANGELOG](https://github.com/<GITHUB_USERNAME>/agent-skills/blob/main/CHANGELOG.md) for details.
+          See [CHANGELOG](https://github.com/open330/agt/blob/main/CHANGELOG.md) for details.
           EOF
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: Agent Skills ${{ steps.version.outputs.VERSION }}
+          name: agt ${{ steps.version.outputs.VERSION }}
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}

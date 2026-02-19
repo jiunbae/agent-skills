@@ -2,9 +2,9 @@
 name = "agt"
 version = "2026.2.19"
 edition = "2021"
-description = "Agent Skills CLI — manage AI agent skills and personas"
+description = "agt — A modular toolkit for extending AI coding agents"
 license = "MIT"
-repository = "https://github.com/jiunbae/agent-skills"
+repository = "https://github.com/open330/agt"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

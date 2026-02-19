@@ -1,5 +1,5 @@
 <#
-Windows installer for Agent Skills.
+Windows installer for agt.
 Mirrors the behavior of install.sh: install/uninstall skills, list skills,
 manage static link, and install the CLI helper.
 #>
@@ -89,7 +89,7 @@ Static:
   --unlink-static     Remove ~/.agents link
 
 CLI:
-  --cli               Install claude-skill + agent-skill CLI (~/.local/bin)
+  --cli               Install agt CLI tool (~/.local/bin)
   --alias NAME        Extra alias for CLI (repeatable)
   --uninstall-cli     Remove CLI and aliases
 
@@ -346,7 +346,7 @@ function Install-Core {
 
     Write-Host ''
     Write-Info "Core skills installed. For additional skills per workspace:"
-    Write-Host "  agent-skill install <skill-name>"
+    Write-Host "  agt skill install <skill-name>"
 }
 
 function Install-Codex {
@@ -381,7 +381,7 @@ function Install-Codex {
             Write-Warn "Remove the existing skill section manually, then re-run."
         } else {
             Write-Info "Appending skill guide to existing AGENTS.md..."
-            $separator = "`n`n# ====================================================`n# Agent Skills Integration (auto-generated)`n# ====================================================`n`n"
+            $separator = "`n`n# ====================================================`n# agt Integration (auto-generated)`n# ====================================================`n`n"
             $skillGuide = Get-Content -LiteralPath $CodexAgentsSource -Raw
             Add-Content -LiteralPath $codexAgentsTarget -Value ($separator + $skillGuide)
             Write-Success "Skill guide appended to AGENTS.md (existing content preserved)"
@@ -694,7 +694,7 @@ function Unlink-Static {
 }
 
 function Install-Cli {
-    $cliTools = @('claude-skill', 'agent-skill', 'agent-persona')
+    $cliTools = @('claude-skill', 'agent-skill', 'agent-persona', 'agt')
 
     if ($DryRun) {
         Write-Dry "Ensure directory: $CliTarget"
@@ -741,8 +741,9 @@ function Install-Cli {
     }
 
     Write-Info "Usage:"
-    Write-Info "  claude-skill --help  (run skills)"
-    Write-Info "  agent-skill --help   (manage skills)"
+    Write-Info "  agt skill list       (list skills)"
+    Write-Info "  agt persona list     (list personas)"
+    Write-Info "  agt run ""prompt""     (run skills)"
 
     if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $CliTarget })) {
         Write-Warn "$CliTarget is not in PATH."
@@ -751,7 +752,7 @@ function Install-Cli {
 }
 
 function Uninstall-Cli {
-    $cliTools = @('claude-skill', 'agent-skill', 'agent-persona')
+    $cliTools = @('claude-skill', 'agent-skill', 'agent-persona', 'agt')
     $removed = $false
 
     foreach ($tool in $cliTools) {
@@ -892,7 +893,7 @@ if (-not $DryRun) { Ensure-Directory $TargetDir }
 
 if (-not $Quiet -and -not $DryRun) {
     Write-Host ''
-    Write-Host 'Agent Skills Installer (Windows)' -ForegroundColor Cyan
+    Write-Host 'agt Installer (Windows)' -ForegroundColor Cyan
     Write-Host '==============================='
     Write-Host ("Mode: {0}" -f ($(if ($Uninstall) { 'Uninstall' } elseif ($CopyMode) { 'Copy' } else { 'Link' })))
     Write-Host "Target: $TargetDir"

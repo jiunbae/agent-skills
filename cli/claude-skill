@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 """
-claude-skill - CLI에서 Claude 스킬을 직접 실행하는 도구
+claude-skill - Run Claude skills from CLI (DEPRECATED: use 'agt run' instead)
 
 Usage:
-    claude-skill "자연어 명령"
-    claude-skill --skill git-commit-pr "커밋해줘"
-    claude-skill --list
-    claude-skill --list --verbose
-    claude-skill --list --all --json
+    agt run "natural language prompt"
+    agt run --skill git-commit-pr "commit this"
+    agt skill list
 
-Examples:
+Legacy usage (still works but deprecated):
     claude-skill "보안 검사해줘"
-    claude-skill "콜라보 워크스페이스 만들어줘"
-    claude-skill --skill security-auditor "현재 레포 검사"
-    claude-skill --list --verbose          # 상세 설명 포함
-    claude-skill --list --all              # 소스의 모든 스킬
-    claude-skill --list --json             # JSON 출력
-    claude-skill --list --plain            # 스킬 이름만 (파이프용)
+    claude-skill --skill security-auditor "scan"
+    claude-skill --list
 """
 
 import argparse

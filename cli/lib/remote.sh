@@ -15,7 +15,7 @@ REMOTE_REF="main"
 _REMOTE_TMP_DIR=""
 
 # 원격 스펙 파싱: "owner/repo/path[@ref]"
-# 예: jiunbae/agent-skills/agents/background-reviewer@v2026.02.19.1
+# 예: open330/agt/agents/background-reviewer@v2026.02.19.1
 parse_remote_spec() {
     local spec="$1"
 

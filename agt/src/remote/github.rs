@@ -237,9 +237,9 @@ mod tests {
 
     #[test]
     fn test_parse_spec_basic() {
-        let spec = parse_spec("jiunbae/agent-skills/agents/background-reviewer").unwrap();
-        assert_eq!(spec.owner, "jiunbae");
-        assert_eq!(spec.repo, "agent-skills");
+        let spec = parse_spec("open330/agt/agents/background-reviewer").unwrap();
+        assert_eq!(spec.owner, "open330");
+        assert_eq!(spec.repo, "agt");
         assert_eq!(spec.path, "agents/background-reviewer");
         assert_eq!(spec.git_ref, "main");
     }
@@ -247,14 +247,14 @@ mod tests {
     #[test]
     fn test_parse_spec_with_ref() {
         let spec =
-            parse_spec("jiunbae/agent-skills/agents/background-reviewer@v2026.02.19.1").unwrap();
+            parse_spec("open330/agt/agents/background-reviewer@v2026.02.19.1").unwrap();
         assert_eq!(spec.path, "agents/background-reviewer");
         assert_eq!(spec.git_ref, "v2026.02.19.1");
     }
 
     #[test]
     fn test_parse_spec_persona() {
-        let spec = parse_spec("jiunbae/agent-skills/personas/security-reviewer").unwrap();
+        let spec = parse_spec("open330/agt/personas/security-reviewer").unwrap();
         assert_eq!(spec.path, "personas/security-reviewer");
     }
 

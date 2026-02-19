@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 #
-# Agent Skills Remote Installer
+# agt — Remote Installer
 #
-# 사용법:
-#   curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --core
-#   curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --version v1.0.0
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core
+#   curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --version v1.0.0
 #
-# 옵션:
-#   --version VERSION   특정 버전 설치 (기본: latest)
-#   --dir DIR           설치 디렉토리 (기본: ~/.agent-skills)
-#   --core              Core 스킬만 설치
-#   --cli               CLI 도구 설치
-#   --all               모든 옵션 활성화
-#   --uninstall         제거
-#   -h, --help          도움말
+# Options:
+#   --version VERSION   Install specific version (default: latest)
+#   --dir DIR           Install directory (default: ~/.agt)
+#   --core              Install core skills only
+#   --cli               Install CLI tools
+#   --all               Enable all options
+#   --uninstall         Uninstall
+#   -h, --help          Help
 #
 
 set -e
@@ -28,8 +28,8 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # 기본값
-REPO="jiunbae/agent-skills"
-INSTALL_DIR="${HOME}/.agent-skills"
+REPO="open330/agt"
+INSTALL_DIR="${HOME}/.agt"
 VERSION="latest"
 INSTALL_CORE=false
 INSTALL_CLI=false
@@ -46,33 +46,33 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 # 사용법
 usage() {
     cat << 'EOF'
-Agent Skills Remote Installer
+agt — Remote Installer
 
-사용법:
-  curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash
-  curl -fsSL ... | bash -s -- [옵션]
+Usage:
+  curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash
+  curl -fsSL ... | bash -s -- [options]
 
-옵션:
-  --version VERSION   특정 버전 설치 (기본: latest)
-  --dir DIR           설치 디렉토리 (기본: ~/.agent-skills)
-  --core              Core 스킬만 설치 (권장)
-  --cli               CLI 도구 설치
-  --static            static 디렉토리 심링크
-  --all               전체 스킬 설치
-  --uninstall         제거
-  -h, --help          도움말
+Options:
+  --version VERSION   Install specific version (default: latest)
+  --dir DIR           Install directory (default: ~/.agt)
+  --core              Install core skills only (recommended)
+  --cli               Install CLI tools
+  --static            Symlink static directory
+  --all               Install all skills
+  --uninstall         Uninstall
+  -h, --help          Help
 
-예시:
-  # 권장: Core 스킬 + CLI 도구
-  curl -fsSL https://raw.githubusercontent.com/<GITHUB_USERNAME>/agent-skills/main/setup.sh | bash -s -- --core --cli
+Examples:
+  # Recommended: Core skills + CLI tools
+  curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
 
-  # 전체 설치
+  # Full install
   curl -fsSL ... | bash -s -- --all --cli --static
 
-  # 특정 버전
+  # Specific version
   curl -fsSL ... | bash -s -- --version v1.0.0 --core
 
-  # 제거
+  # Uninstall
   curl -fsSL ... | bash -s -- --uninstall
 
 EOF
@@ -98,7 +98,7 @@ download_and_install() {
     local version="$1"
     local url
 
-    log_info "Agent Skills 설치 중..."
+    log_info "agt 설치 중..."
     echo ""
 
     # 버전 확인
@@ -139,7 +139,7 @@ download_and_install() {
 
     # 압축 해제된 디렉토리 찾기
     local extracted_dir
-    extracted_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name "agent-skills-*" | head -1)
+    extracted_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name "agt-*" | head -1)
 
     if [[ -z "$extracted_dir" ]]; then
         log_error "압축 해제 실패"
@@ -194,7 +194,7 @@ run_installer() {
 
 # 제거
 uninstall() {
-    log_info "Agent Skills 제거 중..."
+    log_info "agt 제거 중..."
 
     # 스킬 제거
     if [[ -d "${HOME}/.claude/skills" ]]; then
@@ -204,7 +204,7 @@ uninstall() {
             if [[ -L "$link" ]]; then
                 local target
                 target=$(readlink "$link")
-                if [[ "$target" == *"agent-skills"* || "$target" == *"${INSTALL_DIR}"* ]]; then
+                if [[ "$target" == *"agent-skills"* || "$target" == *"agt"* || "$target" == *"${INSTALL_DIR}"* ]]; then
                     rm -f "$link"
                     log_success "제거: $(basename "$link")"
                 fi
@@ -213,7 +213,7 @@ uninstall() {
     fi
 
     # CLI 도구 제거
-    for tool in claude-skill agent-skill; do
+    for tool in agt claude-skill agent-skill agent-persona; do
         if [[ -L "${HOME}/.local/bin/${tool}" ]]; then
             rm -f "${HOME}/.local/bin/${tool}"
             log_success "제거: ${tool}"
@@ -224,7 +224,7 @@ uninstall() {
     if [[ -L "${HOME}/.agents" ]]; then
         local target
         target=$(readlink "${HOME}/.agents")
-        if [[ "$target" == *"agent-skills"* ]]; then
+        if [[ "$target" == *"agent-skills"* || "$target" == *"agt"* ]]; then
             rm -f "${HOME}/.agents"
             log_success "제거: ~/.agents 심링크"
         fi
@@ -237,7 +237,7 @@ uninstall() {
     fi
 
     echo ""
-    log_success "Agent Skills 제거 완료"
+    log_success "agt 제거 완료"
 }
 
 # 인자 파싱
@@ -284,7 +284,8 @@ done
 # 메인
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║       Agent Skills Installer           ║${NC}"
+echo -e "${CYAN}║     ▄▀█ █▀▀ ▀█▀  Installer            ║${NC}"
+echo -e "${CYAN}║     █▀█ █▄█  █                         ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -303,8 +304,8 @@ else
     echo ""
     echo "워크스페이스별 스킬 설치:"
     echo "  cd your-project"
-    echo "  agent-skill init"
-    echo "  agent-skill install kubernetes-skill"
+    echo "  agt skill init"
+    echo "  agt skill install kubernetes-skill"
     echo ""
     echo "더 많은 정보: https://github.com/${REPO}"
     echo -e "${GREEN}════════════════════════════════════════${NC}"

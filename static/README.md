@@ -8,7 +8,7 @@
 # 심링크 설정 (한 번만 실행)
 ./install.sh --link-static
 
-# 결과: ~/.agents -> agent-skills/static/
+# 결과: ~/.agents -> agt/static/
 ```
 
 ## Sample 파일 사용
@@ -123,8 +123,8 @@ cp CONTEXT.sample.md CONTEXT.md
 
 ```bash
 # 1. 저장소 클론
-git clone <repo> ~/workspace/agent-skills
-cd ~/workspace/agent-skills
+git clone https://github.com/open330/agt.git ~/.agt
+cd ~/.agt
 
 # 2. static 심링크 설정
 ./install.sh --link-static

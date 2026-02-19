@@ -1,6 +1,6 @@
 ---
 name: background-reviewer
-description: Orchestrates multi-LLM parallel code review using Claude, Codex, and Gemini. Each agent reviews from a different perspective using agent personas (security, architecture, code quality, performance). Supports persona-based review via `agent-persona review`. Use for "코드 리뷰", "리뷰해줘", "bg review", "멀티 리뷰", "background review", "페르소나 리뷰" requests.
+description: Orchestrates multi-LLM parallel code review using Claude, Codex, and Gemini. Each agent reviews from a different perspective using agent personas (security, architecture, code quality, performance). Supports persona-based review via `agt persona review`. Use for "코드 리뷰", "리뷰해줘", "bg review", "멀티 리뷰", "background review", "페르소나 리뷰" requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, AskUserQuestion
 priority: high
 tags: [review, code-review, background, parallel-execution, codex, gemini, multi-llm, quality, persona]
@@ -48,8 +48,8 @@ Each reviewer adopts a detailed agent persona from `.agents/personas/` or `~/.ag
 ### Available Personas
 
 ```bash
-agent-persona list                    # See all available personas
-agent-persona show security-reviewer  # Preview a persona's focus
+agt persona list                    # See all available personas
+agt persona show security-reviewer  # Preview a persona's focus
 ```
 
 | Persona | Role | Focus |
@@ -61,29 +61,29 @@ agent-persona show security-reviewer  # Preview a persona's focus
 
 Custom personas can be created for project-specific needs:
 ```bash
-agent-persona create db-reviewer --gemini "DBA with 15yr PostgreSQL optimization"
-agent-persona create frontend-a11y --ai "React accessibility specialist"
+agt persona create db-reviewer --gemini "DBA with 15yr PostgreSQL optimization"
+agt persona create frontend-a11y --ai "React accessibility specialist"
 ```
 
 ### Persona Quick Review (Single)
 
 ```bash
 # Single persona review with auto-detected LLM
-agent-persona review security-reviewer
+agt persona review security-reviewer
 
 # Specify LLM
-agent-persona review security-reviewer --gemini
-agent-persona review architecture-reviewer --codex
+agt persona review security-reviewer --gemini
+agt persona review architecture-reviewer --codex
 
 # Review only staged changes
-agent-persona review security-reviewer --staged
+agt persona review security-reviewer --staged
 
 # Compare against a branch
-agent-persona review security-reviewer --base main
+agt persona review security-reviewer --base main
 
 # Save to file with round naming
 ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-agent-persona review security-reviewer -o ".context/reviews/${ROUND}-security-reviewer.md"
+agt persona review security-reviewer -o ".context/reviews/${ROUND}-security-reviewer.md"
 ```
 
 ### Parallel Persona Review (Multi-LLM)
@@ -95,10 +95,10 @@ mkdir -p .context/reviews
 ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
 
 # Launch all personas in parallel — each on a different LLM
-agent-persona review security-reviewer --gemini -o ".context/reviews/${ROUND}-security-reviewer.md" &
-agent-persona review architecture-reviewer --codex -o ".context/reviews/${ROUND}-architecture-reviewer.md" &
-agent-persona review code-quality-reviewer --gemini -o ".context/reviews/${ROUND}-code-quality-reviewer.md" &
-agent-persona review performance-reviewer --codex -o ".context/reviews/${ROUND}-performance-reviewer.md" &
+agt persona review security-reviewer --gemini -o ".context/reviews/${ROUND}-security-reviewer.md" &
+agt persona review architecture-reviewer --codex -o ".context/reviews/${ROUND}-architecture-reviewer.md" &
+agt persona review code-quality-reviewer --gemini -o ".context/reviews/${ROUND}-code-quality-reviewer.md" &
+agt persona review performance-reviewer --codex -o ".context/reviews/${ROUND}-performance-reviewer.md" &
 wait
 
 echo "Round ${ROUND} reviews complete"

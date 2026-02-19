@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
 #
-# agent-skill - 워크스페이스별 동적 스킬 관리 CLI
+# agent-skill - Workspace skill management CLI (DEPRECATED: use 'agt skill' instead)
 #
-# 사용법:
-#   agent-skill install <skill>       # 현재 디렉토리의 .claude/skills/에 설치
-#   agent-skill install -g <skill>    # 전역 ~/.claude/skills/에 설치
-#   agent-skill uninstall <skill>     # 스킬 제거
-#   agent-skill list                  # 사용 가능한 스킬 목록
-#   agent-skill init                  # .claude/skills/ 디렉토리 생성
+# Usage:
+#   agt skill install <skill>       # Install to .claude/skills/
+#   agt skill install -g <skill>    # Install globally to ~/.claude/skills/
+#   agt skill uninstall <skill>     # Remove skill
+#   agt skill list                  # List available skills
 #
-# 예시:
-#   agent-skill install kubernetes-skill
-#   agent-skill install ml/           # ml 그룹 전체
-#   agent-skill install -g git-commit-pr
-#   agent-skill list --installed
+# Legacy aliases (agent-skill) still work but are deprecated.
 #
 
 set -e
@@ -27,7 +22,7 @@ CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m'
 
-# 스크립트 위치에서 agent-skills 소스 디렉토리 찾기
+# 스크립트 위치에서 agt 소스 디렉토리 찾기
 find_source_dir() {
     local script_path="${BASH_SOURCE[0]}"
 
@@ -42,7 +37,7 @@ find_source_dir() {
         fi
     done
 
-    # cli/ 디렉토리의 부모가 agent-skills
+    # cli/ 디렉토리의 부모가 agt 소스
     local cli_dir
     cli_dir=$(cd "$(dirname "$script_path")" && pwd)
     echo "$(dirname "$cli_dir")"
@@ -67,10 +62,12 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # 사용법
 usage() {
+    echo -e "\033[1;33m[DEPRECATED]\033[0m agent-skill is deprecated. Use 'agt skill' instead."
+    echo ""
     cat << 'EOF'
-agent-skill - 워크스페이스별 동적 스킬 관리
+agent-skill - Workspace skill management (deprecated → agt skill)
 
-사용법:
+Usage:
   agent-skill <command> [options] [arguments]
 
 Commands:
@@ -101,9 +98,9 @@ List Options:
   agent-skill list --installed --local
 
 원격 설치:
-  agent-skill install --from jiunbae/agent-skills/agents/background-reviewer
-  agent-skill install -g --from jiunbae/agent-skills/development/git-commit-pr
-  agent-skill install --from jiunbae/agent-skills/agents/background-planner@v2026.02.19.1
+  agent-skill install --from open330/agt/agents/background-reviewer
+  agent-skill install -g --from open330/agt/development/git-commit-pr
+  agent-skill install --from open330/agt/agents/background-planner@v2026.02.19.1
   agent-skill install --from someone/their-repo/skills/my-skill
 
 스킬 로드 우선순위:

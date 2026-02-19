@@ -48,7 +48,7 @@ Claude는 이 스크립트를 Bash 도구로 직접 실행합니다.
 ffmpeg -version
 
 # 스크립트 실행 권한
-chmod +x /path/to/agent-skills/ml/audio-processor/scripts/audio-process.sh
+chmod +x /path/to/agt/ml/audio-processor/scripts/audio-process.sh
 ```
 
 ## Workflow

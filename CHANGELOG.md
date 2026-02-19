@@ -7,18 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `agent-skill` CLI: 워크스페이스별 동적 스킬 관리
-  - `agent-skill install <skill>`: 로컬 설치
-  - `agent-skill install -g <skill>`: 전역 설치
-  - `agent-skill list`: 스킬 목록 조회
-  - `agent-skill init`: 워크스페이스 초기화
-- `setup.sh`: 원격 설치 스크립트 (curl 한 줄 설치)
-- `install.sh --core`: Core 스킬만 전역 설치 옵션
-- GitHub Actions 릴리즈 워크플로우
-
 ### Changed
-- `--cli` 옵션이 `claude-skill`과 `agent-skill` 모두 설치
+- **BREAKING**: Repository rebranded from `jiunbae/agent-skills` to `open330/agt`
+- **BREAKING**: CLI tools unified into single `agt` command
+  - `agent-skill` → `agt skill`
+  - `agent-persona` → `agt persona`
+  - `claude-skill` → `agt run`
+- Remote install URL: `open330/agt/main/setup.sh`
+- Install directory: `~/.agt` (was `~/.agent-skills`)
+
+### Deprecated
+- `agent-skill`, `agent-persona`, `claude-skill` commands (still work, use `agt` instead)
+
+### Added
+- Unified `agt` Rust CLI binary
+- `agt skill`: workspace skill management
+  - `agt skill install <skill>`: local install
+  - `agt skill install -g <skill>`: global install
+  - `agt skill list`: list skills
+  - `agt skill init`: workspace init
+- `agt persona`: persona management and code review
+- `agt run`: skill execution with auto-matching
+- `setup.sh`: remote installer (curl one-liner)
+- `install.sh --core`: core skills only option
+- GitHub Actions release workflow
 
 ### Core Skills
 - `development/git-commit-pr`
