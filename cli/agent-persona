@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 #
-# agent-persona - 에이전트 페르소나 관리 CLI
+# agent-persona - Agent persona management CLI (DEPRECATED: use 'agt persona' instead)
 #
-# 사용법:
-#   agent-persona list                  # 사용 가능한 페르소나 목록
-#   agent-persona install <persona>     # 페르소나 설치 (기본: .agents/personas/)
-#   agent-persona install -g <persona>  # 전역 설치 (~/.agents/personas/)
-#   agent-persona uninstall <persona>   # 페르소나 제거
-#   agent-persona create <name>         # 새 페르소나 생성
-#   agent-persona show <persona>        # 페르소나 내용 표시
-#   agent-persona which <persona>       # 페르소나 경로 확인
-#   agent-persona review <persona>      # 페르소나로 코드 리뷰
+# Usage:
+#   agt persona list                  # List available personas
+#   agt persona install <persona>     # Install persona
+#   agt persona install -g <persona>  # Install globally
+#   agt persona review <persona>      # Code review with persona
+#
+# Legacy aliases (agent-persona) still work but are deprecated.
 #
 
 set -e
@@ -24,7 +22,7 @@ CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m'
 
-# 스크립트 위치에서 agent-skills 소스 디렉토리 찾기
+# 스크립트 위치에서 agt 소스 디렉토리 찾기
 find_source_dir() {
     local script_path="${BASH_SOURCE[0]}"
 
@@ -39,7 +37,7 @@ find_source_dir() {
         fi
     done
 
-    # cli/ 디렉토리의 부모가 agent-skills
+    # cli/ 디렉토리의 부모가 agt 소스
     local cli_dir
     cli_dir=$(cd "$(dirname "$script_path")" && pwd)
     echo "$(dirname "$cli_dir")"
@@ -62,10 +60,12 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # 사용법
 usage() {
+    echo -e "\033[1;33m[DEPRECATED]\033[0m agent-persona is deprecated. Use 'agt persona' instead."
+    echo ""
     cat << 'EOF'
-agent-persona - 에이전트 페르소나 관리
+agent-persona - Agent persona management (deprecated → agt persona)
 
-사용법:
+Usage:
   agent-persona <command> [options] [arguments]
 
 Commands:
@@ -124,8 +124,8 @@ Review Options:
   agent-persona review security-reviewer -o review.md  # 파일로 저장
 
 원격 설치:
-  agent-persona install --from jiunbae/agent-skills/personas/security-reviewer
-  agent-persona install -g --from jiunbae/agent-skills/personas/architecture-reviewer
+  agent-persona install --from open330/agt/personas/security-reviewer
+  agent-persona install -g --from open330/agt/personas/architecture-reviewer
   agent-persona install --from someone/their-repo/personas/my-reviewer@v1.0
 
 페르소나 경로:

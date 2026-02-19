@@ -1,6 +1,6 @@
 # Agent Personas
 
-에이전트 페르소나 라이브러리. 코드 리뷰, 기획, 구현 등에 활용하는 에이전트 정체성 정의 파일입니다.
+Agent persona library for agt. Identity definition files for code review, planning, and implementation.
 
 ## 포맷
 
@@ -31,22 +31,22 @@ tags: [tag1, tag2]
 
 ```bash
 # 목록 확인
-agent-persona list
+agt persona list
 
 # 로컬 프로젝트에 설치 (.agents/personas/)
-agent-persona install security-reviewer
+agt persona install security-reviewer
 
 # 전역 설치 (~/.agents/personas/)
-agent-persona install -g architecture-reviewer
+agt persona install -g architecture-reviewer
 
 # 빈 템플릿으로 생성
-agent-persona create my-reviewer
+agt persona create my-reviewer
 
 # AI로 페르소나 생성 (LLM 활용)
-agent-persona create rust-safety-reviewer --ai "senior Rust developer focused on memory safety and unsafe code"
+agt persona create rust-safety-reviewer --ai "senior Rust developer focused on memory safety and unsafe code"
 
 # 상세 보기
-agent-persona show security-reviewer
+agt persona show security-reviewer
 ```
 
 ## 경로
@@ -73,12 +73,12 @@ agent-persona show security-reviewer
 ### CLI에서 리뷰
 
 ```bash
-# agent-persona review 명령 (추천)
-agent-persona review security-reviewer                 # LLM 자동감지
-agent-persona review security-reviewer --gemini        # Gemini 지정
-agent-persona review security-reviewer --staged        # staged만
-agent-persona review security-reviewer --base main     # 브랜치 비교
-agent-persona review security-reviewer -o review.md    # 파일 저장
+# agt persona review 명령 (추천)
+agt persona review security-reviewer                 # LLM 자동감지
+agt persona review security-reviewer --gemini        # Gemini 지정
+agt persona review security-reviewer --staged        # staged만
+agt persona review security-reviewer --base main     # 브랜치 비교
+agt persona review security-reviewer -o review.md    # 파일 저장
 ```
 
 ### 각 에이전트에서 직접 참조
@@ -109,7 +109,7 @@ cat .agents/personas/security-reviewer.md | ollama run llama3.2 "Review these ch
 
 `which` 명령으로 설치된 페르소나의 정확한 경로를 확인할 수 있습니다:
 ```bash
-agent-persona which security-reviewer
+agt persona which security-reviewer
 # → .agents/personas/security-reviewer.md -> /path/to/personas/security-reviewer.md
 ```
 
@@ -119,12 +119,12 @@ agent-persona which security-reviewer
 
 ```bash
 # 빈 템플릿으로 생성
-agent-persona create my-reviewer
+agt persona create my-reviewer
 
 # AI가 도메인 전문가 페르소나를 자동 생성
-agent-persona create db-reviewer --gemini "DBA with 15 years of PostgreSQL optimization experience"
-agent-persona create rust-safety --claude "Rust unsafe code and FFI boundary specialist"
-agent-persona create frontend-a11y --ai "Accessibility expert for React applications"
+agt persona create db-reviewer --gemini "DBA with 15 years of PostgreSQL optimization experience"
+agt persona create rust-safety --claude "Rust unsafe code and FFI boundary specialist"
+agt persona create frontend-a11y --ai "Accessibility expert for React applications"
 ```
 
 지원 LLM CLI (우선순위): `codex` > `claude` > `gemini` > `ollama`

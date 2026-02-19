@@ -18,7 +18,7 @@ const EXCLUDE_DIRS: &[&str] = &[
     "target",
 ];
 
-/// Find agent-skills source directory by following symlinks from the executable
+/// Find agt source directory by following symlinks from the executable
 pub fn find_source_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let resolved = fs::canonicalize(&exe).unwrap_or(exe);
@@ -34,8 +34,8 @@ pub fn find_source_dir() -> Option<PathBuf> {
         dir = dir.parent()?;
     }
 
-    // Fallback: check if AGENT_SKILLS_DIR env is set
-    if let Ok(env_dir) = std::env::var("AGENT_SKILLS_DIR") {
+    // Fallback: check if AGT_DIR or AGENT_SKILLS_DIR env is set
+    if let Ok(env_dir) = std::env::var("AGT_DIR").or_else(|_| std::env::var("AGENT_SKILLS_DIR")) {
         let p = PathBuf::from(env_dir);
         if p.is_dir() {
             return Some(p);

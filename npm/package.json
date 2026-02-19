@@ -1,7 +1,7 @@
 {
   "name": "@open330/agt",
   "version": "2026.2.19",
-  "description": "Agent Skills CLI — manage AI agent skills and personas",
+  "description": "agt — A modular toolkit for extending AI coding agents",
   "bin": {
     "agt": "bin/agt.js"
   },
@@ -16,10 +16,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/jiunbae/agent-skills"
+    "url": "https://github.com/open330/agt"
   },
-  "keywords": ["agent", "skills", "personas", "cli", "ai"],
-  "author": "jiunbae",
+  "keywords": ["agent", "skills", "personas", "cli", "ai", "claude-code", "codex"],
+  "author": "open330",
   "license": "MIT",
   "publishConfig": {
     "access": "public"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Agent Skills Installer
-# 스킬을 ~/.claude/skills 디렉토리에 설치합니다.
+# agt — Installer
+# Install skills to ~/.claude/skills directory.
 #
 # 사용법:
 #   ./install.sh                     # 전체 설치
@@ -133,9 +133,9 @@ Static 관리:
   --unlink-static  ~/.agents 심링크 제거
 
 CLI 도구:
-  --cli            claude-skill CLI 도구 설치 (~/.local/bin)
+  --cli            agt CLI 도구 설치 (~/.local/bin)
   --alias=NAME     CLI 도구 별칭 추가 (여러 번 사용 가능, 예: --alias=cs)
-  --uninstall-cli  claude-skill CLI 도구 및 별칭 제거
+  --uninstall-cli  agt CLI 도구 및 별칭 제거
 
 Hooks:
   --hooks          Claude Code hooks 설치 (~/.claude/hooks)
@@ -397,9 +397,9 @@ link_static() {
   log_success "심링크 생성됨: ~/.agents -> $STATIC_SOURCE"
 }
 
-# CLI 도구 설치 (claude-skill, agent-skill 모두)
+# CLI 도구 설치 (agt + legacy tools)
 install_cli() {
-  local cli_tools=("claude-skill" "agent-skill" "agent-persona")
+  local cli_tools=("claude-skill" "agent-skill" "agent-persona" "agt")
 
   # 대상 디렉토리 생성
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -450,8 +450,9 @@ install_cli() {
 
   # 사용법 출력
   log_info "사용법:"
-  log_info "  claude-skill --help  (스킬 실행)"
-  log_info "  agent-skill --help   (스킬 관리)"
+  log_info "  agt skill list       (스킬 목록)"
+  log_info "  agt persona list     (페르소나 목록)"
+  log_info "  agt run \"prompt\"     (스킬 실행)"
 
   # PATH 확인
   if [[ ":$PATH:" != *":$CLI_TARGET:"* ]]; then
@@ -463,7 +464,7 @@ install_cli() {
 
 # CLI 도구 제거
 uninstall_cli() {
-  local cli_tools=("claude-skill" "agent-skill" "agent-persona")
+  local cli_tools=("claude-skill" "agent-skill" "agent-persona" "agt")
 
   if [[ "$DRY_RUN" == "true" ]]; then
     for tool in "${cli_tools[@]}"; do
@@ -580,7 +581,7 @@ install_codex() {
       echo "" >>"$codex_agents_target"
       echo "" >>"$codex_agents_target"
       echo "# ====================================================" >>"$codex_agents_target"
-      echo "# Agent Skills Integration (auto-generated)" >>"$codex_agents_target"
+      echo "# agt Integration (auto-generated)" >>"$codex_agents_target"
       echo "# ====================================================" >>"$codex_agents_target"
       echo "" >>"$codex_agents_target"
       cat "$CODEX_AGENTS_SOURCE" >>"$codex_agents_target"
@@ -1048,7 +1049,7 @@ install_core() {
 
   echo ""
   log_info "Core 스킬만 설치됨. 추가 스킬은 워크스페이스에서:"
-  echo "  agent-skill install <skill-name>"
+  echo "  agt skill install <skill-name>"
 }
 
 # 전체 설치
@@ -1223,7 +1224,7 @@ SKILL_GROUPS=($(get_skill_groups))
 # 헤더 출력
 if [[ "$QUIET" == "false" && "$DRY_RUN" == "false" ]]; then
   echo ""
-  echo -e "${CYAN}Agent Skills Installer${NC}"
+  echo -e "${CYAN}agt Installer${NC}"
   echo "======================="
   echo ""
   if [[ "$UNINSTALL" == "true" ]]; then

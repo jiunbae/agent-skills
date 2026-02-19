@@ -96,10 +96,10 @@ description: Provides an index of global static context files in ~/.agents/. Ret
 
 ```bash
 # 스크립트 실행 권한 부여
-chmod +x /path/to/agent-skills/context/static-index/scripts/static-index.sh
+chmod +x /path/to/agt/context/static-index/scripts/static-index.sh
 
 # alias 설정 (선택)
-alias static-index='/path/to/agent-skills/context/static-index/scripts/static-index.sh'
+alias static-index='/path/to/agt/context/static-index/scripts/static-index.sh'
 ```
 
 ## Workflow
@@ -200,7 +200,7 @@ static-index: SECURITY.md 파일을 참조하세요.
 
 새로운 글로벌 컨텍스트 파일을 추가하려면:
 
-1. `~/.agents/` (또는 `agent-skills/static/`)에 파일 생성
+1. `~/.agents/` (또는 `agt/static/`)에 파일 생성
 2. 이 SKILL.md의 매핑 테이블에 항목 추가
 3. 파일 상세 정보 섹션에 설명 추가
 
@@ -227,19 +227,19 @@ static-index: SECURITY.md 파일을 참조하세요.
 ## File Locations
 
 ```
-~/.agents/                    # 심링크 → agent-skills/static/
+~/.agents/                    # 심링크 → agt/static/
 ├── WHOAMI.md                # 사용자 프로필
 ├── SECURITY.md              # 보안 규칙
 ├── STYLE.md                 # 코딩 스타일 (선택)
 ├── NOTION.md                # Notion 연동 설정
 ├── VAULT.md                 # Vaultwarden 시크릿 가이드
-├── personas/                # 에이전트 페르소나 (agent-persona로 관리)
+├── personas/                # 에이전트 페르소나 (agt persona로 관리)
 │   ├── security-reviewer.md
 │   ├── architecture-reviewer.md
 │   └── ...
 └── README.md                # 디렉토리 설명
 
-agent-skills/
+agt/
 ├── static/                  # 실제 파일 위치 (Git 관리)
 │   ├── WHOAMI.md
 │   ├── SECURITY.md
