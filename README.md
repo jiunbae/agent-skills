@@ -77,6 +77,7 @@ claude
 | `--cli` | `claude-skill` + `agent-skill` CLI 도구 설치 |
 | `--hooks` | Claude Code hooks 설치 (`~/.claude/hooks`) |
 | `--uninstall-hooks` | 설치된 hooks 제거 |
+| `--personas` | 에이전트 페르소나 설치 (`~/.agents/personas`) |
 | `--copy` | 심링크 대신 복사 |
 | `--dry-run` | 미리보기만 |
 | `--prefix NAME` | 스킬 이름 접두사 |
@@ -207,6 +208,28 @@ agent-skill init                          # 워크스페이스 초기화
 1. `.claude/skills/` (현재 워크스페이스)
 2. `~/.claude/skills/` (전역)
 
+### agent-persona (페르소나 관리)
+
+에이전트 페르소나 관리 CLI입니다.
+
+```bash
+# 설치 (--cli에 포함)
+./install.sh --cli
+
+# 사용법
+agent-persona list                                  # 페르소나 목록
+agent-persona install security-reviewer              # 로컬 설치
+agent-persona install -g architecture-reviewer       # 전역 설치
+agent-persona create my-reviewer                     # 빈 템플릿
+agent-persona create rust-expert --codex "Rust unsafe specialist"  # LLM 생성
+agent-persona show security-reviewer                 # 상세 보기
+agent-persona review security-reviewer               # 코드 리뷰 (LLM 자동감지)
+agent-persona review security-reviewer --codex       # Codex로 리뷰
+agent-persona review security-reviewer -o review.md  # 파일 저장
+```
+
+**LLM 우선순위:** `codex` > `claude` > `gemini` > `ollama`
+
 ### claude-skill (스킬 실행)
 
 CLI에서 스킬을 직접 실행하는 도구입니다.
@@ -221,6 +244,51 @@ cs --skill security-auditor "검사"  # 스킬 직접 지정
 cs --list                         # 스킬 목록
 cs --list --all --verbose         # 모든 스킬 상세
 ```
+
+---
+
+## Agent Personas
+
+에이전트 페르소나로 전문가 관점의 코드 리뷰를 수행할 수 있습니다. 페르소나는 일반 마크다운 파일이므로 어떤 AI 에이전트에서든 직접 참조 가능합니다.
+
+```bash
+# 페르소나 설치
+./install.sh --personas
+
+# CLI 도구 사용
+agent-persona list                              # 전체 목록
+agent-persona install security-reviewer          # 로컬 설치
+agent-persona create my-reviewer --ai "설명"     # LLM으로 생성
+agent-persona review security-reviewer           # 코드 리뷰
+agent-persona review security-reviewer --codex   # Codex로 리뷰
+```
+
+**번들 페르소나:**
+
+| 페르소나 | 역할 | 도메인 |
+|----------|------|--------|
+| `security-reviewer` | Senior AppSec Engineer | OWASP, 인증, 인젝션 |
+| `architecture-reviewer` | Principal Architect | SOLID, API 설계, 결합도 |
+| `code-quality-reviewer` | Staff Engineer | 가독성, 복잡도, DRY |
+| `performance-reviewer` | Performance Engineer | 메모리, CPU, I/O |
+| `도도한-키위새` | Rust Systems Engineer | 동시성, unsafe, 지연시간 |
+| `database-reviewer` | Senior DBA | 쿼리 최적화, 스키마, 인덱싱 |
+| `frontend-reviewer` | Senior Frontend Engineer | React, 접근성, 성능 |
+| `devops-reviewer` | Senior DevOps/SRE | K8s, IaC, CI/CD |
+
+**에이전트에서 직접 사용:**
+```bash
+# Codex
+codex -p "Review with this persona: $(cat .agents/personas/security-reviewer.md)"
+
+# Gemini
+cat .agents/personas/security-reviewer.md | gemini -p "Review current changes"
+
+# CLAUDE.md에 포함
+# "리뷰 시 .agents/personas/security-reviewer.md 참고"
+```
+
+**경로:** 로컬 `.agents/personas/` → 전역 `~/.agents/personas/` → 라이브러리 `personas/`
 
 ---
 
@@ -325,6 +393,11 @@ agent-skills/
 │   ├── *.sample.md        # 샘플 설정 파일들
 │   └── README.md          # 인덱스
 │
+├── personas/               # 에이전트 페르소나 라이브러리
+│   ├── security-reviewer.md
+│   ├── architecture-reviewer.md
+│   └── ...
+│
 ├── hooks/                  # Claude Code hooks
 │   ├── hooks.json         # Hook 레지스트리
 │   └── *.sh               # Hook 스크립트
@@ -334,6 +407,7 @@ agent-skills/
 │
 └── cli/                    # CLI 도구
     ├── agent-skill        # 워크스페이스별 스킬 관리
+    ├── agent-persona      # 에이전트 페르소나 관리
     └── claude-skill       # 스킬 실행 CLI
 ```
 
@@ -429,5 +503,5 @@ Personal use. Individual skills may have their own licenses.
 
 ---
 
-**Last Updated**: 2026-02-14
-**Skills Count**: 33
+**Last Updated**: 2026-02-18
+**Skills Count**: 33 skills + 8 personas

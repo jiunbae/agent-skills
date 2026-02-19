@@ -637,6 +637,7 @@ install_personas() {
   local installed=0
   for persona_file in "$PERSONAS_SOURCE"/*.md; do
     [[ -f "$persona_file" ]] || continue
+    [[ -L "$persona_file" ]] && { log_warn "심링크 스킵: $persona_file"; continue; }
     local filename=$(basename "$persona_file")
     [[ "$filename" == "README.md" ]] && continue
 

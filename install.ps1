@@ -37,6 +37,9 @@ $UninstallHooks = $false
 $HooksSource = Join-Path $ScriptDir 'hooks'
 $HooksTarget = Join-Path $HOME '.claude/hooks'
 $HooksRegistry = Join-Path $HooksSource 'hooks.json'
+$InstallPersonas = $false
+$PersonasSource = Join-Path $ScriptDir 'personas'
+$PersonasTarget = Join-Path $HOME '.agents/personas'
 $CoreMode = $false
 $CoreSkills = @(
     'development/git-commit-pr',
@@ -48,7 +51,7 @@ $CoreSkills = @(
     'agents/background-reviewer'
 )
 $Targets = @()
-$ExcludeDirs = @('static', 'cli', 'codex-support', 'hooks', '.git', '.github', '.agents', 'node_modules', '__pycache__')
+$ExcludeDirs = @('static', 'cli', 'codex-support', 'hooks', 'personas', '.git', '.github', '.agents', 'node_modules', '__pycache__')
 
 function Normalize-Path {
     param([string]$Path)
@@ -93,6 +96,9 @@ CLI:
 Hooks:
   --hooks             Install Claude Code hooks (~/.claude/hooks)
   --uninstall-hooks   Remove installed hooks
+
+Personas:
+  --personas          Install agent personas (~/.agents/personas)
 
 Codex:
   --codex             Setup Codex CLI support (AGENTS.md + skills symlink)
@@ -688,7 +694,7 @@ function Unlink-Static {
 }
 
 function Install-Cli {
-    $cliTools = @('claude-skill', 'agent-skill')
+    $cliTools = @('claude-skill', 'agent-skill', 'agent-persona')
 
     if ($DryRun) {
         Write-Dry "Ensure directory: $CliTarget"
@@ -745,7 +751,7 @@ function Install-Cli {
 }
 
 function Uninstall-Cli {
-    $cliTools = @('claude-skill', 'agent-skill')
+    $cliTools = @('claude-skill', 'agent-skill', 'agent-persona')
     $removed = $false
 
     foreach ($tool in $cliTools) {
@@ -786,6 +792,44 @@ function Uninstall-Cli {
     }
 }
 
+function Install-Personas {
+    if (-not (Test-Path -LiteralPath $PersonasSource -PathType Container)) {
+        Write-ErrorMsg "Personas directory not found: $PersonasSource"
+        exit 1
+    }
+
+    Write-Info "Installing personas..."
+    Ensure-Directory $PersonasTarget
+
+    $installed = 0
+    Get-ChildItem -Path $PersonasSource -Filter '*.md' -File | Where-Object { $_.Name -ne 'README.md' } | ForEach-Object {
+        $targetPath = Join-Path $PersonasTarget $_.Name
+
+        if ($DryRun) {
+            Write-Dry "Link: $($_.Name)"
+            $script:installed++
+            return
+        }
+
+        Remove-Existing $targetPath
+
+        if ($CopyMode) {
+            Copy-Item -LiteralPath $_.FullName -Destination $targetPath
+            Write-Success "Copied: $($_.Name)"
+        } else {
+            try {
+                $linkType = New-Link -Path $targetPath -Target $_.FullName
+                Write-Success "Linked: $($_.Name) ($linkType)"
+            } catch {
+                Write-ErrorMsg "Failed to link persona $($_.Name): $_"
+            }
+        }
+        $script:installed++
+    }
+
+    Write-Info "$installed personas installed ($PersonasTarget)"
+}
+
 if (-not $ScriptArgs) { $ScriptArgs = @() }
 for ($i = 0; $i -lt $ScriptArgs.Count; $i++) {
     $arg = $ScriptArgs[$i]
@@ -815,6 +859,7 @@ for ($i = 0; $i -lt $ScriptArgs.Count; $i++) {
         '--codex' { $InstallCodex = $true; continue }
         '--hooks' { $InstallHooks = $true; continue }
         '--uninstall-hooks' { $UninstallHooks = $true; continue }
+        '--personas' { $InstallPersonas = $true; continue }
         '--core' { $CoreMode = $true; continue }
         default { $Targets += $arg }
     }
@@ -836,9 +881,10 @@ if ($LinkStatic) { Link-Static; Write-Host '' }
 if ($InstallCli) { Install-Cli; Write-Host '' }
 if ($InstallCodex) { Install-Codex; Write-Host '' }
 if ($InstallHooks) { Install-Hooks; Write-Host '' }
+if ($InstallPersonas) { Install-Personas; Write-Host '' }
 
 # If only non-skill options were specified (no targets and not core mode), exit
-if ($Targets.Count -eq 0 -and -not $CoreMode -and ($LinkStatic -or $InstallCli -or $InstallCodex -or $InstallHooks)) {
+if ($Targets.Count -eq 0 -and -not $CoreMode -and ($LinkStatic -or $InstallCli -or $InstallCodex -or $InstallHooks -or $InstallPersonas)) {
     exit 0
 }
 

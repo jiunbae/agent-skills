@@ -27,6 +27,37 @@ declare -A FILE_TYPES=(
     ["persona"]="personas/|페르소나|persona|reviewer|에이전트 페르소나|agent persona|리뷰어 페르소나"
 )
 
+# 파일 타입 판별 (공용 함수)
+# 인자: $1=filename(basename), $2=relpath
+# 출력: 타입 문자열 (unknown/other if no match)
+resolve_file_type() {
+    local filename="$1"
+    local relpath="$2"
+    local default="${3:-unknown}"
+
+    for type in "${!FILE_TYPES[@]}"; do
+        local pattern=$(echo "${FILE_TYPES[$type]}" | cut -d'|' -f1)
+        if [[ "$pattern" == */ ]]; then
+            [[ "$relpath" == ${pattern}* ]] && echo "$type" && return
+        else
+            [[ "$filename" == *"$pattern"* ]] && echo "$type" && return
+        fi
+    done
+    echo "$default"
+}
+
+# 패턴으로 파일 경로 찾기 (공용 함수)
+# 인자: $1=pattern
+# 출력: 첫 번째 매칭 파일 경로
+find_by_pattern() {
+    local pattern="$1"
+    if [[ "$pattern" == */ ]]; then
+        find "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1
+    else
+        find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1
+    fi
+}
+
 # 인덱스 생성
 build_index() {
     if [ ! -d "$AGENTS_DIR" ]; then
@@ -47,16 +78,7 @@ build_index() {
         local modified=$(stat -f%m "$file" 2>/dev/null || stat -c%Y "$file" 2>/dev/null || echo "0")
 
         # 파일 타입 감지
-        local file_type="unknown"
-        for type in "${!FILE_TYPES[@]}"; do
-            local pattern=$(echo "${FILE_TYPES[$type]}" | cut -d'|' -f1)
-            if [[ "$pattern" == */ ]]; then
-                # 디렉토리 패턴: relpath로 매칭
-                [[ "$relpath" == ${pattern}* ]] && file_type="$type" && break
-            else
-                [[ "$filename" == *"$pattern"* ]] && file_type="$type" && break
-            fi
-        done
+        local file_type=$(resolve_file_type "$filename" "$relpath" "unknown")
 
         if [ "$first" = true ]; then
             first=false
@@ -95,15 +117,7 @@ list_files() {
         local size_human=$(numfmt --to=iec $size 2>/dev/null || echo "${size}B")
 
         # 파일 타입
-        local file_type="other"
-        for type in "${!FILE_TYPES[@]}"; do
-            local pattern=$(echo "${FILE_TYPES[$type]}" | cut -d'|' -f1)
-            if [[ "$pattern" == */ ]]; then
-                [[ "$relpath" == ${pattern}* ]] && file_type="$type" && break
-            else
-                [[ "$filename" == *"$pattern"* ]] && file_type="$type" && break
-            fi
-        done
+        local file_type=$(resolve_file_type "$filename" "$relpath" "other")
 
         echo "| \`$filename\` | $file_type | $size_human | \`$relpath\` |"
     done < <(find "$AGENTS_DIR" -name "*.md" -type f -print0 2>/dev/null | sort -z)
@@ -137,12 +151,7 @@ search_files() {
         # 키워드 매칭
         if echo "$keywords_lower" | grep -qi "$query_lower"; then
             local pattern=$(echo "$keywords" | cut -d'|' -f1)
-            local file_path
-            if [[ "$pattern" == */ ]]; then
-                file_path=$(find "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1)
-            else
-                file_path=$(find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1)
-            fi
+            local file_path=$(find_by_pattern "$pattern")
 
             if [ -n "$file_path" ] && [ -f "$file_path" ]; then
                 echo "### Match: $type"
@@ -193,12 +202,7 @@ get_file() {
 
     if [ -n "${FILE_TYPES[$type_lower]}" ]; then
         local pattern=$(echo "${FILE_TYPES[$type_lower]}" | cut -d'|' -f1)
-        local file_path
-        if [[ "$pattern" == */ ]]; then
-            file_path=$(find "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1)
-        else
-            file_path=$(find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1)
-        fi
+        local file_path=$(find_by_pattern "$pattern")
 
         if [ -n "$file_path" ] && [ -f "$file_path" ]; then
             echo "$file_path"
