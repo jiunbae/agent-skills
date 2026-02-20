@@ -254,27 +254,48 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
 }
 
 fn uninstall(name: &str, global: bool) -> Result<()> {
-    let target_dir = if global {
-        config::global_persona_target()
+    // Try to find the persona: check dir, .md file, in both local and global
+    let (path, scope) = if global {
+        (find_installed_persona(name, &config::global_persona_target()), "global")
     } else {
-        config::local_persona_target()
+        // Try local first, then auto-detect global
+        let local = find_installed_persona(name, &config::local_persona_target());
+        if local.is_some() {
+            (local, "local")
+        } else {
+            let global_found = find_installed_persona(name, &config::global_persona_target());
+            if global_found.is_some() {
+                (global_found, "global")
+            } else {
+                (None, "local")
+            }
+        }
     };
 
-    let path = target_dir.join(name);
+    let path = path.context(format!("Persona '{}' is not installed", name))?;
 
-    if !path.exists() && !path.is_symlink() {
-        bail!("Persona '{}' is not installed", name);
-    }
-
-    if path.is_symlink() {
+    if path.is_symlink() || path.is_file() {
         fs::remove_file(&path)?;
     } else {
         fs::remove_dir_all(&path)?;
     }
 
-    let scope = if global { "global" } else { "local" };
     ui::success(&format!("Uninstalled persona '{}' ({})", name, scope));
     Ok(())
+}
+
+fn find_installed_persona(name: &str, dir: &Path) -> Option<PathBuf> {
+    // Check exact name (directory or file)
+    let exact = dir.join(name);
+    if exact.exists() || exact.is_symlink() {
+        return Some(exact);
+    }
+    // Check with .md extension
+    let with_md = dir.join(format!("{}.md", name));
+    if with_md.exists() || with_md.is_symlink() {
+        return Some(with_md);
+    }
+    None
 }
 
 fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
