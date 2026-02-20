@@ -49,6 +49,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Set Cargo.toml version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#agt-v}"
+          sed -i.bak "s/^version = .*/version = \"${VERSION}\"/" agt/Cargo.toml
+          rm -f agt/Cargo.toml.bak
+
       - name: Install cross (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: cargo install cross --git https://github.com/cross-rs/cross
