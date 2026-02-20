@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use std::fs;
 use std::path::Path;
 
-/// Validate a skill/persona name to prevent path traversal
+/// Validate a skill/persona name to prevent path traversal and catch argument mistakes
 pub fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() {
         bail!("Name cannot be empty");
@@ -12,6 +12,14 @@ pub fn validate_name(name: &str) -> Result<()> {
     }
     if name == "." || name == ".." || name.starts_with("..") {
         bail!("Name cannot be a relative path component: {}", name);
+    }
+    // Catch likely argument order mistakes: names with spaces are probably descriptions
+    if name.contains(' ') {
+        bail!(
+            "Name '{}' contains spaces. Did you mean to put the name before the flag?\n  \
+             Example: agt persona create my-name --codex \"description here\"",
+            name
+        );
     }
     Ok(())
 }
