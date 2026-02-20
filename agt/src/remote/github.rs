@@ -108,7 +108,8 @@ pub fn fetch_dir(spec: &RemoteSpec) -> Result<(TempDir, PathBuf)> {
             Err(_) => continue,
         };
 
-        let decoder = GzDecoder::new(response.into_reader());
+        const MAX_TARBALL_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+        let decoder = GzDecoder::new(response.into_reader().take(MAX_TARBALL_SIZE));
         let mut archive = Archive::new(decoder);
 
         if archive.unpack(tmp_dir.path()).is_err() {
@@ -225,6 +226,10 @@ fn chrono_like_now() -> String {
             break;
         }
         remaining_days -= md as i64;
+    }
+    if m == 0 {
+        m = 12;
+        remaining_days = 0;
     }
     let d = remaining_days + 1;
 

@@ -30,7 +30,7 @@ pub fn find_source_dir() -> Option<PathBuf> {
     }
 
     // 2. Walk up from executable following symlinks
-    if let Some(exe) = std::env::current_exe().ok() {
+    if let Ok(exe) = std::env::current_exe() {
         let resolved = fs::canonicalize(&exe).unwrap_or(exe);
         let mut dir = resolved.parent();
         for _ in 0..5 {
@@ -102,10 +102,7 @@ pub fn skill_groups(source_dir: &Path) -> Vec<String> {
                 continue;
             }
             // Verify at least one skill exists
-            if skills_in_group(source_dir, &name_str)
-                .first()
-                .is_some()
-            {
+            if !skills_in_group(source_dir, &name_str).is_empty() {
                 groups.push(name_str);
             }
         }

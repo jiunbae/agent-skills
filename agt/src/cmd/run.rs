@@ -1,4 +1,4 @@
-use crate::{config, frontmatter, llm, ui};
+use crate::{config, frontmatter, llm, ui, util};
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::Path;
@@ -41,6 +41,7 @@ pub fn execute(prompt: &str, skill: Option<&str>) -> Result<()> {
 }
 
 fn load_skill(name: &str) -> Result<String> {
+    util::validate_name(name)?;
     // Search local -> global -> library
     let local = config::local_skill_target().join(name);
     let global = config::global_skill_target().join(name);
@@ -139,10 +140,8 @@ fn match_skills_in_dir(dir: &Path, prompt_lower: &str) -> Option<String> {
             }
         }
 
-        if score > 0 {
-            if best_match.as_ref().is_none_or(|(s, _)| score > *s) {
-                best_match = Some((score, content));
-            }
+        if score > 0 && best_match.as_ref().is_none_or(|(s, _)| score > *s) {
+            best_match = Some((score, content));
         }
     }
 
