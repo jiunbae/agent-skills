@@ -320,6 +320,7 @@ fn init() -> Result<()> {
 }
 
 fn which(name: &str) -> Result<()> {
+    util::validate_name(name)?;
     // Check local
     let local = config::local_skill_target().join(name);
     if local.exists() {

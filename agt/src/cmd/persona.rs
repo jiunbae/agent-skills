@@ -193,6 +193,8 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
         .unwrap_or(&spec.path)
         .to_string();
 
+    util::validate_name(&persona_name)?;
+
     let target_dir = if global {
         config::global_persona_target()
     } else {
@@ -285,15 +287,11 @@ fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
 
     // If only showing installed
     if installed || local || global {
-        if installed || local {
-            if local_dir.is_dir() {
-                list_personas_in_dir(&local_dir, "local", &mut entries)?;
-            }
+        if (installed || local) && local_dir.is_dir() {
+            list_personas_in_dir(&local_dir, "local", &mut entries)?;
         }
-        if installed || global {
-            if global_dir.is_dir() {
-                list_personas_in_dir(&global_dir, "global", &mut entries)?;
-            }
+        if (installed || global) && global_dir.is_dir() {
+            list_personas_in_dir(&global_dir, "global", &mut entries)?;
         }
         if json {
             println!("{}", serde_json::to_string_pretty(&entries)?);
@@ -455,6 +453,7 @@ fn create(
 }
 
 fn show(name: &str) -> Result<()> {
+    util::validate_name(name)?;
     let path = find_persona(name)?;
     let persona_md = find_persona_md(&path)?;
     let content = fs::read_to_string(&persona_md)?;
@@ -486,6 +485,7 @@ fn show(name: &str) -> Result<()> {
 }
 
 fn which(name: &str) -> Result<()> {
+    util::validate_name(name)?;
     let path = find_persona(name)?;
     let resolved = fs::canonicalize(&path).unwrap_or(path);
     println!("{}", resolved.display());
@@ -501,6 +501,7 @@ fn review(
     base: Option<String>,
     output: Option<String>,
 ) -> Result<()> {
+    util::validate_name(name)?;
     let persona_path = find_persona(name)?;
     let persona_md = find_persona_md(&persona_path)?;
     let persona_content = fs::read_to_string(&persona_md)?;
