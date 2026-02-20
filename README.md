@@ -294,7 +294,19 @@ agt skill list                           # Available skills
 
 ## Personas
 
-Expert identities for AI-powered code review. Each persona is a markdown file — usable with any AI agent.
+Expert identities as simple markdown files — usable with **any** AI agent for review, planning, implementation, or any task.
+
+### How It Works
+
+Personas are `.md` files with YAML frontmatter (name, role, domain, tags) and a markdown body (identity, expertise, evaluation framework, output format). Any agent that can read a file can adopt a persona.
+
+```
+.agents/personas/security-reviewer.md    ← project local (highest priority)
+~/.agents/personas/security-reviewer.md  ← user global
+personas/security-reviewer.md            ← library (bundled)
+```
+
+### Available Personas
 
 | Persona | Role | Domain |
 |---------|------|--------|
@@ -302,29 +314,48 @@ Expert identities for AI-powered code review. Each persona is a markdown file �
 | `architecture-reviewer` | Principal Architect | SOLID, API design, coupling |
 | `code-quality-reviewer` | Staff Engineer | Readability, complexity, DRY |
 | `performance-reviewer` | Performance Engineer | Memory, CPU, I/O, scalability |
-| `도도한-키위새` | Rust Systems Engineer | Concurrency, unsafe, latency |
 | `database-reviewer` | Senior DBA | Query optimization, schema, indexing |
 | `frontend-reviewer` | Senior Frontend Engineer | React, accessibility, performance |
 | `devops-reviewer` | Senior DevOps/SRE | K8s, IaC, CI/CD |
 
-### Usage with different agents
+### Using Personas with Agents
+
+Personas are just markdown files at a known location. Any agent reads the file and adopts the identity:
+
+| Agent | How to Use |
+|-------|-----------|
+| **Claude Code** | Reference the file in conversation: *"Read `.agents/personas/security-reviewer.md` and adopt that persona"* |
+| **Codex** | `agt persona review security-reviewer --codex` or include file content in prompt |
+| **Gemini** | `agt persona review security-reviewer --gemini` or pipe via stdin |
+| **Ollama** | `agt persona review security-reviewer` (auto-detect) |
+| **OpenCode** | Reference the persona file path in agent settings |
+| **Any agent** | `cat .agents/personas/<name>.md` and pass to the agent |
 
 ```bash
-# agt CLI
+# agt CLI — review with auto-detected LLM
 agt persona review security-reviewer
 
-# Codex
-codex -p "Review with this persona: $(cat .agents/personas/security-reviewer.md)"
+# Force specific LLM
+agt persona review security-reviewer --codex
+agt persona review security-reviewer --claude --staged
+agt persona review security-reviewer --base main -o review.md
 
-# Gemini
-cat .agents/personas/security-reviewer.md | gemini -p "Review current changes"
+# Show persona content
+agt persona show security-reviewer
 
-# In CLAUDE.md
-# "When reviewing, reference .agents/personas/security-reviewer.md"
+# Find persona file path (for piping to other agents)
+agt persona which security-reviewer
 ```
 
-**Persona path priority:**
-`.agents/personas/` (local) → `~/.agents/personas/` (global) → `personas/` (library)
+### Persona Discovery
+
+The `static-index` skill registers persona locations so any agent can discover them automatically. Install personas locally or globally:
+
+```bash
+agt persona install security-reviewer          # local → .agents/personas/
+agt persona install -g architecture-reviewer   # global → ~/.agents/personas/
+agt persona install --from owner/repo/path     # from GitHub
+```
 
 ---
 

@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 
 #[derive(Subcommand)]
 pub enum PersonaAction {
-    /// Install a persona
+    /// Install a persona to .agents/personas/ (local) or ~/.agents/personas/ (global)
     Install {
         /// Persona name (from library)
         name: Option<String>,
-        /// Install globally (~/.agents/personas)
+        /// Install globally to ~/.agents/personas/
         #[arg(short, long)]
         global: bool,
         /// Force overwrite existing
@@ -35,17 +35,17 @@ pub enum PersonaAction {
         /// Show only installed
         #[arg(long)]
         installed: bool,
-        /// Show only local
+        /// Show only local (.agents/personas/)
         #[arg(long)]
         local: bool,
-        /// Show only global
+        /// Show only global (~/.agents/personas/)
         #[arg(long)]
         global: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
     },
-    /// Create a new persona
+    /// Create a new persona (template or AI-generated)
     Create {
         /// Persona name
         name: String,
@@ -62,36 +62,36 @@ pub enum PersonaAction {
         #[arg(long, value_name = "DESC")]
         gemini: Option<String>,
     },
-    /// Show persona details
+    /// Show persona content (reads the markdown file)
     Show {
         /// Persona name
         name: String,
     },
-    /// Show the path of a persona
+    /// Show the resolved file path of a persona
     Which {
         /// Persona name
         name: String,
     },
-    /// Run a persona review on current changes
+    /// Review code changes using a persona with an LLM (codex > claude > gemini > ollama)
     Review {
         /// Persona name
         name: String,
-        /// Use Codex
+        /// Use Codex for review
         #[arg(long)]
         codex: bool,
-        /// Use Claude
+        /// Use Claude for review
         #[arg(long)]
         claude: bool,
-        /// Use Gemini
+        /// Use Gemini for review
         #[arg(long)]
         gemini: bool,
         /// Review staged changes only
         #[arg(long)]
         staged: bool,
-        /// Base branch for diff
+        /// Base branch for diff (e.g., main)
         #[arg(long)]
         base: Option<String>,
-        /// Output file
+        /// Save review output to file
         #[arg(short, long)]
         output: Option<String>,
     },

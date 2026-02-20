@@ -25,7 +25,22 @@ enum Commands {
         #[command(subcommand)]
         action: cmd::skill::SkillAction,
     },
-    /// Manage agent personas
+    /// Manage agent personas (markdown files that define expert identities for any AI agent)
+    #[command(
+        long_about = "Manage agent personas — markdown files that define expert identities.\n\n\
+            Personas are simple .md files with YAML frontmatter (name, role, domain, tags)\n\
+            and a markdown body (identity, review lens, evaluation framework, output format).\n\
+            Any AI agent can read and adopt a persona.\n\n\
+            Persona locations (searched in order):\n  \
+              .agents/personas/        Project-local (highest priority)\n  \
+              ~/.agents/personas/      User global\n  \
+              personas/                Library (bundled)\n\n\
+            Usage with different agents:\n  \
+              Claude Code  Read the persona file path in conversation\n  \
+              Codex        agt persona review <name> --codex\n  \
+              Gemini       agt persona review <name> --gemini\n  \
+              Any agent    cat .agents/personas/<name>.md | <agent-cli>"
+    )]
     Persona {
         #[command(subcommand)]
         action: cmd::persona::PersonaAction,

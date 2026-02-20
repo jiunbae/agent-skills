@@ -294,7 +294,19 @@ agt skill list                           # 사용 가능한 스킬
 
 ## 페르소나
 
-전문가 관점의 AI 코드 리뷰를 위한 페르소나입니다. 일반 마크다운 파일이므로 어떤 AI 에이전트에서든 사용 가능합니다.
+전문가 아이덴티티를 정의한 마크다운 파일입니다. 리뷰, 기획, 구현 등 **어떤 작업에든** 어떤 AI 에이전트에서든 사용할 수 있습니다.
+
+### 작동 방식
+
+페르소나는 YAML frontmatter (name, role, domain, tags)와 마크다운 본문 (아이덴티티, 전문 분야, 평가 기준, 출력 포맷)으로 구성된 `.md` 파일입니다. 파일을 읽을 수 있는 에이전트라면 누구든 페르소나를 채택할 수 있습니다.
+
+```
+.agents/personas/security-reviewer.md    ← 프로젝트 로컬 (최우선)
+~/.agents/personas/security-reviewer.md  ← 사용자 전역
+personas/security-reviewer.md            ← 라이브러리 (번들)
+```
+
+### 사용 가능한 페르소나
 
 | 페르소나 | 역할 | 도메인 |
 |----------|------|--------|
@@ -302,29 +314,48 @@ agt skill list                           # 사용 가능한 스킬
 | `architecture-reviewer` | Principal Architect | SOLID, API 설계, 결합도 |
 | `code-quality-reviewer` | Staff Engineer | 가독성, 복잡도, DRY |
 | `performance-reviewer` | Performance Engineer | 메모리, CPU, I/O, 확장성 |
-| `도도한-키위새` | Rust Systems Engineer | 동시성, unsafe, 지연시간 |
 | `database-reviewer` | Senior DBA | 쿼리 최적화, 스키마, 인덱싱 |
 | `frontend-reviewer` | Senior Frontend Engineer | React, 접근성, 성능 |
 | `devops-reviewer` | Senior DevOps/SRE | K8s, IaC, CI/CD |
 
-### 다양한 에이전트에서 사용
+### 에이전트별 사용법
+
+페르소나는 알려진 경로의 마크다운 파일입니다. 에이전트가 파일을 읽고 아이덴티티를 채택합니다:
+
+| 에이전트 | 사용 방법 |
+|---------|-----------|
+| **Claude Code** | 대화에서 파일 경로 언급: *"`.agents/personas/security-reviewer.md`를 읽고 그 페르소나로 동작해"* |
+| **Codex** | `agt persona review security-reviewer --codex` 또는 프롬프트에 파일 내용 포함 |
+| **Gemini** | `agt persona review security-reviewer --gemini` 또는 stdin으로 전달 |
+| **Ollama** | `agt persona review security-reviewer` (자동 감지) |
+| **OpenCode** | 에이전트 설정에 페르소나 파일 경로 참조 |
+| **아무 에이전트** | `cat .agents/personas/<name>.md`로 읽어서 전달 |
 
 ```bash
-# agt CLI
+# agt CLI — 자동 감지된 LLM으로 리뷰
 agt persona review security-reviewer
 
-# Codex
-codex -p "Review with this persona: $(cat .agents/personas/security-reviewer.md)"
+# 특정 LLM 지정
+agt persona review security-reviewer --codex
+agt persona review security-reviewer --claude --staged
+agt persona review security-reviewer --base main -o review.md
 
-# Gemini
-cat .agents/personas/security-reviewer.md | gemini -p "Review current changes"
+# 페르소나 내용 확인
+agt persona show security-reviewer
 
-# CLAUDE.md에 포함
-# "리뷰 시 .agents/personas/security-reviewer.md 참고"
+# 페르소나 파일 경로 확인 (다른 에이전트에 전달할 때)
+agt persona which security-reviewer
 ```
 
-**페르소나 경로 우선순위:**
-`.agents/personas/` (로컬) → `~/.agents/personas/` (전역) → `personas/` (라이브러리)
+### 페르소나 탐색
+
+`static-index` 스킬이 페르소나 위치를 등록하므로 에이전트가 자동으로 발견할 수 있습니다:
+
+```bash
+agt persona install security-reviewer          # 로컬 → .agents/personas/
+agt persona install -g architecture-reviewer   # 전역 → ~/.agents/personas/
+agt persona install --from owner/repo/path     # GitHub에서 설치
+```
 
 ---
 

@@ -35,7 +35,7 @@ description: Provides an index of global static context files in ~/.agents/. Ret
 | IaC, 배포 표준, kubernetes, k8s, 배포 설정, deploy, 인프라 | `IAC.md` | IaC 배포 표준화 가이드라인 (K8s, CI/CD, 환경변수) |
 | 서비스 목록, 컨테이너 상태, 포트 매핑, docker, 실행 중인 서비스 | `SERVICES.md` | 서비스/컨테이너 중앙 관리 (포트, 상태, 이력) |
 | vault, vaultwarden, 시크릿, 비밀번호, API 키, credentials, 인증 정보 | `VAULT.md` | Vaultwarden 시크릿 관리 (API 키, DB 비밀번호, 인증 정보) |
-| 페르소나 목록, 리뷰어 페르소나, agent persona, reviewer personas | `personas/` | 에이전트 페르소나 정의 (리뷰 렌즈, 평가 기준, 출력 포맷) |
+| 페르소나, agent persona, reviewer, 리뷰어, security persona, architecture persona | `personas/` | 에이전트 페르소나 정의 (아이덴티티, 전문 분야, 평가 기준, 출력 포맷) |
 
 ### 파일 상세 정보
 
@@ -89,6 +89,80 @@ description: Provides an index of global static context files in ~/.agents/. Ret
   - 저장된 시크릿 목록 (API 키, DB credentials)
   - 세션 관리 방법
   - 새 시크릿 추가 가이드
+
+#### personas/
+- **경로**: `~/.agents/personas/` (글로벌), `.agents/personas/` (프로젝트 로컬)
+- **용도**: 에이전트가 특정 전문가의 관점으로 작업할 때 사용하는 페르소나 정의
+- **관리 도구**: `agt persona install/list/show`
+- **포맷**: YAML frontmatter (name, role, domain, type, tags) + Markdown body
+
+**사용 가능한 페르소나:**
+
+| 페르소나 | Role | Domain | 활용 |
+|---------|------|--------|------|
+| `security-reviewer` | Senior AppSec Engineer | security | 보안 취약점 분석, OWASP, 인증/인가 |
+| `architecture-reviewer` | Principal Software Architect | architecture | SOLID, 결합도, API 설계, 레이어 위반 |
+| `code-quality-reviewer` | Staff Engineer — Code Quality | quality | 가독성, 복잡도, DRY, 테스트 커버리지 |
+| `performance-reviewer` | Senior Performance Engineer | performance | 메모리, CPU, I/O, 확장성 |
+| `database-reviewer` | Senior Database Architect / DBA | database | 쿼리 최적화, 인덱싱, 트랜잭션 |
+| `frontend-reviewer` | Senior Frontend Engineer | frontend | 컴포넌트 설계, 접근성, 상태 관리 |
+| `devops-reviewer` | Senior DevOps / SRE | devops | CI/CD, 인프라, 모니터링, 배포 |
+
+**페르소나 파일 구조:**
+```yaml
+---
+name: security-reviewer
+role: "Senior Application Security Engineer"
+domain: security
+type: review
+tags: [security, owasp, auth, injection]
+---
+
+# Security Reviewer
+
+## Identity
+(배경, 전문 분야, 태도)
+
+## Review Lens
+(코드 검토 시 묻는 질문들)
+
+## Evaluation Framework
+(심각도 기준, 카테고리)
+
+## Output Format
+(리뷰 출력 구조)
+```
+
+**에이전트에서 페르소나 사용법:**
+
+페르소나는 단순한 마크다운 파일입니다. 어떤 에이전트든 파일을 읽고 그 관점을 채택할 수 있습니다:
+
+```bash
+# 페르소나 파일 위치 확인
+agt persona list                          # 모든 페르소나 목록
+agt persona show security-reviewer        # 페르소나 내용 확인
+
+# 직접 파일 읽기
+cat ~/.agents/personas/security-reviewer.md    # 글로벌
+cat .agents/personas/security-reviewer.md      # 프로젝트 로컬
+```
+
+**에이전트별 사용 패턴:**
+
+| Agent | 페르소나 적용 방법 |
+|-------|------------------|
+| **Claude Code** | 페르소나 파일 경로를 대화에서 언급 — "Read `.agents/personas/security-reviewer.md` and adopt that persona" |
+| **Codex** | `agt persona review <name> --codex` 또는 프롬프트에 파일 내용 포함 |
+| **Gemini** | `agt persona review <name> --gemini` 또는 stdin으로 전달 |
+| **Ollama** | `agt persona review <name>` (auto-detect) 또는 직접 pipe |
+| **OpenCode** | 에이전트 설정에 페르소나 파일 경로 참조 |
+| **Any Agent** | 마크다운 파일이므로 아무 에이전트든 읽기만 하면 됨 |
+
+**커스텀 페르소나 생성:**
+```bash
+agt persona create my-reviewer --ai "Senior Rust developer focused on memory safety"
+agt persona create db-expert --gemini "PostgreSQL DBA with 15yr optimization experience"
+```
 
 ## Prerequisites
 
@@ -258,6 +332,7 @@ agt/
 | git-commit-pr | SECURITY.md, WHOAMI.md | 커밋 전 보안 검증, 스타일 참조 |
 | context-manager | WHOAMI.md, STYLE.md | 프로젝트 컨텍스트 구성 |
 | background-planner | WHOAMI.md | 사용자 역량 기반 기획 |
+| background-reviewer | personas/ | 페르소나 기반 멀티 에이전트 리뷰 |
 | notion-summary | NOTION.md | Notion 업로드 설정 |
 | vault-secrets | VAULT.md | 시크릿 조회/등록 가이드 |
 | iac-deploy-prep | VAULT.md | 배포 전 credentials 조회 |
