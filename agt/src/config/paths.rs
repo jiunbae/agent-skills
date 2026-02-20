@@ -129,9 +129,24 @@ pub fn skills_in_group(source_dir: &Path, group: &str) -> Vec<String> {
     skills
 }
 
+/// Find the git repository root by walking up from cwd
+fn git_root() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 /// Skill target directories
 pub fn local_skill_target() -> PathBuf {
-    PathBuf::from(".claude/skills")
+    git_root()
+        .map(|r| r.join(".claude/skills"))
+        .unwrap_or_else(|| PathBuf::from(".claude/skills"))
 }
 
 pub fn global_skill_target() -> PathBuf {
@@ -146,7 +161,9 @@ pub fn persona_library(source_dir: &Path) -> PathBuf {
 }
 
 pub fn local_persona_target() -> PathBuf {
-    PathBuf::from(".agents/personas")
+    git_root()
+        .map(|r| r.join(".agents/personas"))
+        .unwrap_or_else(|| PathBuf::from(".agents/personas"))
 }
 
 pub fn global_persona_target() -> PathBuf {

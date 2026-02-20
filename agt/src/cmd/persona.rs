@@ -72,7 +72,8 @@ pub enum PersonaAction {
         /// Persona name
         name: String,
     },
-    /// Review code changes using a persona with an LLM (codex > claude > gemini > ollama)
+    /// Ask a persona to review code or answer a question
+    #[command(trailing_var_arg = true)]
     Review {
         /// Persona name
         name: String,
@@ -94,6 +95,9 @@ pub enum PersonaAction {
         /// Save review output to file
         #[arg(short, long)]
         output: Option<String>,
+        /// Custom prompt (skips git diff, asks the persona directly)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        prompt: Vec<String>,
     },
 }
 
@@ -123,13 +127,21 @@ pub fn execute(action: PersonaAction) -> Result<()> {
         PersonaAction::Which { name } => which(&name),
         PersonaAction::Review {
             name,
+            prompt,
             codex,
             claude,
             gemini,
             staged,
             base,
             output,
-        } => review(&name, codex, claude, gemini, staged, base, output),
+        } => {
+            let custom_prompt = if prompt.is_empty() {
+                None
+            } else {
+                Some(prompt.join(" "))
+            };
+            review(&name, custom_prompt, codex, claude, gemini, staged, base, output)
+        }
     }
 }
 
@@ -494,6 +506,7 @@ fn which(name: &str) -> Result<()> {
 
 fn review(
     name: &str,
+    custom_prompt: Option<String>,
     use_codex: bool,
     use_claude: bool,
     use_gemini: bool,
@@ -506,13 +519,6 @@ fn review(
     let persona_md = find_persona_md(&persona_path)?;
     let persona_content = fs::read_to_string(&persona_md)?;
 
-    // Get diff
-    let diff = get_diff(staged, base.as_deref())?;
-    if diff.trim().is_empty() {
-        ui::warn("No changes to review.");
-        return Ok(());
-    }
-
     // Determine LLM
     let cli = if use_codex {
         llm::LlmCli::Codex
@@ -524,17 +530,31 @@ fn review(
         llm::detect().context("No LLM CLI found. Install codex, claude, gemini, or ollama.")?
     };
 
-    ui::info(&format!("Reviewing with {} using persona '{}'...", cli, name));
+    // Build prompt: custom prompt mode vs diff review mode
+    let full_prompt = if let Some(user_prompt) = custom_prompt {
+        ui::info(&format!("Asking {} using persona '{}'...", cli, name));
+        format!(
+            "You are acting as the following persona:\n\n{}\n\n\
+             User question:\n{}",
+            persona_content, user_prompt
+        )
+    } else {
+        let diff = get_diff(staged, base.as_deref())?;
+        if diff.trim().is_empty() {
+            ui::warn("No changes to review.");
+            return Ok(());
+        }
+        ui::info(&format!("Reviewing with {} using persona '{}'...", cli, name));
+        format!(
+            "You are acting as the following persona:\n\n{}\n\n\
+             Review the following code changes and provide feedback:\n\n\
+             ```diff\n{}\n```\n\n\
+             Provide a structured review with: issues found, suggestions, and an overall assessment.",
+            persona_content, diff
+        )
+    };
 
-    let prompt = format!(
-        "You are acting as the following persona:\n\n{}\n\n\
-         Review the following code changes and provide feedback:\n\n\
-         ```diff\n{}\n```\n\n\
-         Provide a structured review with: issues found, suggestions, and an overall assessment.",
-        persona_content, diff
-    );
-
-    let result = llm::invoke(cli, &prompt)?;
+    let result = llm::invoke(cli, &full_prompt)?;
 
     if let Some(output_path) = output {
         fs::write(&output_path, &result)?;
