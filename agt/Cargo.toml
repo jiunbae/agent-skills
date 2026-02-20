@@ -1,6 +1,6 @@
 [package]
 name = "agt"
-version = "2026.2.26"
+version = "2026.2.27"
 edition = "2021"
 description = "agt — A modular toolkit for extending AI coding agents"
 license = "MIT"
