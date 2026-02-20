@@ -42,6 +42,16 @@ pub fn find_source_dir() -> Option<PathBuf> {
         }
     }
 
+    // Fallback: check common install locations
+    if let Some(home) = dirs::home_dir() {
+        for candidate in &[".agt", "agt", ".agent-skills"] {
+            let p = home.join(candidate);
+            if has_skill_groups(&p) {
+                return Some(p);
+            }
+        }
+    }
+
     None
 }
 
