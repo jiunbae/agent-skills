@@ -13,7 +13,9 @@ pub struct Frontmatter {
     #[serde(rename = "trigger-keywords")]
     pub trigger_keywords: Option<Vec<String>>,
     #[serde(rename = "allowed-tools")]
+    #[allow(dead_code)]
     pub allowed_tools: Option<String>,
+    #[allow(dead_code)]
     pub priority: Option<String>,
 }
 
