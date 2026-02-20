@@ -198,8 +198,9 @@ agt persona install -g architecture-reviewer         # 전역 설치
 agt persona create my-reviewer                       # 빈 템플릿
 agt persona create rust-expert --ai "Rust unsafe specialist"  # LLM 생성
 agt persona show security-reviewer                   # 상세 보기
-agt persona review security-reviewer                 # 코드 리뷰
+agt persona review security-reviewer                 # 코드 리뷰 (git diff)
 agt persona review security-reviewer --codex         # Codex로 리뷰
+agt persona review security-reviewer --codex "이 스택 어떻게 생각해?"  # 커스텀 프롬프트
 agt persona review security-reviewer -o review.md    # 파일 저장
 ```
 
@@ -332,13 +333,15 @@ personas/security-reviewer.md            ← 라이브러리 (번들)
 | **아무 에이전트** | `cat .agents/personas/<name>.md`로 읽어서 전달 |
 
 ```bash
-# agt CLI — 자동 감지된 LLM으로 리뷰
+# 코드 리뷰 — 자동 감지된 LLM으로 git diff 리뷰
 agt persona review security-reviewer
-
-# 특정 LLM 지정
 agt persona review security-reviewer --codex
 agt persona review security-reviewer --claude --staged
 agt persona review security-reviewer --base main -o review.md
+
+# 커스텀 프롬프트 — 페르소나에게 질문 (git diff 생략)
+agt persona review security-reviewer --codex "이 아키텍처 확장 가능할까?"
+agt persona review 안태우 --codex "Rust vs Go CLI 도구에 뭐가 나을까?"
 
 # 페르소나 내용 확인
 agt persona show security-reviewer

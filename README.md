@@ -198,8 +198,9 @@ agt persona install -g architecture-reviewer         # Install globally
 agt persona create my-reviewer                       # Empty template
 agt persona create rust-expert --ai "Rust unsafe specialist"  # AI-generated
 agt persona show security-reviewer                   # View content
-agt persona review security-reviewer                 # Code review
+agt persona review security-reviewer                 # Code review (git diff)
 agt persona review security-reviewer --codex         # Review with Codex
+agt persona review security-reviewer --codex "what do you think about this stack?"  # Custom prompt
 agt persona review security-reviewer -o review.md    # Save to file
 ```
 
@@ -332,13 +333,15 @@ Personas are just markdown files at a known location. Any agent reads the file a
 | **Any agent** | `cat .agents/personas/<name>.md` and pass to the agent |
 
 ```bash
-# agt CLI — review with auto-detected LLM
+# Code review — auto-detected LLM reviews git diff
 agt persona review security-reviewer
-
-# Force specific LLM
 agt persona review security-reviewer --codex
 agt persona review security-reviewer --claude --staged
 agt persona review security-reviewer --base main -o review.md
+
+# Custom prompt — ask the persona anything (skips git diff)
+agt persona review security-reviewer --codex "is this architecture scalable?"
+agt persona review 안태우 --codex "Rust vs Go for CLI tools?"
 
 # Show persona content
 agt persona show security-reviewer
