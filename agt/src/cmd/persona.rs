@@ -278,31 +278,65 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
 }
 
 fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
+    let local_dir = config::local_persona_target();
+    let global_dir = config::global_persona_target();
+    let local_installed = installed_persona_names(&local_dir);
+    let global_installed = installed_persona_names(&global_dir);
+
     let mut entries: Vec<serde_json::Value> = Vec::new();
 
-    if installed || local || (!global) {
-        let local_dir = config::local_persona_target();
-        if local_dir.is_dir() {
-            list_personas_in_dir(&local_dir, "local", &mut entries)?;
-        }
-    }
-
-    if installed || global || (!local) {
-        let global_dir = config::global_persona_target();
-        if global_dir.is_dir() {
-            list_personas_in_dir(&global_dir, "global", &mut entries)?;
-        }
-    }
-
-    // Show library personas
-    if !installed && !local && !global {
-        if let Some(source_dir) = config::find_source_dir() {
-            let lib_dir = config::persona_library(&source_dir);
-            if lib_dir.is_dir() {
-                list_personas_in_dir(&lib_dir, "library", &mut entries)?;
+    // If only showing installed
+    if installed || local || global {
+        if installed || local {
+            if local_dir.is_dir() {
+                list_personas_in_dir(&local_dir, "local", &mut entries)?;
             }
         }
+        if installed || global {
+            if global_dir.is_dir() {
+                list_personas_in_dir(&global_dir, "global", &mut entries)?;
+            }
+        }
+        if json {
+            println!("{}", serde_json::to_string_pretty(&entries)?);
+            return Ok(());
+        }
+        if entries.is_empty() {
+            ui::info("No installed personas found.");
+            return Ok(());
+        }
+        for entry in &entries {
+            let name = entry["name"].as_str().unwrap_or("");
+            let scope = entry["scope"].as_str().unwrap_or("");
+            let role = entry["role"].as_str().unwrap_or("");
+            println!("  {} {:28} {}", scope, name, role);
+        }
+        return Ok(());
     }
+
+    // Default: show all library personas with install status
+    // Collect library entries
+    if let Some(source_dir) = config::find_source_dir() {
+        let lib_dir = config::persona_library(&source_dir);
+        if lib_dir.is_dir() {
+            list_personas_in_dir(&lib_dir, "library", &mut entries)?;
+        }
+    }
+
+    // Also add installed-only personas not in library
+    if local_dir.is_dir() {
+        list_personas_in_dir(&local_dir, "local", &mut entries)?;
+    }
+    if global_dir.is_dir() {
+        list_personas_in_dir(&global_dir, "global", &mut entries)?;
+    }
+
+    // Deduplicate by name (library entries first)
+    let mut seen = std::collections::HashSet::new();
+    entries.retain(|e| {
+        let name = e["name"].as_str().unwrap_or("").to_string();
+        seen.insert(name)
+    });
 
     if json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
@@ -314,18 +348,66 @@ fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    for entry in &entries {
-        let name = entry["name"].as_str().unwrap_or("");
-        let scope = entry["scope"].as_str().unwrap_or("");
-        let role = entry["role"].as_str().unwrap_or("");
-        let domain = entry["domain"].as_str().unwrap_or("");
+    // Group by type
+    use colored::Colorize;
+    use std::collections::BTreeMap;
 
-        if role.is_empty() {
-            println!("{:30} [{}]", name, scope);
-        } else {
-            println!("{:30} [{}] {} ({})", name, scope, role, domain);
+    let mut by_type: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
+    for entry in &entries {
+        let kind = entry["type"].as_str().unwrap_or("other").to_string();
+        by_type.entry(kind).or_default().push(entry);
+    }
+
+    let total = entries.len();
+    let total_installed: usize = entries
+        .iter()
+        .filter(|e| {
+            let name = e["name"].as_str().unwrap_or("");
+            local_installed.contains(&name.to_string())
+                || global_installed.contains(&name.to_string())
+        })
+        .count();
+
+    println!(
+        "{}  ({}=local {}=global {}=not installed)",
+        "Available personas".cyan(),
+        "L".green(),
+        "G".blue(),
+        "○".dimmed()
+    );
+    println!("{}", "=".repeat(40));
+
+    for (kind, personas) in &by_type {
+        println!("\n{}", format!("{}/", kind).yellow().bold());
+
+        for entry in personas {
+            let name = entry["name"].as_str().unwrap_or("");
+            let role = entry["role"].as_str().unwrap_or("");
+
+            let status = if local_installed.contains(&name.to_string()) {
+                format!("{}", "L".green())
+            } else if global_installed.contains(&name.to_string()) {
+                format!("{}", "G".blue())
+            } else {
+                format!("{}", "○".dimmed())
+            };
+
+            let role_display = if role.len() > 40 {
+                format!("{}...", &role[..37])
+            } else {
+                role.to_string()
+            };
+
+            println!("  {} {:28} {}", status, name, role_display);
         }
     }
+
+    println!(
+        "\n{}: total {} / installed {}",
+        "Summary".cyan(),
+        total,
+        total_installed
+    );
 
     Ok(())
 }
@@ -469,35 +551,56 @@ fn review(
 // --- Helpers ---
 
 fn find_persona(name: &str) -> Result<PathBuf> {
-    // Check local
-    let local = config::local_persona_target().join(name);
-    if local.exists() {
-        return Ok(local);
+    // Check local (dir or .md)
+    let local_dir = config::local_persona_target().join(name);
+    let local_md = config::local_persona_target().join(format!("{}.md", name));
+    if local_dir.exists() {
+        return Ok(local_dir);
+    }
+    if local_md.exists() {
+        return Ok(local_md);
     }
 
-    // Check global
-    let global = config::global_persona_target().join(name);
-    if global.exists() {
-        return Ok(global);
+    // Check global (dir or .md)
+    let global_dir = config::global_persona_target().join(name);
+    let global_md = config::global_persona_target().join(format!("{}.md", name));
+    if global_dir.exists() {
+        return Ok(global_dir);
+    }
+    if global_md.exists() {
+        return Ok(global_md);
     }
 
-    // Check library
+    // Check library (dir or .md)
     if let Some(source_dir) = config::find_source_dir() {
-        let lib = config::persona_library(&source_dir).join(name);
-        if lib.exists() {
-            return Ok(lib);
+        let lib = config::persona_library(&source_dir);
+        let lib_dir = lib.join(name);
+        let lib_md = lib.join(format!("{}.md", name));
+        if lib_dir.exists() {
+            return Ok(lib_dir);
+        }
+        if lib_md.exists() {
+            return Ok(lib_md);
         }
     }
 
     bail!("Persona '{}' not found", name);
 }
 
+/// Find the persona markdown content. Handles both:
+/// - Directory with PERSONA.md inside
+/// - Single .md file
 fn find_persona_md(path: &Path) -> Result<PathBuf> {
+    // If path is already a .md file
+    if path.is_file() && path.extension().is_some_and(|e| e == "md") {
+        return Ok(path.to_path_buf());
+    }
+
+    // Directory: check PERSONA.md first, then any .md
     let persona_md = path.join("PERSONA.md");
     if persona_md.exists() {
         return Ok(persona_md);
     }
-    // Check for any .md file
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             if entry.path().extension().is_some_and(|e| e == "md") {
@@ -511,6 +614,22 @@ fn find_persona_md(path: &Path) -> Result<PathBuf> {
     );
 }
 
+fn installed_persona_names(dir: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            // Strip .md extension for matching
+            let clean = name.strip_suffix(".md").unwrap_or(&name).to_string();
+            names.push(clean);
+        }
+    }
+    names
+}
+
 fn list_personas_in_dir(
     dir: &Path,
     scope: &str,
@@ -519,22 +638,35 @@ fn list_personas_in_dir(
     if let Ok(read) = fs::read_dir(dir) {
         for entry in read.flatten() {
             let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-            if !path.is_dir() {
+            let raw_name = entry.file_name().to_string_lossy().to_string();
+            if raw_name.starts_with('.') || raw_name == "README.md" {
                 continue;
             }
 
-            let (role, domain) = read_persona_info(&path);
-            let is_remote = path.join(".remote-source").exists();
+            // Handle both directories and .md files
+            let (name, role, domain, kind) = if path.is_dir() {
+                let (role, domain, kind) = read_persona_info(&path);
+                (raw_name, role, domain, kind)
+            } else if path.extension().is_some_and(|e| e == "md") {
+                let persona_name = raw_name.strip_suffix(".md").unwrap_or(&raw_name).to_string();
+                let (role, domain, kind) = read_persona_info_from_file(&path);
+                (persona_name, role, domain, kind)
+            } else {
+                continue;
+            };
+
+            let is_remote = if path.is_dir() {
+                path.join(".remote-source").exists()
+            } else {
+                false
+            };
 
             entries.push(serde_json::json!({
                 "name": name,
                 "scope": scope,
                 "role": role,
                 "domain": domain,
+                "type": kind,
                 "remote": is_remote,
             }));
         }
@@ -542,14 +674,36 @@ fn list_personas_in_dir(
     Ok(())
 }
 
-fn read_persona_info(path: &Path) -> (String, String) {
+fn read_persona_info(path: &Path) -> (String, String, String) {
     let persona_md = path.join("PERSONA.md");
     if let Ok(content) = fs::read_to_string(persona_md) {
-        let role = frontmatter::get_field(&content, "role").unwrap_or_default();
-        let domain = frontmatter::get_field(&content, "domain").unwrap_or_default();
-        return (role, domain);
+        return extract_persona_fields(&content);
     }
-    (String::new(), String::new())
+    // Try any .md in dir
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if entry.path().extension().is_some_and(|e| e == "md") {
+                if let Ok(content) = fs::read_to_string(entry.path()) {
+                    return extract_persona_fields(&content);
+                }
+            }
+        }
+    }
+    (String::new(), String::new(), String::new())
+}
+
+fn read_persona_info_from_file(path: &Path) -> (String, String, String) {
+    if let Ok(content) = fs::read_to_string(path) {
+        return extract_persona_fields(&content);
+    }
+    (String::new(), String::new(), String::new())
+}
+
+fn extract_persona_fields(content: &str) -> (String, String, String) {
+    let role = frontmatter::get_field(content, "role").unwrap_or_default();
+    let domain = frontmatter::get_field(content, "domain").unwrap_or_default();
+    let kind = frontmatter::get_field(content, "type").unwrap_or_default();
+    (role, domain, kind)
 }
 
 fn get_diff(staged: bool, base: Option<&str>) -> Result<String> {

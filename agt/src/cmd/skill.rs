@@ -205,56 +205,126 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
 }
 
 fn list(installed: bool, local: bool, global: bool, groups: bool, json: bool) -> Result<()> {
+    // Build installed skill sets for status lookup
+    let local_dir = config::local_skill_target();
+    let global_dir = config::global_skill_target();
+    let local_installed = installed_skill_names(&local_dir);
+    let global_installed = installed_skill_names(&global_dir);
+
     let mut entries: Vec<serde_json::Value> = Vec::new();
 
-    // Show installed skills
-    if installed || local || (!groups && !global) {
-        let local_dir = config::local_skill_target();
-        if local_dir.is_dir() {
+    // If only showing installed
+    if installed || local || global {
+        if installed || local {
             list_skills_in_dir(&local_dir, "local", &mut entries)?;
         }
-    }
-
-    if installed || global || (!groups && !local) {
-        let global_dir = config::global_skill_target();
-        if global_dir.is_dir() {
+        if installed || global {
             list_skills_in_dir(&global_dir, "global", &mut entries)?;
         }
+
+        if json {
+            println!("{}", serde_json::to_string_pretty(&entries)?);
+            return Ok(());
+        }
+        if entries.is_empty() {
+            ui::info("No installed skills found.");
+            return Ok(());
+        }
+        print_flat(&entries);
+        return Ok(());
     }
 
-    // Show source library skills
-    if groups || (!installed && !local && !global) {
-        if let Some(source_dir) = config::find_source_dir() {
-            let skill_groups = config::skill_groups(&source_dir);
+    // Default: grouped view showing all skills with install status
+    if let Some(source_dir) = config::find_source_dir() {
+        let skill_groups = config::skill_groups(&source_dir);
+        let mut total = 0usize;
+        let mut total_installed = 0usize;
+
+        if json {
+            // JSON mode: collect all entries
             for group in &skill_groups {
                 let skills = config::skills_in_group(&source_dir, group);
                 for skill_name in &skills {
                     let skill_path = source_dir.join(group).join(skill_name);
                     let desc = read_skill_description(&skill_path);
+                    let status = if local_installed.contains(&skill_name.to_string()) {
+                        "local"
+                    } else if global_installed.contains(&skill_name.to_string()) {
+                        "global"
+                    } else {
+                        "available"
+                    };
                     entries.push(serde_json::json!({
                         "name": skill_name,
                         "group": group,
-                        "scope": "library",
+                        "status": status,
                         "description": desc,
                     }));
                 }
             }
+            println!("{}", serde_json::to_string_pretty(&entries)?);
+            return Ok(());
         }
-    }
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&entries)?);
-        return Ok(());
-    }
+        // Grouped display matching agent-skill format
+        use colored::Colorize;
+        println!(
+            "{}  ({}=local {}=global {}=not installed)",
+            "Available skills".cyan(),
+            "L".green(),
+            "G".blue(),
+            "○".dimmed()
+        );
+        println!("{}", "=".repeat(40));
 
-    if entries.is_empty() {
-        ui::info("No skills found.");
-        return Ok(());
-    }
+        for group in &skill_groups {
+            let skills = config::skills_in_group(&source_dir, group);
+            let group_installed: usize = skills
+                .iter()
+                .filter(|s| local_installed.contains(*s) || global_installed.contains(*s))
+                .count();
 
-    if groups {
-        print_grouped(&entries);
+            total += skills.len();
+            total_installed += group_installed;
+
+            println!(
+                "\n{} ({}/{})",
+                format!("{}/", group).yellow().bold(),
+                group_installed,
+                skills.len()
+            );
+
+            for skill_name in &skills {
+                let status = if local_installed.contains(skill_name) {
+                    format!("{}", "L".green())
+                } else if global_installed.contains(skill_name) {
+                    format!("{}", "G".blue())
+                } else {
+                    format!("{}", "○".dimmed())
+                };
+                println!("  {} {:28}", status, skill_name);
+            }
+        }
+
+        println!(
+            "\n{}: total {} / installed {}",
+            "Summary".cyan(),
+            total,
+            total_installed
+        );
     } else {
+        // No source dir — show installed only
+        list_skills_in_dir(&local_dir, "local", &mut entries)?;
+        list_skills_in_dir(&global_dir, "global", &mut entries)?;
+
+        if json {
+            println!("{}", serde_json::to_string_pretty(&entries)?);
+            return Ok(());
+        }
+        if entries.is_empty() {
+            ui::info("No skills found.");
+            return Ok(());
+        }
         print_flat(&entries);
     }
 
@@ -310,6 +380,19 @@ fn find_skill_in_source(source_dir: &Path, name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn installed_skill_names(dir: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with('.') {
+                names.push(name);
+            }
+        }
+    }
+    names
 }
 
 fn list_skills_in_dir(
