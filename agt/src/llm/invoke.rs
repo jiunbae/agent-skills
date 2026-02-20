@@ -1,47 +1,57 @@
 use super::LlmCli;
 use anyhow::{bail, Context, Result};
-use std::fs;
-use std::process::Command;
-use tempfile::NamedTempFile;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
-pub struct InvokeOpts {
-    pub output_file: Option<String>,
-}
-
-/// Invoke an LLM CLI with a prompt and return the output
-pub fn invoke(cli: LlmCli, prompt: &str, _opts: &InvokeOpts) -> Result<String> {
-    // Write prompt to temp file for large prompts
-    let tmp = NamedTempFile::new().context("Failed to create temp file")?;
-    fs::write(tmp.path(), prompt).context("Failed to write prompt")?;
-
-    let prompt_content = fs::read_to_string(tmp.path())?;
-
-    let output = match cli {
+/// Invoke an LLM CLI with a prompt and return the output.
+/// Uses stdin to pass prompts to avoid OS ARG_MAX limits.
+pub fn invoke(cli: LlmCli, prompt: &str) -> Result<String> {
+    let mut child = match cli {
         LlmCli::Codex => Command::new("codex")
-            .args(["exec", "--full-auto", &prompt_content])
-            .output()
-            .context("Failed to run codex")?,
+            .args(["exec", "--full-auto", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn codex")?,
 
         LlmCli::Claude => Command::new("claude")
-            .args(["-p", &prompt_content, "--output-format", "text"])
-            .output()
-            .context("Failed to run claude")?,
+            .args(["-p", "-", "--output-format", "text"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn claude")?,
 
         LlmCli::Gemini => Command::new("gemini")
-            .args(["-p", &prompt_content, "-o", "text"])
-            .output()
-            .context("Failed to run gemini")?,
+            .args(["-p", "-", "-o", "text"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn gemini")?,
 
         LlmCli::Ollama => Command::new("ollama")
-            .args(["run", "llama3.2", &prompt_content])
-            .output()
-            .context("Failed to run ollama")?,
+            .args(["run", "llama3.2"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn ollama")?,
     };
+
+    // Write prompt via stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes())?;
+    }
+
+    let output = child.wait_with_output().context(format!("Failed to run {}", cli))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("{} failed: {}", cli, stderr);
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(String::from_utf8(output.stdout)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }

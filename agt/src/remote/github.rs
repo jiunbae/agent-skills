@@ -52,6 +52,8 @@ pub fn parse_spec(spec: &str) -> Result<RemoteSpec> {
     })
 }
 
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+
 /// Download a single file from raw.githubusercontent.com
 pub fn fetch_file(spec: &RemoteSpec) -> Result<Vec<u8>> {
     let url = format!(
@@ -66,6 +68,7 @@ pub fn fetch_file(spec: &RemoteSpec) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     response
         .into_reader()
+        .take(MAX_FILE_SIZE)
         .read_to_end(&mut body)
         .context("Failed to read response")?;
 

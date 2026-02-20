@@ -1,6 +1,7 @@
-use crate::{config, frontmatter, llm, remote, ui};
+use crate::{config, frontmatter, llm, remote, ui, util};
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
+use colored::Colorize;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -143,6 +144,7 @@ fn install(
     }
 
     let name = name.context("Persona name required (or use --from for remote install)")?;
+    util::validate_name(&name)?;
 
     let source_dir = config::find_source_dir()
         .context("Cannot find agent-skills source directory")?;
@@ -163,20 +165,7 @@ fn install(
     fs::create_dir_all(&target_dir)?;
     let link_path = target_dir.join(&name);
 
-    if link_path.exists() || link_path.is_symlink() {
-        if force {
-            if link_path.is_dir() && !link_path.is_symlink() {
-                fs::remove_dir_all(&link_path)?;
-            } else {
-                fs::remove_file(&link_path).or_else(|_| fs::remove_dir_all(&link_path))?;
-            }
-        } else {
-            bail!(
-                "Persona '{}' already installed. Use --force to overwrite.",
-                name
-            );
-        }
-    }
+    util::ensure_target_clear(&link_path, force, &name)?;
 
     symlink(&persona_path, &link_path)?;
 
@@ -213,25 +202,12 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
     fs::create_dir_all(&target_dir)?;
     let dest = target_dir.join(&persona_name);
 
-    if dest.exists() {
-        if force {
-            if dest.is_dir() {
-                fs::remove_dir_all(&dest)?;
-            } else {
-                fs::remove_file(&dest)?;
-            }
-        } else {
-            bail!(
-                "Persona '{}' already installed. Use --force to overwrite.",
-                persona_name
-            );
-        }
-    }
+    util::ensure_target_clear(&dest, force, &persona_name)?;
 
     // Try fetching as a directory (tarball)
     match remote::fetch_dir(&spec) {
         Ok((_tmp_dir, source_path)) => {
-            copy_dir_recursive(&source_path, &dest)?;
+            util::copy_dir_recursive(&source_path, &dest)?;
             remote::write_metadata(&dest, &spec)?;
         }
         Err(_) => {
@@ -254,6 +230,7 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
 }
 
 fn uninstall(name: &str, global: bool) -> Result<()> {
+    util::validate_name(name)?;
     // Try to find the persona: check dir, .md file, in both local and global
     let (path, scope) = if global {
         (find_installed_persona(name, &config::global_persona_target()), "global")
@@ -370,7 +347,6 @@ fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
     }
 
     // Group by type
-    use colored::Colorize;
     use std::collections::BTreeMap;
 
     let mut by_type: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
@@ -440,6 +416,7 @@ fn create(
     claude: Option<String>,
     gemini: Option<String>,
 ) -> Result<()> {
+    util::validate_name(name)?;
     let target_dir = config::local_persona_target();
     fs::create_dir_all(&target_dir)?;
 
@@ -556,8 +533,7 @@ fn review(
         persona_content, diff
     );
 
-    let opts = llm::InvokeOpts { output_file: None };
-    let result = llm::invoke(cli, &prompt, &opts)?;
+    let result = llm::invoke(cli, &prompt)?;
 
     if let Some(output_path) = output {
         fs::write(&output_path, &result)?;
@@ -734,6 +710,10 @@ fn get_diff(staged: bool, base: Option<&str>) -> Result<String> {
             .output()
             .context("Failed to run git diff")?
     } else if let Some(base_branch) = base {
+        // Validate base branch to prevent argument injection
+        if base_branch.starts_with('-') {
+            bail!("Invalid base branch name: {}", base_branch);
+        }
         std::process::Command::new("git")
             .args(["diff", &format!("{}...HEAD", base_branch)])
             .output()
@@ -745,7 +725,13 @@ fn get_diff(staged: bool, base: Option<&str>) -> Result<String> {
             .context("Failed to run git diff")?
     };
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git diff failed: {}", stderr);
+    }
+
+    Ok(String::from_utf8(output.stdout)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
 fn generate_persona(
@@ -770,8 +756,7 @@ fn generate_persona(
         name, desc, name
     );
 
-    let opts = llm::InvokeOpts { output_file: None };
-    llm::invoke(cli, &prompt, &opts)
+    llm::invoke(cli, &prompt)
 }
 
 fn default_persona_template(name: &str) -> String {
@@ -783,17 +768,3 @@ fn default_persona_template(name: &str) -> String {
     )
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)?.flatten() {
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
-}

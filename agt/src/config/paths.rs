@@ -18,23 +18,10 @@ const EXCLUDE_DIRS: &[&str] = &[
     "target",
 ];
 
-/// Find agt source directory by following symlinks from the executable
+/// Find agt source directory.
+/// Priority: env var (cheapest) > walk up from exe > home dir fallbacks
 pub fn find_source_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let resolved = fs::canonicalize(&exe).unwrap_or(exe);
-
-    // Walk up looking for a directory that contains skill groups
-    let mut dir = resolved.parent()?;
-    for _ in 0..5 {
-        // Check if this looks like the agent-skills root
-        // (has directories containing SKILL.md files)
-        if has_skill_groups(dir) {
-            return Some(dir.to_path_buf());
-        }
-        dir = dir.parent()?;
-    }
-
-    // Fallback: check if AGT_DIR or AGENT_SKILLS_DIR env is set
+    // 1. Cheapest check: env var
     if let Ok(env_dir) = std::env::var("AGT_DIR").or_else(|_| std::env::var("AGENT_SKILLS_DIR")) {
         let p = PathBuf::from(env_dir);
         if p.is_dir() {
@@ -42,7 +29,24 @@ pub fn find_source_dir() -> Option<PathBuf> {
         }
     }
 
-    // Fallback: check common install locations
+    // 2. Walk up from executable following symlinks
+    if let Some(exe) = std::env::current_exe().ok() {
+        let resolved = fs::canonicalize(&exe).unwrap_or(exe);
+        let mut dir = resolved.parent();
+        for _ in 0..5 {
+            match dir {
+                Some(d) => {
+                    if has_skill_groups(d) {
+                        return Some(d.to_path_buf());
+                    }
+                    dir = d.parent();
+                }
+                None => break,
+            }
+        }
+    }
+
+    // 3. Fallback: check common install locations
     if let Some(home) = dirs::home_dir() {
         for candidate in &[".agt", "agt", ".agent-skills"] {
             let p = home.join(candidate);

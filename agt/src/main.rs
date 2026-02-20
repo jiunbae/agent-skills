@@ -4,6 +4,7 @@ mod frontmatter;
 mod llm;
 mod remote;
 mod ui;
+mod util;
 
 use clap::{Parser, Subcommand};
 

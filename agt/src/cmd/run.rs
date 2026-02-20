@@ -1,13 +1,12 @@
 use crate::{config, frontmatter, llm, ui};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::Path;
 
 /// Execute a prompt, optionally using a specific skill
 pub fn execute(prompt: &str, skill: Option<&str>) -> Result<()> {
     if prompt.trim().is_empty() {
-        ui::error("No prompt provided.");
-        std::process::exit(1);
+        bail!("No prompt provided.");
     }
 
     // Find the skill to use
@@ -34,8 +33,8 @@ pub fn execute(prompt: &str, skill: Option<&str>) -> Result<()> {
 
     ui::info(&format!("Running with {}...", cli));
 
-    let opts = llm::InvokeOpts { output_file: None };
-    let result = llm::invoke(cli, &full_prompt, &opts)?;
+    let result = llm::invoke(cli, &full_prompt)?;
+
 
     println!("{}", result);
     Ok(())
@@ -54,7 +53,7 @@ fn load_skill(name: &str) -> Result<String> {
         find_skill_in_source(&source_dir, name)
             .context(format!("Skill '{}' not found", name))?
     } else {
-        anyhow::bail!("Skill '{}' not found", name);
+        bail!("Skill '{}' not found", name);
     };
 
     let skill_md = skill_dir.join("SKILL.md");
@@ -105,8 +104,15 @@ fn match_skills_in_dir(dir: &Path, prompt_lower: &str) -> Option<String> {
             continue;
         }
 
-        let content = fs::read_to_string(&skill_md).ok()?;
-        let (fm, _) = frontmatter::parse(&content).ok()?;
+        // Use continue instead of .ok()? to avoid aborting the entire scan
+        let content = match fs::read_to_string(&skill_md) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let (fm, _) = match frontmatter::parse(&content) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
 
         // Score based on trigger keywords
         let mut score = 0u32;

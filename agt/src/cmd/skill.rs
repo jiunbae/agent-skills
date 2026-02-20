@@ -1,6 +1,7 @@
-use crate::{config, frontmatter, remote, ui};
+use crate::{config, frontmatter, remote, ui, util};
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
+use colored::Colorize;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -40,9 +41,6 @@ pub enum SkillAction {
         /// Show only global skills
         #[arg(long)]
         global: bool,
-        /// Group by directory
-        #[arg(long)]
-        groups: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -69,9 +67,8 @@ pub fn execute(action: SkillAction) -> Result<()> {
             installed,
             local,
             global,
-            groups,
             json,
-        } => list(installed, local, global, groups, json),
+        } => list(installed, local, global, json),
         SkillAction::Init => init(),
         SkillAction::Which { name } => which(&name),
     }
@@ -88,6 +85,7 @@ fn install(
     }
 
     let name = name.context("Skill name required (or use --from for remote install)")?;
+    util::validate_name(&name)?;
 
     let source_dir = config::find_source_dir()
         .context("Cannot find agent-skills source directory")?;
@@ -105,21 +103,7 @@ fn install(
     fs::create_dir_all(&target_dir)?;
     let link_path = target_dir.join(&name);
 
-    if link_path.exists() || link_path.is_symlink() {
-        if force {
-            if link_path.is_dir() && !link_path.is_symlink() {
-                fs::remove_dir_all(&link_path)?;
-            } else {
-                fs::remove_file(&link_path).or_else(|_| fs::remove_dir_all(&link_path))?;
-            }
-        } else {
-            bail!(
-                "Skill '{}' already installed at {}. Use --force to overwrite.",
-                name,
-                link_path.display()
-            );
-        }
-    }
+    util::ensure_target_clear(&link_path, force, &name)?;
 
     symlink(&skill_path, &link_path).context(format!(
         "Failed to create symlink: {} -> {}",
@@ -145,9 +129,10 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
 
     let skill_name = source_path
         .file_name()
-        .unwrap()
+        .context("Invalid remote path")?
         .to_string_lossy()
         .to_string();
+    util::validate_name(&skill_name)?;
 
     let target_dir = if global {
         config::global_skill_target()
@@ -158,18 +143,9 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
     fs::create_dir_all(&target_dir)?;
     let dest = target_dir.join(&skill_name);
 
-    if dest.exists() {
-        if force {
-            fs::remove_dir_all(&dest)?;
-        } else {
-            bail!(
-                "Skill '{}' already installed. Use --force to overwrite.",
-                skill_name
-            );
-        }
-    }
+    util::ensure_target_clear(&dest, force, &skill_name)?;
 
-    copy_dir_recursive(&source_path, &dest)?;
+    util::copy_dir_recursive(&source_path, &dest)?;
     remote::write_metadata(&dest, &spec)?;
 
     let scope = if global { "global" } else { "local" };
@@ -181,6 +157,8 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
 }
 
 fn uninstall(name: &str, global: bool) -> Result<()> {
+    util::validate_name(name)?;
+
     let target_dir = if global {
         config::global_skill_target()
     } else {
@@ -204,7 +182,7 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     Ok(())
 }
 
-fn list(installed: bool, local: bool, global: bool, groups: bool, json: bool) -> Result<()> {
+fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
     // Build installed skill sets for status lookup
     let local_dir = config::local_skill_target();
     let global_dir = config::global_skill_target();
@@ -267,7 +245,6 @@ fn list(installed: bool, local: bool, global: bool, groups: bool, json: bool) ->
         }
 
         // Grouped display matching agent-skill format
-        use colored::Colorize;
         println!(
             "{}  ({}=local {}=global {}=not installed)",
             "Available skills".cyan(),
@@ -434,35 +411,6 @@ fn read_skill_description(path: &Path) -> String {
     String::new()
 }
 
-fn print_grouped(entries: &[serde_json::Value]) {
-    let mut current_group = String::new();
-    for entry in entries {
-        let group = entry["group"].as_str().unwrap_or("");
-        let scope = entry["scope"].as_str().unwrap_or("");
-        let header = if !group.is_empty() {
-            group.to_string()
-        } else {
-            format!("[{}]", scope)
-        };
-
-        if header != current_group {
-            if !current_group.is_empty() {
-                eprintln!();
-            }
-            eprintln!("{}:", header);
-            current_group = header;
-        }
-
-        let name = entry["name"].as_str().unwrap_or("");
-        let desc = entry["description"].as_str().unwrap_or("");
-        if desc.is_empty() {
-            println!("  {}", name);
-        } else {
-            println!("  {:30} {}", name, desc);
-        }
-    }
-}
-
 fn print_flat(entries: &[serde_json::Value]) {
     for entry in entries {
         let name = entry["name"].as_str().unwrap_or("");
@@ -475,19 +423,4 @@ fn print_flat(entries: &[serde_json::Value]) {
             println!("{:30} [{}] {}", name, scope, desc);
         }
     }
-}
-
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)?.flatten() {
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }

@@ -1,5 +1,3 @@
-use std::process::Command;
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LlmCli {
     Codex,
@@ -19,23 +17,13 @@ impl std::fmt::Display for LlmCli {
     }
 }
 
-impl LlmCli {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "codex" => Some(LlmCli::Codex),
-            "claude" => Some(LlmCli::Claude),
-            "gemini" => Some(LlmCli::Gemini),
-            "ollama" => Some(LlmCli::Ollama),
-            _ => None,
-        }
-    }
-}
-
+/// Check if a command exists by scanning PATH directories (no subprocess spawn)
 fn command_exists(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .any(|dir| dir.join(cmd).is_file())
+        })
         .unwrap_or(false)
 }
 
