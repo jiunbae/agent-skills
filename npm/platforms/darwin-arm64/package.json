@@ -1,6 +1,6 @@
 {
   "name": "@open330/agt-darwin-arm64",
-  "version": "2026.2.21",
+  "version": "2026.2.22",
   "description": "agt binary for macOS Apple Silicon (arm64)",
   "os": ["darwin"],
   "cpu": ["arm64"],
