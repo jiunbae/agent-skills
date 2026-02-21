@@ -1,19 +1,18 @@
 <p align="center">
   <br>
-  <img src="assets/banner.png" alt="agt — AI 코딩 에이전트를 확장하는 모듈형 툴킷" width="720">
+  <img src="assets/banner.png" alt="agent-skills — AI 코딩 에이전트를 위한 스킬, 페르소나, 훅" width="720">
   <br><br>
-  <a href="https://github.com/open330/agt/stargazers"><img src="https://img.shields.io/github/stars/open330/agt?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e" alt="Stars"></a>
-  <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e" alt="Release"></a>
+  <a href="https://github.com/jiunbae/agent-skills/stargazers"><img src="https://img.shields.io/github/stars/jiunbae/agent-skills?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e" alt="Stars"></a>
+  <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#라이선스"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
   <img src="https://img.shields.io/badge/skills-33-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
-  <img src="https://img.shields.io/badge/personas-8-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
+  <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
-  <a href="#빠른-시작">빠른 시작</a> •
-  <a href="#기능">기능</a> •
-  <a href="#설치">설치</a> •
   <a href="#스킬-카탈로그">스킬</a> •
   <a href="#페르소나">페르소나</a> •
+  <a href="#훅">훅</a> •
+  <a href="#설치">설치</a> •
   <a href="#기여하기">기여하기</a>
   <br>
   <b><a href="README.md">English</a></b>
@@ -21,144 +20,74 @@
 
 ---
 
+## 이 레포는?
+
+**Claude Code**, **Codex CLI**, **Gemini CLI** 등 AI 코딩 에이전트를 위한 **스킬**, **페르소나**, **훅** 모음입니다. 각 스킬은 에이전트에게 도메인 전문 능력을 부여하는 독립형 마크다운 모듈입니다.
+
+> **CLI 도구:** **[agt](https://github.com/open330/agt)**로 스킬을 설치/관리하세요 — `npm install -g @open330/agt`
+
+---
+
 ## 빠른 시작
 
 ```bash
-# npm으로 설치
+# ~/.agent-skills에 클론 (agt가 자동으로 발견)
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+
+# agt CLI 설치
 npm install -g @open330/agt
 
-# 또는 원라인 설치
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
+# 사용 가능한 스킬 확인
+agt skill list
 
-# 스킬 설치
+# 프로젝트에 스킬 설치
 agt skill install kubernetes-skill
 
-# 페르소나 코드 리뷰
-agt persona review security-reviewer
-
-# 스킬 자동 매칭 실행
-agt run "보안 검사해줘"
+# 또는 install.sh 직접 사용
+cd ~/.agent-skills && ./install.sh --core
 ```
-
----
-
-## agt란?
-
-**agt**는 **Claude Code**, **Codex CLI**, **Gemini CLI** 등 AI 코딩 에이전트에 도메인별 스킬, 전문가 페르소나, 자동화 훅을 추가하는 모듈형 툴킷입니다.
-
-```
-┌──────────────────────────────────────────────┐
-│                    agt                        │
-├──────────┬──────────┬──────────┬─────────────┤
-│ 🛠 스킬   │ 🎭 페르소나 │ 🪝 훅    │ 📁 컨텍스트 │
-│  33개     │  8명       │  2개    │  9개 설정   │
-└──────────┴──────────┴──────────┴─────────────┘
-       ↕            ↕           ↕
-  Claude Code   Codex CLI   Gemini CLI
-```
-
----
-
-## 기능
-
-| | 기능 | 설명 |
-|---|---|---|
-| 🛠 | **스킬** | 8개 카테고리, 33개 드롭인 스킬 — 보안, 개발, ML, 연동 등 |
-| 🎭 | **페르소나** | 코드 리뷰를 위한 8명의 전문가 — 보안, 아키텍처, 성능, DBA, 프론트엔드, DevOps |
-| 🪝 | **훅** | 이벤트 기반 자동화 — 영어 코칭, 프롬프트 로깅 |
-| 📁 | **정적 컨텍스트** | 글로벌 설정 파일 — 사용자 프로필, 보안 규칙, 서비스 레지스트리 |
-| 🤖 | **멀티 에이전트** | Claude, Codex, Gemini, Ollama 병렬 실행 |
-| ⚡ | **통합 CLI** | 하나의 명령어: `agt skill`, `agt persona`, `agt run` |
-| 🪟 | **크로스 플랫폼** | macOS, Linux, Windows (PowerShell) |
-| 🔌 | **Codex 지원** | AGENTS.md + 스킬 심링크로 Codex CLI 연동 |
 
 ---
 
 ## 설치
 
-### npm (권장)
+### agt CLI로 설치 (권장)
 
 ```bash
 npm install -g @open330/agt
-agt version
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+agt skill install -g git-commit-pr     # 스킬 전역 설치
+agt persona install -g --all           # 모든 페르소나 전역 설치
 ```
 
-**macOS** (arm64, x64) 및 **Linux** (x64, arm64) 사전 빌드 바이너리 포함. Rust 툴체인 불필요.
-
-| 패키지 | 플랫폼 |
-|---------|----------|
-| `@open330/agt` | 메인 패키지 (플랫폼 자동 선택) |
-| `@open330/agt-darwin-arm64` | macOS Apple Silicon |
-| `@open330/agt-darwin-x64` | macOS Intel |
-| `@open330/agt-linux-x64` | Linux x64 |
-| `@open330/agt-linux-arm64` | Linux arm64 |
-
-### 원격 설치
+### install.sh로 설치
 
 ```bash
-# 권장: Core 스킬 + CLI 도구
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+cd ~/.agent-skills
 
-# 전체 스킬
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --all --cli --static
-
-# 특정 버전
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --version v2026.01.15
-
-# 제거
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --uninstall
+./install.sh --core                    # Core 스킬만
+./install.sh --core --hooks            # Core + 훅
+./install.sh all --link-static --codex # 전체 설치
+./install.sh --list                    # 옵션 목록
 ```
-
-### 수동 설치
-
-```bash
-git clone https://github.com/open330/agt.git ~/.agt
-cd ~/.agt
-
-./install.sh --core --cli --link-static       # 권장
-./install.sh all --link-static --codex --cli   # 전체 설치
-./install.sh --list                            # 스킬 목록
-```
-
-### 워크스페이스별 설치
-
-```bash
-cd my-project
-agt skill init                          # .claude/skills/ 생성
-agt skill install kubernetes-skill      # 로컬 설치
-agt skill install ml/                   # 그룹 전체 설치
-```
-
-### Windows
-
-```powershell
-./install.ps1
-./install.ps1 --core --cli --link-static
-```
-
-```cmd
-install.cmd --core --cli --link-static
-```
-
-> **참고:** Windows에서 심볼릭 링크는 관리자 권한 또는 Developer Mode가 필요합니다. 권한이 없으면 `--copy` 옵션을 사용하세요.
 
 ### 설치 옵션
 
 | 옵션 | 설명 |
 |------|------|
 | `--core` | Core 스킬만 전역 설치 (권장) |
-| `--link-static` | `~/.agents` → `static/` 심링크 (글로벌 컨텍스트) |
+| `--link-static` | `~/.agents` -> `static/` 심링크 (글로벌 컨텍스트) |
 | `--codex` | Codex CLI 지원 (AGENTS.md + 스킬 심링크) |
-| `--cli` | `agt` CLI 도구 설치 |
-| `--hooks` | Claude Code 훅 설치 (`~/.claude/hooks`) |
-| `--personas` | 에이전트 페르소나 설치 (`~/.agents/personas`) |
+| `--hooks` | Claude Code 훅 설치 |
+| `--personas` | 에이전트 페르소나 설치 |
 | `--copy` | 심링크 대신 복사 |
 | `--dry-run` | 미리보기만 |
 | `--uninstall` | 설치된 스킬 제거 |
 
 ### Core 스킬
 
-`--core` 옵션으로 기본 설치되는 스킬:
+`--core` 옵션으로 기본 설치:
 
 - `development/git-commit-pr` — Git 커밋 및 PR 가이드
 - `context/context-manager` — 프로젝트 컨텍스트 자동 로드
@@ -167,52 +96,6 @@ install.cmd --core --cli --link-static
 - `agents/background-implementer` — 백그라운드 병렬 구현
 - `agents/background-planner` — 백그라운드 병렬 기획
 - `agents/background-reviewer` — 다중 LLM 병렬 코드 리뷰
-
----
-
-## CLI 사용법
-
-### `agt skill` — 스킬 관리
-
-```bash
-agt skill install kubernetes-skill      # 로컬 설치
-agt skill install -g git-commit-pr      # 전역 설치
-agt skill install ml/                   # 그룹 전체 설치
-agt skill list                          # 스킬 목록
-agt skill list --installed --local      # 로컬 설치 확인
-agt skill uninstall kubernetes-skill    # 제거
-agt skill init                          # 워크스페이스 초기화
-agt skill which kubernetes-skill        # 소스 경로 확인
-```
-
-**스킬 로드 우선순위:**
-1. `.claude/skills/` (현재 워크스페이스)
-2. `~/.claude/skills/` (전역)
-
-### `agt persona` — 페르소나 관리
-
-```bash
-agt persona list                                    # 페르소나 목록
-agt persona install security-reviewer                # 로컬 설치
-agt persona install -g architecture-reviewer         # 전역 설치
-agt persona create my-reviewer                       # 빈 템플릿
-agt persona create rust-expert --ai "Rust unsafe specialist"  # LLM 생성
-agt persona show security-reviewer                   # 상세 보기
-agt persona review security-reviewer                 # 코드 리뷰 (git diff)
-agt persona review security-reviewer --codex         # Codex로 리뷰
-agt persona review security-reviewer --codex "이 스택 어떻게 생각해?"  # 커스텀 프롬프트
-agt persona review security-reviewer -o review.md    # 파일 저장
-```
-
-**LLM 우선순위:** `codex` > `claude` > `gemini` > `ollama`
-
-### `agt run` — 스킬 실행
-
-```bash
-agt run "보안 검사해줘"                  # 스킬 자동 선택
-agt run --skill security-auditor "검사"  # 스킬 직접 지정
-agt skill list                           # 사용 가능한 스킬
-```
 
 ---
 
@@ -295,19 +178,7 @@ agt skill list                           # 사용 가능한 스킬
 
 ## 페르소나
 
-전문가 아이덴티티를 정의한 마크다운 파일입니다. 리뷰, 기획, 구현 등 **어떤 작업에든** 어떤 AI 에이전트에서든 사용할 수 있습니다.
-
-### 작동 방식
-
-페르소나는 YAML frontmatter (name, role, domain, tags)와 마크다운 본문 (아이덴티티, 전문 분야, 평가 기준, 출력 포맷)으로 구성된 `.md` 파일입니다. 파일을 읽을 수 있는 에이전트라면 누구든 페르소나를 채택할 수 있습니다.
-
-```
-.agents/personas/security-reviewer.md    ← 프로젝트 로컬 (최우선)
-~/.agents/personas/security-reviewer.md  ← 사용자 전역
-personas/security-reviewer.md            ← 라이브러리 (번들)
-```
-
-### 사용 가능한 페르소나
+전문가 아이덴티티를 정의한 마크다운 파일 — 어떤 AI 에이전트에서든 사용 가능.
 
 | 페르소나 | 역할 | 도메인 |
 |----------|------|--------|
@@ -319,45 +190,27 @@ personas/security-reviewer.md            ← 라이브러리 (번들)
 | `frontend-reviewer` | Senior Frontend Engineer | React, 접근성, 성능 |
 | `devops-reviewer` | Senior DevOps/SRE | K8s, IaC, CI/CD |
 
-### 에이전트별 사용법
-
-페르소나는 알려진 경로의 마크다운 파일입니다. 에이전트가 파일을 읽고 아이덴티티를 채택합니다:
-
-| 에이전트 | 사용 방법 |
-|---------|-----------|
-| **Claude Code** | 대화에서 파일 경로 언급: *"`.agents/personas/security-reviewer.md`를 읽고 그 페르소나로 동작해"* |
-| **Codex** | `agt persona review security-reviewer --codex` 또는 프롬프트에 파일 내용 포함 |
-| **Gemini** | `agt persona review security-reviewer --gemini` 또는 stdin으로 전달 |
-| **Ollama** | `agt persona review security-reviewer` (자동 감지) |
-| **OpenCode** | 에이전트 설정에 페르소나 파일 경로 참조 |
-| **아무 에이전트** | `cat .agents/personas/<name>.md`로 읽어서 전달 |
+### agt CLI로 사용
 
 ```bash
-# 코드 리뷰 — 자동 감지된 LLM으로 git diff 리뷰
-agt persona review security-reviewer
 agt persona review security-reviewer --codex
-agt persona review security-reviewer --claude --staged
-agt persona review security-reviewer --base main -o review.md
-
-# 커스텀 프롬프트 — 페르소나에게 질문 (git diff 생략)
 agt persona review security-reviewer --codex "이 아키텍처 확장 가능할까?"
-agt persona review 안태우 --codex "Rust vs Go CLI 도구에 뭐가 나을까?"
-
-# 페르소나 내용 확인
+agt persona install -g --all
 agt persona show security-reviewer
-
-# 페르소나 파일 경로 확인 (다른 에이전트에 전달할 때)
-agt persona which security-reviewer
 ```
 
-### 페르소나 탐색
+### 직접 사용
 
-`static-index` 스킬이 페르소나 위치를 등록하므로 에이전트가 자동으로 발견할 수 있습니다:
+페르소나는 단순한 `.md` 파일입니다. 파일을 읽을 수 있는 에이전트라면 누구든 채택 가능:
 
 ```bash
-agt persona install security-reviewer          # 로컬 → .agents/personas/
-agt persona install -g architecture-reviewer   # 전역 → ~/.agents/personas/
-agt persona install --from owner/repo/path     # GitHub에서 설치
+cat personas/security-reviewer.md | codex -q "이 코드 리뷰해줘"
+```
+
+```
+.agents/personas/security-reviewer.md    ← 프로젝트 로컬 (최우선)
+~/.agents/personas/security-reviewer.md  ← 사용자 전역
+personas/security-reviewer.md            ← 라이브러리 (번들)
 ```
 
 ---
@@ -367,8 +220,7 @@ agt persona install --from owner/repo/path     # GitHub에서 설치
 Claude Code 이벤트 기반 자동화.
 
 ```bash
-./install.sh --hooks            # 설치
-./install.sh --uninstall-hooks  # 제거
+./install.sh --hooks
 ```
 
 | 훅 | 이벤트 | 설명 |
@@ -378,44 +230,7 @@ Claude Code 이벤트 기반 자동화.
 
 ---
 
-## 아키텍처
-
-```
-agt/
-├── setup.sh                # 원격 설치 (curl)
-├── install.sh              # 로컬 설치 (macOS/Linux)
-├── install.ps1             # 로컬 설치 (Windows)
-├── install.cmd             # Windows CMD 래퍼
-│
-├── agt/                    # 🦀 Rust CLI 바이너리
-│   ├── Cargo.toml
-│   └── src/
-│
-├── agents/                 # 🤖 AI 에이전트 스킬
-├── development/            # 🛠 개발 도구 스킬
-├── business/               # 📊 비즈니스 스킬
-├── integrations/           # 🔗 외부 연동 스킬
-├── ml/                     # 🧠 ML/AI 스킬
-├── security/               # 🔐 보안 스킬
-├── context/                # 📁 컨텍스트 관리
-├── meta/                   # 🔧 메타 스킬
-│
-├── personas/               # 🎭 에이전트 페르소나 라이브러리
-├── static/                 # 📁 글로벌 정적 컨텍스트 (.sample.md)
-├── hooks/                  # 🪝 Claude Code 훅
-├── codex-support/          # Codex CLI 지원
-│
-└── cli/                    # 레거시 CLI (deprecated)
-    ├── agent-skill         # → `agt skill` 사용
-    ├── agent-persona       # → `agt persona` 사용
-    └── claude-skill        # → `agt run` 사용
-```
-
----
-
 ## 스킬 만들기
-
-### 스킬 구조
 
 ```
 group/my-skill/
@@ -424,31 +239,6 @@ group/my-skill/
 ├── references/        # 선택: 참고 문서
 └── templates/         # 선택: 템플릿 파일
 ```
-
-### SKILL.md 형식
-
-```markdown
----
-name: my-skill
-description: 스킬 설명. 키워드로 활성화.
----
-
-# My Skill
-
-## Overview
-스킬 개요
-
-## When to Use
-활성화 조건
-
-## Workflow
-사용 방법
-
-## Examples
-사용 예시
-```
-
-### 새 스킬 추가
 
 ```bash
 mkdir -p development/my-skill
@@ -464,84 +254,32 @@ agt skill list | grep my-skill      # 확인
 ```bash
 agt persona create my-reviewer                       # 빈 템플릿
 agt persona create rust-expert --ai "Rust unsafe specialist"  # LLM으로 자동 생성
-agt persona create rust-expert --codex "Rust unsafe specialist"  # 특정 LLM으로 생성
-```
-
-### 페르소나 형식
-
-```markdown
----
-name: my-reviewer
-role: "역할 제목"
-domain: security | architecture | quality | performance
-type: review | planning | implementation
-tags: [tag1, tag2]
----
-
-## Identity
-배경 및 전문 분야
-
-## Review Lens
-리뷰 관점
-
-## Evaluation Framework
-평가 기준
-
-## Output Format
-결과 형식
 ```
 
 ---
 
-## Codex CLI 지원
+## 아키텍처
 
-```bash
-./install.sh --codex
 ```
-
-`~/.codex/AGENTS.md`에 스킬 가이드를 추가하고, `~/.codex/skills` → `~/.claude/skills` 심링크를 생성합니다.
-
----
-
-## 문제 해결
-
-### 스킬이 인식되지 않음
-
-```bash
-head -n 5 ~/.claude/skills/my-skill/SKILL.md    # frontmatter 확인
-agt skill list                                    # 설치 확인
+agent-skills/ (이 레포)              open330/agt (CLI 도구)
+├── agents/       AI 에이전트 스킬   ├── agt/     Rust CLI
+├── development/  개발 도구 스킬     ├── npm/     npm 배포
+├── business/     비즈니스 스킬      ├── setup.sh 설치 스크립트
+├── integrations/ 외부 연동 스킬     └── assets/  브랜딩
+├── ml/           ML/AI 스킬
+├── security/     보안 스킬
+├── context/      컨텍스트 관리
+├── meta/         메타 스킬
+├── personas/     전문가 페르소나
+├── hooks/        Claude Code 훅
+├── static/       글로벌 컨텍스트
+├── install.sh    로컬 설치
+└── codex-support/ Codex CLI 지원
 ```
-
-### 심볼릭 링크 깨짐
-
-```bash
-agt skill uninstall my-skill
-agt skill install my-skill
-```
-
-### Codex에서 스킬 인식 안됨
-
-```bash
-ls -la ~/.codex/skills          # 심링크 확인
-./install.sh --codex            # 재설치
-```
-
----
-
-## agent-skills에서 마이그레이션
-
-이전 `agent-skills` 레포를 사용하셨다면 [MIGRATION.md](MIGRATION.md)를 참고하세요.
-
-**요약:**
-- 이전 CLI 이름 (`agent-skill`, `agent-persona`, `claude-skill`)은 계속 동작하지만 deprecated
-- `~/.agents/` 경로는 변경 없음
-- 설치 URL을 `open330/agt`로 업데이트
 
 ---
 
 ## 기여하기
-
-기여를 환영합니다! 참여 방법:
 
 1. **스킬 추가** — 적절한 카테고리에 새 스킬 생성
 2. **페르소나 추가** — 도메인 전문가 페르소나 생성
@@ -549,20 +287,22 @@ ls -la ~/.codex/skills          # 심링크 확인
 4. **이슈 제보** — 버그 리포트 및 기능 요청 환영
 
 ```bash
-git clone https://github.com/open330/agt.git
-cd agt
-./install.sh --core --cli --link-static    # 개발 환경 설정
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+cd ~/.agent-skills
+./install.sh --core
 ```
+
+CLI 도구 기여는 [open330/agt](https://github.com/open330/agt)를 참고하세요.
 
 ---
 
 ## 라이선스
 
-MIT License. 자세한 내용은 [LICENSE](LICENSE)를 참고하세요.
+MIT License.
 
 ---
 
 <p align="center">
-  <sub>AI 에이전트 커뮤니티를 위해 ❤️ 로 만들었습니다</sub><br>
-  <sub><strong>33</strong> 스킬 • <strong>8</strong> 페르소나 • <strong>2</strong> 훅 • <strong>∞</strong> 가능성</sub>
+  <sub><strong>33</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
+  <sub>CLI 도구: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

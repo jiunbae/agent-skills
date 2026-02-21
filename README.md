@@ -1,19 +1,18 @@
 <p align="center">
   <br>
-  <img src="assets/banner.png" alt="agt — A modular toolkit for extending AI coding agents" width="720">
+  <img src="assets/banner.png" alt="agent-skills — Skills, personas, and hooks for AI coding agents" width="720">
   <br><br>
-  <a href="https://github.com/open330/agt/stargazers"><img src="https://img.shields.io/github/stars/open330/agt?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e" alt="Stars"></a>
-  <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e" alt="Release"></a>
+  <a href="https://github.com/jiunbae/agent-skills/stargazers"><img src="https://img.shields.io/github/stars/jiunbae/agent-skills?style=for-the-badge&color=ff6b6b&labelColor=1a1a2e" alt="Stars"></a>
+  <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
   <img src="https://img.shields.io/badge/skills-33-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
-  <img src="https://img.shields.io/badge/personas-8-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
+  <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
   <a href="#skills-catalog">Skills</a> •
   <a href="#personas">Personas</a> •
+  <a href="#hooks">Hooks</a> •
+  <a href="#installation">Installation</a> •
   <a href="#contributing">Contributing</a>
   <br>
   <b><a href="README_ko.md">한국어</a></b>
@@ -21,137 +20,67 @@
 
 ---
 
+## What is this?
+
+A collection of **skills**, **personas**, and **hooks** for AI coding agents (Claude Code, Codex CLI, Gemini CLI). Each skill is a self-contained markdown module that gives an agent domain-specific capabilities.
+
+> **CLI tool:** Install and manage skills with **[agt](https://github.com/open330/agt)** — `npm install -g @open330/agt`
+
+---
+
 ## Quick Start
 
 ```bash
-# Install via npm
+# Clone to ~/.agent-skills (agt discovers this automatically)
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+
+# Install the agt CLI
 npm install -g @open330/agt
 
-# Or one-line install
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
+# List available skills
+agt skill list
 
-# Install a skill
+# Install a skill to your project
 agt skill install kubernetes-skill
 
-# Run a persona code review
-agt persona review security-reviewer
-
-# Run with auto skill matching
-agt run "scan for security issues"
+# Or use install.sh directly
+cd ~/.agent-skills && ./install.sh --core
 ```
-
----
-
-## What is agt?
-
-**agt** is a modular toolkit that extends AI coding agents like **Claude Code**, **Codex CLI**, and **Gemini CLI** with domain-specific skills, expert personas, and automation hooks.
-
-```
-┌──────────────────────────────────────────────┐
-│                    agt                        │
-├──────────┬──────────┬──────────┬─────────────┤
-│ 🛠 Skills │ 🎭 Personas │ 🪝 Hooks │ 📁 Context │
-│  33 skills│  8 experts │  2 hooks │  9 configs │
-└──────────┴──────────┴──────────┴─────────────┘
-       ↕            ↕           ↕
-  Claude Code   Codex CLI   Gemini CLI
-```
-
----
-
-## Features
-
-| | Feature | Description |
-|---|---|---|
-| 🛠 | **Skills** | 33 drop-in skills across 8 categories — security, development, ML, integrations, and more |
-| 🎭 | **Personas** | 8 expert identities for code review — security, architecture, performance, DBA, frontend, DevOps |
-| 🪝 | **Hooks** | Event-driven automation — English coaching, prompt logging |
-| 📁 | **Static Context** | Global config files — user profile, security rules, service registry |
-| 🤖 | **Multi-Agent** | Parallel execution with Claude, Codex, Gemini, Ollama |
-| ⚡ | **Unified CLI** | One command: `agt skill`, `agt persona`, `agt run` |
-| 🪟 | **Cross-Platform** | macOS, Linux, Windows (PowerShell) |
-| 🔌 | **Codex Support** | Works with Codex CLI via AGENTS.md + skill symlinks |
 
 ---
 
 ## Installation
 
-### npm (Recommended)
+### With agt CLI (Recommended)
 
 ```bash
 npm install -g @open330/agt
-agt version
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+agt skill install -g git-commit-pr     # Install a skill globally
+agt persona install -g --all           # Install all personas globally
 ```
 
-Pre-built binaries for **macOS** (arm64, x64) and **Linux** (x64, arm64). No Rust toolchain required.
-
-| Package | Platform |
-|---------|----------|
-| `@open330/agt` | Main package (auto-selects platform) |
-| `@open330/agt-darwin-arm64` | macOS Apple Silicon |
-| `@open330/agt-darwin-x64` | macOS Intel |
-| `@open330/agt-linux-x64` | Linux x64 |
-| `@open330/agt-linux-arm64` | Linux arm64 |
-
-### Remote Install
+### With install.sh
 
 ```bash
-# Recommended: Core skills + CLI tools
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+cd ~/.agent-skills
 
-# All skills
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --all --cli --static
-
-# Specific version
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --version v2026.01.15
-
-# Uninstall
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --uninstall
+./install.sh --core                    # Core skills only
+./install.sh --core --hooks            # Core + hooks
+./install.sh all --link-static --codex # Everything
+./install.sh --list                    # List available options
 ```
-
-### Manual Install
-
-```bash
-git clone https://github.com/open330/agt.git ~/.agt
-cd ~/.agt
-
-./install.sh --core --cli --link-static       # Recommended
-./install.sh all --link-static --codex --cli   # All skills
-./install.sh --list                            # List available
-```
-
-### Workspace Install
-
-```bash
-cd my-project
-agt skill init                          # Create .claude/skills/
-agt skill install kubernetes-skill      # Install locally
-agt skill install ml/                   # Install entire group
-```
-
-### Windows
-
-```powershell
-./install.ps1
-./install.ps1 --core --cli --link-static
-```
-
-```cmd
-install.cmd --core --cli --link-static
-```
-
-> **Note:** Symlinks on Windows require admin privileges or Developer Mode. Use `--copy` if unavailable.
 
 ### Install Options
 
 | Option | Description |
 |--------|-------------|
 | `--core` | Install core skills globally (recommended) |
-| `--link-static` | Symlink `~/.agents` → `static/` (global context) |
+| `--link-static` | Symlink `~/.agents` -> `static/` (global context) |
 | `--codex` | Codex CLI support (AGENTS.md + skills symlink) |
-| `--cli` | Install `agt` CLI tool |
-| `--hooks` | Install Claude Code hooks (`~/.claude/hooks`) |
-| `--personas` | Install agent personas (`~/.agents/personas`) |
+| `--hooks` | Install Claude Code hooks |
+| `--personas` | Install agent personas |
 | `--copy` | Copy instead of symlink |
 | `--dry-run` | Preview only |
 | `--uninstall` | Remove installed skills |
@@ -167,52 +96,6 @@ Installed by default with `--core`:
 - `agents/background-implementer` — Background parallel implementation
 - `agents/background-planner` — Background parallel planning
 - `agents/background-reviewer` — Multi-LLM parallel code review
-
----
-
-## CLI Usage
-
-### `agt skill` — Skill Management
-
-```bash
-agt skill install kubernetes-skill      # Install locally
-agt skill install -g git-commit-pr      # Install globally
-agt skill install ml/                   # Install entire group
-agt skill list                          # List skills
-agt skill list --installed --local      # List local installs
-agt skill uninstall kubernetes-skill    # Remove
-agt skill init                          # Init workspace
-agt skill which kubernetes-skill        # Show source path
-```
-
-**Skill load priority:**
-1. `.claude/skills/` (current workspace)
-2. `~/.claude/skills/` (global)
-
-### `agt persona` — Persona Management
-
-```bash
-agt persona list                                    # List personas
-agt persona install security-reviewer                # Install locally
-agt persona install -g architecture-reviewer         # Install globally
-agt persona create my-reviewer                       # Empty template
-agt persona create rust-expert --ai "Rust unsafe specialist"  # AI-generated
-agt persona show security-reviewer                   # View content
-agt persona review security-reviewer                 # Code review (git diff)
-agt persona review security-reviewer --codex         # Review with Codex
-agt persona review security-reviewer --codex "what do you think about this stack?"  # Custom prompt
-agt persona review security-reviewer -o review.md    # Save to file
-```
-
-**LLM priority:** `codex` > `claude` > `gemini` > `ollama`
-
-### `agt run` — Skill Execution
-
-```bash
-agt run "scan for security issues"       # Auto skill matching
-agt run --skill security-auditor "scan"  # Specify skill
-agt skill list                           # Available skills
-```
 
 ---
 
@@ -295,19 +178,7 @@ agt skill list                           # Available skills
 
 ## Personas
 
-Expert identities as simple markdown files — usable with **any** AI agent for review, planning, implementation, or any task.
-
-### How It Works
-
-Personas are `.md` files with YAML frontmatter (name, role, domain, tags) and a markdown body (identity, expertise, evaluation framework, output format). Any agent that can read a file can adopt a persona.
-
-```
-.agents/personas/security-reviewer.md    ← project local (highest priority)
-~/.agents/personas/security-reviewer.md  ← user global
-personas/security-reviewer.md            ← library (bundled)
-```
-
-### Available Personas
+Expert identities as markdown files — usable with **any** AI agent.
 
 | Persona | Role | Domain |
 |---------|------|--------|
@@ -319,45 +190,28 @@ personas/security-reviewer.md            ← library (bundled)
 | `frontend-reviewer` | Senior Frontend Engineer | React, accessibility, performance |
 | `devops-reviewer` | Senior DevOps/SRE | K8s, IaC, CI/CD |
 
-### Using Personas with Agents
-
-Personas are just markdown files at a known location. Any agent reads the file and adopts the identity:
-
-| Agent | How to Use |
-|-------|-----------|
-| **Claude Code** | Reference the file in conversation: *"Read `.agents/personas/security-reviewer.md` and adopt that persona"* |
-| **Codex** | `agt persona review security-reviewer --codex` or include file content in prompt |
-| **Gemini** | `agt persona review security-reviewer --gemini` or pipe via stdin |
-| **Ollama** | `agt persona review security-reviewer` (auto-detect) |
-| **OpenCode** | Reference the persona file path in agent settings |
-| **Any agent** | `cat .agents/personas/<name>.md` and pass to the agent |
+### Using with agt CLI
 
 ```bash
-# Code review — auto-detected LLM reviews git diff
-agt persona review security-reviewer
 agt persona review security-reviewer --codex
-agt persona review security-reviewer --claude --staged
-agt persona review security-reviewer --base main -o review.md
-
-# Custom prompt — ask the persona anything (skips git diff)
 agt persona review security-reviewer --codex "is this architecture scalable?"
-agt persona review 안태우 --codex "Rust vs Go for CLI tools?"
-
-# Show persona content
+agt persona install -g --all
 agt persona show security-reviewer
-
-# Find persona file path (for piping to other agents)
-agt persona which security-reviewer
 ```
 
-### Persona Discovery
+### Using Directly
 
-The `static-index` skill registers persona locations so any agent can discover them automatically. Install personas locally or globally:
+Personas are just `.md` files. Any agent that can read a file can adopt a persona:
 
 ```bash
-agt persona install security-reviewer          # local → .agents/personas/
-agt persona install -g architecture-reviewer   # global → ~/.agents/personas/
-agt persona install --from owner/repo/path     # from GitHub
+cat personas/security-reviewer.md | codex -q "Review this code"
+cat personas/security-reviewer.md   # pipe to any AI agent
+```
+
+```
+.agents/personas/security-reviewer.md    ← project local (highest priority)
+~/.agents/personas/security-reviewer.md  ← user global
+personas/security-reviewer.md            ← library (bundled)
 ```
 
 ---
@@ -367,8 +221,7 @@ agt persona install --from owner/repo/path     # from GitHub
 Event-driven automation for Claude Code.
 
 ```bash
-./install.sh --hooks            # Install
-./install.sh --uninstall-hooks  # Remove
+./install.sh --hooks
 ```
 
 | Hook | Event | Description |
@@ -378,44 +231,7 @@ Event-driven automation for Claude Code.
 
 ---
 
-## Architecture
-
-```
-agt/
-├── setup.sh                # Remote installer (curl)
-├── install.sh              # Local installer (macOS/Linux)
-├── install.ps1             # Local installer (Windows)
-├── install.cmd             # Windows CMD wrapper
-│
-├── agt/                    # 🦀 Rust CLI binary
-│   ├── Cargo.toml
-│   └── src/
-│
-├── agents/                 # 🤖 AI agent skills
-├── development/            # 🛠 Dev tool skills
-├── business/               # 📊 Business skills
-├── integrations/           # 🔗 Integration skills
-├── ml/                     # 🧠 ML/AI skills
-├── security/               # 🔐 Security skills
-├── context/                # 📁 Context management
-├── meta/                   # 🔧 Meta skills
-│
-├── personas/               # 🎭 Agent persona library
-├── static/                 # 📁 Global static context (.sample.md)
-├── hooks/                  # 🪝 Claude Code hooks
-├── codex-support/          # Codex CLI support
-│
-└── cli/                    # Legacy CLI tools (deprecated)
-    ├── agent-skill         # → use `agt skill`
-    ├── agent-persona       # → use `agt persona`
-    └── claude-skill        # → use `agt run`
-```
-
----
-
 ## Creating Skills
-
-### Skill Structure
 
 ```
 group/my-skill/
@@ -424,31 +240,6 @@ group/my-skill/
 ├── references/        # Optional: reference docs
 └── templates/         # Optional: template files
 ```
-
-### SKILL.md Format
-
-```markdown
----
-name: my-skill
-description: Short description. Keywords trigger activation.
----
-
-# My Skill
-
-## Overview
-What this skill does.
-
-## When to Use
-Activation conditions.
-
-## Workflow
-Step-by-step usage.
-
-## Examples
-Usage examples.
-```
-
-### Add a New Skill
 
 ```bash
 mkdir -p development/my-skill
@@ -463,85 +254,33 @@ agt skill list | grep my-skill      # Verify
 
 ```bash
 agt persona create my-reviewer                       # Empty template
-agt persona create rust-expert --ai "Rust unsafe and concurrency specialist"  # AI-generated
-agt persona create rust-expert --codex "Rust unsafe specialist"               # With specific LLM
-```
-
-### Persona Format
-
-```markdown
----
-name: my-reviewer
-role: "Role Title"
-domain: security | architecture | quality | performance
-type: review | planning | implementation
-tags: [tag1, tag2]
----
-
-## Identity
-Who you are.
-
-## Review Lens
-What you focus on.
-
-## Evaluation Framework
-How you evaluate code.
-
-## Output Format
-How you structure feedback.
+agt persona create rust-expert --ai "Rust unsafe specialist"  # AI-generated
 ```
 
 ---
 
-## Codex CLI Support
+## Architecture
 
-```bash
-./install.sh --codex
 ```
-
-Creates `~/.codex/AGENTS.md` with skill guidance and symlinks `~/.codex/skills` → `~/.claude/skills`.
-
----
-
-## Troubleshooting
-
-### Skill not recognized
-
-```bash
-head -n 5 ~/.claude/skills/my-skill/SKILL.md    # Check frontmatter
-agt skill list                                    # List installed
+agent-skills/                        open330/agt (CLI tool)
+├── agents/       AI agent skills    ├── agt/     Rust CLI
+├── development/  Dev tool skills    ├── npm/     npm packaging
+├── business/     Business skills    ├── setup.sh Installer
+├── integrations/ Integration skills └── assets/  Branding
+├── ml/           ML/AI skills
+├── security/     Security skills
+├── context/      Context management
+├── meta/         Meta skills
+├── personas/     Expert personas
+├── hooks/        Claude Code hooks
+├── static/       Global context
+├── install.sh    Local installer
+└── codex-support/ Codex CLI
 ```
-
-### Broken symlink
-
-```bash
-agt skill uninstall my-skill
-agt skill install my-skill
-```
-
-### Codex not finding skills
-
-```bash
-ls -la ~/.codex/skills          # Check symlink
-./install.sh --codex            # Reinstall
-```
-
----
-
-## Migration from agent-skills
-
-If you were using the previous `agent-skills` repo, see [MIGRATION.md](MIGRATION.md) for details.
-
-**TL;DR:**
-- Old CLI names (`agent-skill`, `agent-persona`, `claude-skill`) still work but are deprecated
-- `~/.agents/` path is unchanged
-- Update your install URL to `open330/agt`
 
 ---
 
 ## Contributing
-
-Contributions are welcome! Here's how you can help:
 
 1. **Add a skill** — Create a new skill in the appropriate category
 2. **Add a persona** — Create a domain expert persona
@@ -549,20 +288,22 @@ Contributions are welcome! Here's how you can help:
 4. **Report issues** — Bug reports and feature requests welcome
 
 ```bash
-git clone https://github.com/open330/agt.git
-cd agt
-./install.sh --core --cli --link-static    # Dev setup
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+cd ~/.agent-skills
+./install.sh --core
 ```
+
+For CLI tool contributions, see [open330/agt](https://github.com/open330/agt).
 
 ---
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License.
 
 ---
 
 <p align="center">
-  <sub>Built with ❤️ for the AI agent community</sub><br>
-  <sub><strong>33</strong> skills • <strong>8</strong> personas • <strong>2</strong> hooks • <strong>∞</strong> possibilities</sub>
+  <sub><strong>33</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
+  <sub>CLI tool: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>
