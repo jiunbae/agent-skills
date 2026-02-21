@@ -18,6 +18,12 @@ pub enum SkillAction {
         /// Force overwrite existing
         #[arg(short, long)]
         force: bool,
+        /// Install a named profile (core, dev, all, etc.)
+        #[arg(short, long, value_name = "NAME")]
+        profile: Option<String>,
+        /// Install all available skills
+        #[arg(short, long)]
+        all: bool,
         /// Remote spec: owner/repo/path[@ref]
         #[arg(long, value_name = "SPEC")]
         from: Option<String>,
@@ -41,6 +47,9 @@ pub enum SkillAction {
         /// Show only global skills
         #[arg(long)]
         global: bool,
+        /// Show available installation profiles
+        #[arg(long)]
+        profiles: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -60,15 +69,18 @@ pub fn execute(action: SkillAction) -> Result<()> {
             name,
             global,
             force,
+            profile,
+            all,
             from,
-        } => install(name, global, force, from),
+        } => install(name, global, force, profile, all, from),
         SkillAction::Uninstall { name, global } => uninstall(&name, global),
         SkillAction::List {
             installed,
             local,
             global,
+            profiles,
             json,
-        } => list(installed, local, global, json),
+        } => list(installed, local, global, profiles, json),
         SkillAction::Init => init(),
         SkillAction::Which { name } => which(&name),
     }
@@ -78,13 +90,35 @@ fn install(
     name: Option<String>,
     global: bool,
     force: bool,
+    profile: Option<String>,
+    all: bool,
     from: Option<String>,
 ) -> Result<()> {
     if let Some(spec_str) = from {
+        if profile.is_some() || all {
+            bail!("--from cannot be combined with --profile or --all");
+        }
         return install_remote(&spec_str, global, force);
     }
 
-    let name = name.context("Skill name required (or use --from for remote install)")?;
+    // Profile / all install
+    let profile_name = if all {
+        if profile.is_some() {
+            bail!("--all and --profile cannot be used together");
+        }
+        Some("all".to_string())
+    } else {
+        profile
+    };
+
+    if let Some(prof_name) = profile_name {
+        if name.is_some() {
+            bail!("Cannot specify both a skill name and --profile/--all");
+        }
+        return install_profile(&prof_name, global, force);
+    }
+
+    let name = name.context("Skill name required (or use --profile, --all, --from)")?;
     util::validate_name(&name)?;
 
     let source_dir = config::find_source_dir()
@@ -182,7 +216,69 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     Ok(())
 }
 
-fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
+fn install_profile(profile_name: &str, global: bool, force: bool) -> Result<()> {
+    let source_dir = config::find_source_dir().context(config::source_dir_hint())?;
+    let resolved = config::resolve_profile(profile_name, &source_dir)?;
+
+    let target_dir = if global {
+        config::global_skill_target()
+    } else {
+        config::local_skill_target()
+    };
+    fs::create_dir_all(&target_dir)?;
+
+    let scope = if global { "global" } else { "local" };
+    ui::info(&format!(
+        "Installing profile '{}': {} skills ({})",
+        resolved.name,
+        resolved.skills.len(),
+        scope
+    ));
+
+    let mut installed = 0;
+    let mut skipped = 0;
+
+    for (group, skill_name) in &resolved.skills {
+        let skill_path = source_dir.join(group).join(skill_name);
+        if !skill_path.is_dir() || !skill_path.join("SKILL.md").exists() {
+            ui::warn(&format!("Skill '{}/{}' not found, skipping", group, skill_name));
+            skipped += 1;
+            continue;
+        }
+
+        let link_path = target_dir.join(skill_name);
+
+        if link_path.exists() || link_path.is_symlink() {
+            if force {
+                if link_path.is_symlink() || link_path.is_file() {
+                    fs::remove_file(&link_path)?;
+                } else {
+                    fs::remove_dir_all(&link_path)?;
+                }
+            } else {
+                skipped += 1;
+                continue;
+            }
+        }
+
+        symlink(&skill_path, &link_path).context(format!(
+            "Failed to create symlink for '{}'",
+            skill_name
+        ))?;
+        installed += 1;
+    }
+
+    ui::success(&format!(
+        "Profile '{}': {} installed, {} skipped",
+        resolved.name, installed, skipped
+    ));
+    Ok(())
+}
+
+fn list(installed: bool, local: bool, global: bool, profiles: bool, json: bool) -> Result<()> {
+    if profiles {
+        return list_profiles_display(json);
+    }
     // Build installed skill sets for status lookup
     let local_dir = config::local_skill_target();
     let global_dir = config::global_skill_target();
@@ -346,6 +442,39 @@ fn which(name: &str) -> Result<()> {
     }
 
     bail!("Skill '{}' not found", name);
+}
+
+fn list_profiles_display(json: bool) -> Result<()> {
+    let source_dir = config::find_source_dir().context(config::source_dir_hint())?;
+    let profiles = config::list_profiles(&source_dir);
+
+    if json {
+        let entries: Vec<serde_json::Value> = profiles
+            .iter()
+            .map(|(name, desc, count)| {
+                serde_json::json!({
+                    "name": name,
+                    "description": desc,
+                    "skill_count": count,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+
+    println!("{}", "Installation profiles".cyan());
+    println!("{}", "=".repeat(40));
+    for (name, desc, count) in &profiles {
+        println!(
+            "  {:16} {:32} ({} skills)",
+            name.green(),
+            desc,
+            count
+        );
+    }
+    println!("\nUsage: agt skill install --profile <name> [-g]");
+    Ok(())
 }
 
 // --- Helpers ---
