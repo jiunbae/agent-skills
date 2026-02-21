@@ -88,7 +88,7 @@ fn install(
     util::validate_name(&name)?;
 
     let source_dir = config::find_source_dir()
-        .context("Cannot find agent-skills source directory")?;
+        .context(config::source_dir_hint())?;
 
     // Find skill in source
     let skill_path = find_skill_in_source(&source_dir, &name)

@@ -171,7 +171,7 @@ fn install(
     }
 
     let source_dir = config::find_source_dir()
-        .context("Cannot find agent-skills source directory")?;
+        .context(config::source_dir_hint())?;
     let persona_lib = config::persona_library(&source_dir);
 
     if all {

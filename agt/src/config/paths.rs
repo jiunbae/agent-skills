@@ -48,7 +48,7 @@ pub fn find_source_dir() -> Option<PathBuf> {
 
     // 3. Fallback: check common install locations
     if let Some(home) = dirs::home_dir() {
-        for candidate in &[".agt", "agt", ".agent-skills"] {
+        for candidate in &[".agent-skills", ".agt", "agt"] {
             let p = home.join(candidate);
             if has_skill_groups(&p) {
                 return Some(p);
@@ -57,6 +57,18 @@ pub fn find_source_dir() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Hint message when no source directory is found
+pub fn source_dir_hint() -> String {
+    let home = dirs::home_dir()
+        .map(|h| h.display().to_string())
+        .unwrap_or_else(|| "~".to_string());
+    format!(
+        "No skills found. Install skills with:\n  \
+         git clone https://github.com/jiunbae/agent-skills {home}/.agent-skills\n  \
+         or set AGT_DIR to your skills directory"
+    )
 }
 
 fn has_skill_groups(dir: &Path) -> bool {
