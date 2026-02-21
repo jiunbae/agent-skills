@@ -182,6 +182,10 @@ _agt_skill_install() {{
         '--global[Install globally]' \
         '-f[Force overwrite]' \
         '--force[Force overwrite]' \
+        '-p[Install profile]:profile:(core dev agents integrations ml full all)' \
+        '--profile=[Install profile]:profile:(core dev agents integrations ml full all)' \
+        '-a[Install all skills]' \
+        '--all[Install all skills]' \
         '--from=[Remote spec]:spec:'
 }}
 

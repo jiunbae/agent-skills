@@ -1,0 +1,40 @@
+core:
+  description: "Essential skills for every workspace"
+  skills:
+    - development/git-commit-pr
+    - context/context-manager
+    - context/static-index
+    - security/security-auditor
+    - agents/background-implementer
+    - agents/background-planner
+    - agents/background-reviewer
+
+dev:
+  description: "Development workflow tools"
+  groups:
+    - development
+
+agents:
+  description: "Background agent skills"
+  groups:
+    - agents
+
+integrations:
+  description: "Third-party service integrations"
+  groups:
+    - integrations
+
+ml:
+  description: "Machine learning tools"
+  groups:
+    - ml
+
+full:
+  description: "Core + all dev and agent skills"
+  skills:
+    - context/context-manager
+    - context/static-index
+    - security/security-auditor
+  groups:
+    - agents
+    - development
