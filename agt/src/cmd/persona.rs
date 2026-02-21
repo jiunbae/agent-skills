@@ -18,6 +18,9 @@ pub enum PersonaAction {
         /// Force overwrite existing
         #[arg(short, long)]
         force: bool,
+        /// Install all library personas
+        #[arg(short, long)]
+        all: bool,
         /// Remote spec: owner/repo/path[@ref]
         #[arg(long, value_name = "SPEC")]
         from: Option<String>,
@@ -25,10 +28,13 @@ pub enum PersonaAction {
     /// Uninstall a persona
     Uninstall {
         /// Persona name
-        name: String,
+        name: Option<String>,
         /// Remove from global scope
         #[arg(short, long)]
         global: bool,
+        /// Uninstall all personas
+        #[arg(short, long)]
+        all: bool,
     },
     /// List available and installed personas
     List {
@@ -107,9 +113,17 @@ pub fn execute(action: PersonaAction) -> Result<()> {
             name,
             global,
             force,
+            all,
             from,
-        } => install(name, global, force, from),
-        PersonaAction::Uninstall { name, global } => uninstall(&name, global),
+        } => install(name, global, force, all, from),
+        PersonaAction::Uninstall { name, global, all } => {
+            if all {
+                uninstall_all(global)
+            } else {
+                let name = name.context("Persona name required (or use --all)")?;
+                uninstall(&name, global)
+            }
+        }
         PersonaAction::List {
             installed,
             local,
@@ -149,24 +163,25 @@ fn install(
     name: Option<String>,
     global: bool,
     force: bool,
+    all: bool,
     from: Option<String>,
 ) -> Result<()> {
     if let Some(spec_str) = from {
         return install_remote(&spec_str, global, force);
     }
 
-    let name = name.context("Persona name required (or use --from for remote install)")?;
-    util::validate_name(&name)?;
-
     let source_dir = config::find_source_dir()
         .context("Cannot find agent-skills source directory")?;
-
     let persona_lib = config::persona_library(&source_dir);
-    let persona_path = persona_lib.join(&name);
 
-    if !persona_path.is_dir() {
-        bail!("Persona '{}' not found in library: {}", name, persona_lib.display());
+    if all {
+        return install_all(&persona_lib, global, force);
     }
+
+    let name = name.context("Persona name required (or use --all / --from)")?;
+    util::validate_name(&name)?;
+
+    let persona_path = find_in_library(&persona_lib, &name)?;
 
     let target_dir = if global {
         config::global_persona_target()
@@ -183,6 +198,85 @@ fn install(
 
     let scope = if global { "global" } else { "local" };
     ui::success(&format!("Installed persona '{}' ({})", name, scope));
+    Ok(())
+}
+
+/// Find a persona in the library — handles both directories and .md files
+fn find_in_library(persona_lib: &Path, name: &str) -> Result<PathBuf> {
+    // Check exact directory
+    let as_dir = persona_lib.join(name);
+    if as_dir.is_dir() {
+        return Ok(as_dir);
+    }
+    // Check .md file
+    let as_md = persona_lib.join(format!("{}.md", name));
+    if as_md.exists() {
+        return Ok(as_md);
+    }
+    // Check subdirectories (e.g., review/security-reviewer)
+    if let Ok(entries) = fs::read_dir(persona_lib) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let sub_dir = path.join(name);
+                if sub_dir.is_dir() {
+                    return Ok(sub_dir);
+                }
+                let sub_md = path.join(format!("{}.md", name));
+                if sub_md.exists() {
+                    return Ok(sub_md);
+                }
+            }
+        }
+    }
+    bail!(
+        "Persona '{}' not found in library: {}",
+        name,
+        persona_lib.display()
+    )
+}
+
+/// Install all personas from the library
+fn install_all(persona_lib: &Path, global: bool, force: bool) -> Result<()> {
+    let target_dir = if global {
+        config::global_persona_target()
+    } else {
+        config::local_persona_target()
+    };
+    fs::create_dir_all(&target_dir)?;
+
+    let mut count = 0;
+    for entry in fs::read_dir(persona_lib)?.flatten() {
+        let path = entry.path();
+        let raw_name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip README and hidden files
+        if raw_name.starts_with('.') || raw_name == "README.md" {
+            continue;
+        }
+
+        let name = raw_name.strip_suffix(".md").unwrap_or(&raw_name).to_string();
+        let link_path = target_dir.join(&name);
+
+        if link_path.exists() || link_path.is_symlink() {
+            if force {
+                if link_path.is_symlink() || link_path.is_file() {
+                    fs::remove_file(&link_path)?;
+                } else {
+                    fs::remove_dir_all(&link_path)?;
+                }
+            } else {
+                ui::warn(&format!("Skipping '{}' (already exists, use --force)", name));
+                continue;
+            }
+        }
+
+        symlink(&path, &link_path)?;
+        count += 1;
+    }
+
+    let scope = if global { "global" } else { "local" };
+    ui::success(&format!("Installed {} personas ({})", count, scope));
     Ok(())
 }
 
@@ -272,6 +366,38 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     }
 
     ui::success(&format!("Uninstalled persona '{}' ({})", name, scope));
+    Ok(())
+}
+
+fn uninstall_all(global: bool) -> Result<()> {
+    let dir = if global {
+        config::global_persona_target()
+    } else {
+        config::local_persona_target()
+    };
+
+    if !dir.is_dir() {
+        ui::info("No personas installed.");
+        return Ok(());
+    }
+
+    let mut count = 0;
+    for entry in fs::read_dir(&dir)?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_symlink() || path.is_file() {
+            fs::remove_file(&path)?;
+        } else {
+            fs::remove_dir_all(&path)?;
+        }
+        count += 1;
+    }
+
+    let scope = if global { "global" } else { "local" };
+    ui::success(&format!("Uninstalled {} personas ({})", count, scope));
     Ok(())
 }
 
@@ -399,8 +525,9 @@ fn list(installed: bool, local: bool, global: bool, json: bool) -> Result<()> {
                 format!("{}", "○".dimmed())
             };
 
-            let role_display = if role.len() > 40 {
-                format!("{}...", &role[..37])
+            let role_display = if role.chars().count() > 40 {
+                let truncated: String = role.chars().take(37).collect();
+                format!("{}...", truncated)
             } else {
                 role.to_string()
             };
