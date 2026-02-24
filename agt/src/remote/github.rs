@@ -47,10 +47,11 @@ pub fn parse_spec(spec: &str) -> Result<RemoteSpec> {
     };
 
     let parts: Vec<&str> = path_part.split('/').collect();
-    if parts.len() < 3 {
+    if parts.len() < 2 {
         bail!(
-            "Invalid format: {}\nExpected: owner/repo/path/to/skill[@ref]\n\
-             Example: jiunbae/agent-skills/agents/background-reviewer",
+            "Invalid format: {}\nExpected: owner/repo[/path/to/skill][@ref]\n\
+             Examples:\n  jiunbae/agent-skills/agents/background-reviewer\n  \
+             jiunbae/agent-skills  (browse all skills in repo)",
             spec
         );
     }
@@ -58,7 +59,11 @@ pub fn parse_spec(spec: &str) -> Result<RemoteSpec> {
     Ok(RemoteSpec {
         owner: parts[0].to_string(),
         repo: parts[1].to_string(),
-        path: parts[2..].join("/"),
+        path: if parts.len() > 2 {
+            parts[2..].join("/")
+        } else {
+            String::new()
+        },
         git_ref,
     })
 }
@@ -147,16 +152,21 @@ pub fn fetch_dir(spec: &RemoteSpec) -> Result<(TempDir, PathBuf)> {
         spec.owner, spec.repo, spec.git_ref
     ))?;
 
-    let target_path = root.join(&spec.path);
-    if !target_path.exists() {
-        bail!(
-            "Path not found: {} in {}/{}@{}",
-            spec.path,
-            spec.owner,
-            spec.repo,
-            spec.git_ref
-        );
-    }
+    let target_path = if spec.path.is_empty() {
+        root.clone()
+    } else {
+        let p = root.join(&spec.path);
+        if !p.exists() {
+            bail!(
+                "Path not found: {} in {}/{}@{}",
+                spec.path,
+                spec.owner,
+                spec.repo,
+                spec.git_ref
+            );
+        }
+        p
+    };
 
     Ok((tmp_dir, target_path))
 }
@@ -290,9 +300,20 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_spec_repo_only() {
+        let spec = parse_spec("jiunbae/agent-skills").unwrap();
+        assert_eq!(spec.owner, "jiunbae");
+        assert_eq!(spec.repo, "agent-skills");
+        assert_eq!(spec.path, "");
+        assert_eq!(spec.git_ref, "main");
+
+        let spec = parse_spec("github.com/jiunbae/agent-skills").unwrap();
+        assert_eq!(spec.owner, "jiunbae");
+        assert_eq!(spec.path, "");
+    }
+
+    #[test]
     fn test_parse_spec_invalid() {
         assert!(parse_spec("bad-format").is_err());
-        assert!(parse_spec("owner/repo").is_err());
-        assert!(parse_spec("github.com/owner/repo").is_err());
     }
 }

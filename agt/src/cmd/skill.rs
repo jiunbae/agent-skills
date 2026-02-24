@@ -160,6 +160,12 @@ fn install(
 
 fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
     let spec = remote::parse_spec(spec_str)?;
+
+    // Repo-level: owner/repo with no path — browse all skills
+    if spec.path.is_empty() {
+        return install_remote_repo(&spec, global, force);
+    }
+
     ui::info(&format!("Downloading {}...", spec));
 
     let (_tmp_dir, source_path) = remote::fetch_dir(&spec)?;
@@ -194,6 +200,125 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
     ui::success(&format!(
         "Installed remote skill '{}' ({}) from {}",
         skill_name, scope, spec
+    ));
+    Ok(())
+}
+
+fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> Result<()> {
+    ui::info(&format!("Downloading {}/{}@{}...", spec.owner, spec.repo, spec.git_ref));
+    let (_tmp_dir, repo_root) = remote::fetch_dir(spec)?;
+
+    // Discover skills in the repo (directories containing SKILL.md)
+    let groups = config::skill_groups(&repo_root);
+    let mut all_skills: Vec<(String, String)> = Vec::new();
+    for group in &groups {
+        for skill_name in config::skills_in_group(&repo_root, group) {
+            all_skills.push((group.clone(), skill_name));
+        }
+    }
+
+    // Also check for personas
+    let persona_dir = repo_root.join("personas");
+    let has_personas = persona_dir.is_dir()
+        && fs::read_dir(&persona_dir)
+            .map(|rd| rd.flatten().any(|e| !e.file_name().to_string_lossy().starts_with('.')))
+            .unwrap_or(false);
+
+    if all_skills.is_empty() {
+        bail!("No skills found in {}/{}", spec.owner, spec.repo);
+    }
+
+    ui::info(&format!(
+        "Found {} skills in {} groups{}",
+        all_skills.len(),
+        groups.len(),
+        if has_personas { " (+ personas)" } else { "" }
+    ));
+
+    // Interactive mode if TTY
+    let is_tty = console::Term::stderr().is_term();
+
+    let target_dir = if global {
+        config::global_skill_target()
+    } else {
+        config::local_skill_target()
+    };
+    fs::create_dir_all(&target_dir)?;
+
+    let scope = if global { "global" } else { "local" };
+    let skills_to_install = if is_tty {
+        let local_installed = installed_skill_names(&config::local_skill_target());
+        let global_installed = installed_skill_names(&config::global_skill_target());
+
+        let selection = ui::interactive::run_interactive_selector(
+            &repo_root, &local_installed, &global_installed,
+        )?;
+
+        match selection {
+            ui::interactive::InteractiveSelection::Profile(prof_name) => {
+                let resolved = config::resolve_profile(&prof_name, &repo_root)?;
+                if !ui::interactive::confirm_install(&resolved.skills, global)? {
+                    ui::info("Installation cancelled.");
+                    return Ok(());
+                }
+                resolved.skills
+            }
+            ui::interactive::InteractiveSelection::Skills(skills) => {
+                if !ui::interactive::confirm_install(&skills, global)? {
+                    ui::info("Installation cancelled.");
+                    return Ok(());
+                }
+                skills
+            }
+            _ => {
+                ui::info("Installation cancelled.");
+                return Ok(());
+            }
+        }
+    } else {
+        // Non-interactive: install all
+        all_skills
+    };
+
+    let mut installed = 0;
+    let mut skipped = 0;
+
+    for (group, skill_name) in &skills_to_install {
+        let source_path = repo_root.join(group).join(skill_name);
+        if !source_path.is_dir() || !source_path.join("SKILL.md").exists() {
+            skipped += 1;
+            continue;
+        }
+
+        let dest = target_dir.join(skill_name);
+        if dest.exists() || dest.is_symlink() {
+            if force {
+                if dest.is_symlink() || dest.is_file() {
+                    fs::remove_file(&dest)?;
+                } else {
+                    fs::remove_dir_all(&dest)?;
+                }
+            } else {
+                skipped += 1;
+                continue;
+            }
+        }
+
+        util::copy_dir_recursive(&source_path, &dest)?;
+        let skill_spec = remote::RemoteSpec {
+            owner: spec.owner.clone(),
+            repo: spec.repo.clone(),
+            path: format!("{}/{}", group, skill_name),
+            git_ref: spec.git_ref.clone(),
+        };
+        remote::write_metadata(&dest, &skill_spec)?;
+        ui::success(&format!("Installed skill '{}' ({})", skill_name, scope));
+        installed += 1;
+    }
+
+    ui::success(&format!(
+        "Done: {} installed, {} skipped from {}/{}",
+        installed, skipped, spec.owner, spec.repo
     ));
     Ok(())
 }
