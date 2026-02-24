@@ -1,3 +1,5 @@
+pub mod interactive;
+
 use colored::Colorize;
 
 pub fn info(msg: &str) {

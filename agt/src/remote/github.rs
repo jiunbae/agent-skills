@@ -25,8 +25,18 @@ impl std::fmt::Display for RemoteSpec {
     }
 }
 
-/// Parse "owner/repo/path[@ref]" into a RemoteSpec
+/// Parse "owner/repo/path[@ref]" into a RemoteSpec.
+/// Also accepts URL-style input: github.com/owner/repo/path, https://github.com/owner/repo/path
 pub fn parse_spec(spec: &str) -> Result<RemoteSpec> {
+    let spec = spec.trim();
+    // Strip common URL prefixes
+    let spec = spec
+        .strip_prefix("https://")
+        .or_else(|| spec.strip_prefix("http://"))
+        .unwrap_or(spec);
+    let spec = spec
+        .strip_prefix("github.com/")
+        .unwrap_or(spec);
     let spec = spec.trim_end_matches('/');
 
     // Extract @ref suffix
@@ -39,7 +49,8 @@ pub fn parse_spec(spec: &str) -> Result<RemoteSpec> {
     let parts: Vec<&str> = path_part.split('/').collect();
     if parts.len() < 3 {
         bail!(
-            "Invalid format: {}\nExpected: owner/repo/path/to/skill[@ref]",
+            "Invalid format: {}\nExpected: owner/repo/path/to/skill[@ref]\n\
+             Example: jiunbae/agent-skills/agents/background-reviewer",
             spec
         );
     }
@@ -267,8 +278,21 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_spec_url_prefix() {
+        let spec = parse_spec("https://github.com/jiunbae/agent-skills/agents/background-reviewer").unwrap();
+        assert_eq!(spec.owner, "jiunbae");
+        assert_eq!(spec.repo, "agent-skills");
+        assert_eq!(spec.path, "agents/background-reviewer");
+
+        let spec = parse_spec("github.com/jiunbae/agent-skills/context/context-manager").unwrap();
+        assert_eq!(spec.owner, "jiunbae");
+        assert_eq!(spec.path, "context/context-manager");
+    }
+
+    #[test]
     fn test_parse_spec_invalid() {
         assert!(parse_spec("bad-format").is_err());
         assert!(parse_spec("owner/repo").is_err());
+        assert!(parse_spec("github.com/owner/repo").is_err());
     }
 }

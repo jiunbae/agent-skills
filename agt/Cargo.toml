@@ -1,6 +1,6 @@
 [package]
 name = "agt"
-version = "2026.2.28"
+version = "2026.2.29"
 edition = "2021"
 description = "agt — A modular toolkit for extending AI coding agents"
 license = "MIT"
@@ -19,6 +19,8 @@ colored = "2"
 dirs = "5"
 anyhow = "1"
 tempfile = "3"
+dialoguer = "0.12"
+console = "0.16"
 
 [profile.release]
 opt-level = "z"

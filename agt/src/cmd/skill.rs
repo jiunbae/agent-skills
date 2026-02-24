@@ -118,7 +118,15 @@ fn install(
         return install_profile(&prof_name, global, force);
     }
 
-    let name = name.context("Skill name required (or use --profile, --all, --from)")?;
+    let name = match name {
+        Some(n) => n,
+        None => {
+            if !console::Term::stderr().is_term() {
+                bail!("Skill name required (or use --profile, --all, --from)");
+            }
+            return interactive_install(global, force);
+        }
+    };
     util::validate_name(&name)?;
 
     let source_dir = config::find_source_dir()
@@ -272,6 +280,92 @@ fn install_profile(profile_name: &str, global: bool, force: bool) -> Result<()> 
         "Profile '{}': {} installed, {} skipped",
         resolved.name, installed, skipped
     ));
+    Ok(())
+}
+
+fn interactive_install(global: bool, force: bool) -> Result<()> {
+    let source_dir = config::find_source_dir().context(config::source_dir_hint())?;
+    let local_installed = installed_skill_names(&config::local_skill_target());
+    let global_installed = installed_skill_names(&config::global_skill_target());
+
+    let selection =
+        ui::interactive::run_interactive_selector(&source_dir, &local_installed, &global_installed)?;
+
+    match selection {
+        ui::interactive::InteractiveSelection::Profile(prof_name) => {
+            let resolved = config::resolve_profile(&prof_name, &source_dir)?;
+            if !ui::interactive::confirm_install(&resolved.skills, global)? {
+                ui::info("Installation cancelled.");
+                return Ok(());
+            }
+            install_profile(&prof_name, global, force)
+        }
+        ui::interactive::InteractiveSelection::Skills(skills) => {
+            if !ui::interactive::confirm_install(&skills, global)? {
+                ui::info("Installation cancelled.");
+                return Ok(());
+            }
+            install_selected_skills(&source_dir, &skills, global, force)
+        }
+        ui::interactive::InteractiveSelection::Remote(spec) => {
+            install_remote(&spec, global, force)
+        }
+        ui::interactive::InteractiveSelection::Cancelled => {
+            ui::info("Installation cancelled.");
+            Ok(())
+        }
+    }
+}
+
+fn install_selected_skills(
+    source_dir: &Path,
+    skills: &[(String, String)],
+    global: bool,
+    force: bool,
+) -> Result<()> {
+    let target_dir = if global {
+        config::global_skill_target()
+    } else {
+        config::local_skill_target()
+    };
+    fs::create_dir_all(&target_dir)?;
+
+    let scope = if global { "global" } else { "local" };
+    let mut installed = 0;
+    let mut skipped = 0;
+
+    for (group, skill_name) in skills {
+        let skill_path = source_dir.join(group).join(skill_name);
+        if !skill_path.is_dir() || !skill_path.join("SKILL.md").exists() {
+            ui::warn(&format!("Skill '{}/{}' not found, skipping", group, skill_name));
+            skipped += 1;
+            continue;
+        }
+
+        let link_path = target_dir.join(skill_name);
+
+        if link_path.exists() || link_path.is_symlink() {
+            if force {
+                if link_path.is_symlink() || link_path.is_file() {
+                    fs::remove_file(&link_path)?;
+                } else {
+                    fs::remove_dir_all(&link_path)?;
+                }
+            } else {
+                skipped += 1;
+                continue;
+            }
+        }
+
+        symlink(&skill_path, &link_path).context(format!(
+            "Failed to create symlink for '{}'",
+            skill_name
+        ))?;
+        ui::success(&format!("Installed skill '{}' ({})", skill_name, scope));
+        installed += 1;
+    }
+
+    ui::success(&format!("Done: {} installed, {} skipped", installed, skipped));
     Ok(())
 }
 
