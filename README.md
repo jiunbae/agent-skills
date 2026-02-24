@@ -231,31 +231,308 @@ Event-driven automation for Claude Code.
 
 ---
 
-## Creating Skills
+## Creating Your Own Skills Repo
+
+You can create your own skills repository with the same structure as this one. `agt` will discover it automatically.
+
+### Directory Structure
 
 ```
-group/my-skill/
-├── SKILL.md           # Required: skill definition
-├── scripts/           # Optional: executable scripts
-├── references/        # Optional: reference docs
-└── templates/         # Optional: template files
+my-skills/
+├── agents/                    # Group: AI agent skills
+│   └── my-agent/
+│       └── SKILL.md           # Required
+├── development/               # Group: dev tools
+│   └── my-tool/
+│       ├── SKILL.md           # Required
+│       ├── scripts/           # Optional: helper scripts
+│       └── templates/         # Optional: templates
+├── personas/                  # Personas directory
+│   ├── my-reviewer/
+│   │   └── PERSONA.md
+│   └── my-expert.md           # Single-file persona also works
+├── profiles.yml               # Optional: installation profiles
+└── README.md
 ```
+
+### SKILL.md Format
+
+```yaml
+---
+name: my-skill-name
+description: "What this skill does. Use for 'keyword1', 'keyword2' requests."
+trigger-keywords: keyword1, keyword2, 키워드
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob
+priority: high
+tags: [category, tool-name]
+---
+
+# Skill Title
+
+## Quick Start
+
+\`\`\`bash
+command --example
+\`\`\`
+
+## Workflow
+
+Step-by-step instructions for the AI agent...
+
+## Best Practices
+
+**DO:**
+- Follow this pattern
+
+**DON'T:**
+- Avoid this anti-pattern
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Skill identifier (kebab-case) |
+| `description` | Yes | What the skill does + trigger keywords |
+| `trigger-keywords` | No | Comma-separated activation keywords |
+| `allowed-tools` | No | Tools available to the skill |
+| `priority` | No | `high` / `medium` / `low` |
+| `tags` | No | Category tags |
+
+### PERSONA.md Format
+
+```yaml
+---
+name: my-reviewer
+role: "Senior Engineer — Domain Expert"
+domain: security
+type: review
+tags: [security, owasp, auth]
+---
+
+# My Reviewer
+
+## Identity
+
+Background, expertise, and review philosophy...
+
+## Review Lens
+
+When reviewing, evaluate:
+1. Security vulnerabilities
+2. Best practice adherence
+...
+
+## Output Format
+
+### Findings
+#### [SEVERITY] Finding Title
+- **File**: path:line
+- **Impact**: Description
+- **Recommendation**: Fix
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Persona identifier (kebab-case) |
+| `role` | Yes | Job title / expert role |
+| `domain` | Yes | Expertise domain |
+| `type` | Yes | Usually `review` |
+| `tags` | Yes | Relevant focus areas |
+
+### profiles.yml Format
+
+```yaml
+core:
+  description: "Essential skills for every workspace"
+  skills:                          # Explicit skill paths
+    - development/git-commit-pr
+    - context/context-manager
+  groups:                          # Include entire groups
+    - agents
+
+dev:
+  description: "Development workflow tools"
+  groups:
+    - development
+```
+
+### Test & Install
 
 ```bash
-mkdir -p development/my-skill
-vim development/my-skill/SKILL.md
-agt skill install my-skill          # Test install
-agt skill list | grep my-skill      # Verify
+# Point agt to your repo
+export AGT_DIR=~/my-skills
+# Or clone to the default location
+git clone https://github.com/you/my-skills ~/.agent-skills
+
+agt skill list                     # Verify skills discovered
+agt skill install my-skill -g      # Install globally
+agt skill install --profile core   # Install a profile
+agt persona install my-reviewer    # Install a persona
+
+# Others can install from your repo directly
+agt skill install --from you/my-skills
+agt persona install --from you/my-skills
 ```
 
 ---
 
-## Creating Personas
+## Create with AI (Prompts)
 
-```bash
-agt persona create my-reviewer                       # Empty template
-agt persona create rust-expert --ai "Rust unsafe specialist"  # AI-generated
+Copy-paste these prompts to create skills and personas with any AI agent.
+
+### Create a Skill
+
+<details>
+<summary><b>Prompt: Create a new skill</b></summary>
+
 ```
+Create a new skill for the agent-skills repository.
+
+Skill name: [YOUR_SKILL_NAME]
+Group: [GROUP_NAME] (e.g., development, integrations, agents, ml, security)
+Description: [WHAT_THE_SKILL_DOES]
+
+Create the file at [GROUP]/[SKILL_NAME]/SKILL.md with this structure:
+
+1. YAML frontmatter with: name, description (include trigger keywords and Korean keywords
+   if applicable), trigger-keywords, allowed-tools, priority, tags
+2. A "Quick Start" section with 2-3 essential commands/examples
+3. A "Workflow" section with step-by-step instructions
+4. A "Best Practices" section with DO/DON'T guidelines
+
+Rules:
+- Description should be third person, under 200 chars, end with trigger conditions
+- Keep under 300 lines total
+- Code examples should be practical and production-ready
+- Include both English and Korean trigger keywords where relevant
+- Focus on what the AI agent should DO, not theory
+
+Reference this existing skill for style:
+---
+name: git-commit-pr
+description: "Guides git commit and PR creation with security validation. Activates on
+  commit, PR, pull request requests."
+trigger-keywords: commit, pr, pull request, 커밋
+allowed-tools: Read, Bash, Grep, Glob
+priority: high
+tags: [git, commit, pr, security]
+---
+```
+
+</details>
+
+### Create a Persona
+
+<details>
+<summary><b>Prompt: Create a review persona</b></summary>
+
+```
+Create a new code review persona for the agent-skills repository.
+
+Persona name: [YOUR_PERSONA_NAME]-reviewer
+Domain: [DOMAIN] (e.g., security, architecture, performance, database, frontend, devops)
+Role: [JOB_TITLE]
+
+Create the file at personas/[PERSONA_NAME]/PERSONA.md with this structure:
+
+1. YAML frontmatter with: name, role, domain, type (review), tags
+2. "Identity" section: background, expertise (5+ bullet points), attitude (2-3 sentences)
+3. "Review Lens" section: numbered list of what they evaluate
+4. "Evaluation Framework" section: table with Category, Severity (CRITICAL/HIGH/MEDIUM/LOW), Criteria
+5. "Output Format" section: markdown template for review output
+6. "Red Flags" section: patterns that MUST always be flagged
+7. "Key Principles" section: numbered guiding principles
+
+Rules:
+- The persona should be opinionated and have a clear point of view
+- Include specific technologies/frameworks in their expertise
+- Red flags should be concrete, not generic
+- Output format should include: Summary, Findings (with severity), Positive Observations
+- Keep under 200 lines
+
+Reference this existing persona for style:
+---
+name: security-reviewer
+role: "Senior Application Security Engineer"
+domain: security
+type: review
+tags: [security, owasp, auth, injection, xss, ssrf]
+---
+```
+
+</details>
+
+### Create a Profile
+
+<details>
+<summary><b>Prompt: Create an installation profile</b></summary>
+
+```
+Create a new installation profile for the agent-skills repository.
+
+Profile name: [PROFILE_NAME]
+Purpose: [WHO_IS_THIS_FOR]
+Available groups: agents, development, business, integrations, ml, security, context, meta
+
+Add the profile to profiles.yml with:
+- description: one-line description of the profile
+- skills: list of specific group/skill-name paths to include (optional)
+- groups: list of group names to include all skills from (optional)
+
+You can mix both "skills" (specific picks) and "groups" (entire categories).
+
+Example:
+```yaml
+backend:
+  description: "Backend development essentials"
+  skills:
+    - context/context-manager
+    - security/security-auditor
+  groups:
+    - development
+    - integrations
+```
+
+Keep profiles focused — a profile with everything is just "full" or "all".
+```
+
+</details>
+
+### Create a Complete Skills Repo
+
+<details>
+<summary><b>Prompt: Bootstrap a new skills repository</b></summary>
+
+```
+Create a new agent-skills repository with the following structure. This repo will be
+discoverable by the `agt` CLI tool (https://github.com/open330/agt).
+
+Repository purpose: [YOUR_PURPOSE]
+Skills to include: [LIST_OF_SKILLS]
+Personas to include: [LIST_OF_PERSONAS]
+
+Create the following structure:
+
+1. Group directories (e.g., development/, integrations/) containing skill subdirectories
+2. Each skill has a SKILL.md with YAML frontmatter (name, description, trigger-keywords,
+   allowed-tools, priority, tags) and markdown content (Quick Start, Workflow, Best Practices)
+3. A personas/ directory with PERSONA.md files for each persona
+4. A profiles.yml defining installation profiles (core, dev, full at minimum)
+5. A README.md documenting the repository
+
+Requirements:
+- Skills are organized by group: each group is a directory, each skill is a subdirectory
+- A valid skill must have SKILL.md in its directory
+- A valid persona must have PERSONA.md (in a directory or as a standalone .md file)
+- profiles.yml uses "skills" (explicit paths) and/or "groups" (entire categories)
+- The "all" profile is built-in to agt, no need to define it
+
+Users install with:
+  git clone https://github.com/you/repo ~/.agent-skills
+  agt skill install --profile core -g
+  agt persona install --all -g
+```
+
+</details>
 
 ---
 
