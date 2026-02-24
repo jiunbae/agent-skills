@@ -7,6 +7,7 @@ pub enum InteractiveSelection {
     Profile(String),
     Skills(Vec<(String, String)>),
     Remote(String),
+    CloneAndInstall,
     Cancelled,
 }
 
@@ -144,6 +145,31 @@ fn browse_by_group(
                 .collect();
             Ok(InteractiveSelection::Skills(selected))
         }
+    }
+}
+
+pub fn run_no_source_selector() -> Result<InteractiveSelection> {
+    let theme = ColorfulTheme::default();
+
+    eprintln!("No skills source found. To get all skills:");
+    eprintln!("  git clone https://github.com/jiunbae/agent-skills ~/.agent-skills\n");
+
+    let modes = &[
+        "Clone jiunbae/agent-skills and install a profile",
+        "Install from remote (owner/repo/path)",
+    ];
+    let mode = Select::with_theme(&theme)
+        .with_prompt("How would you like to install skills?")
+        .items(modes)
+        .default(0)
+        .interact_opt()
+        .context("Failed to render mode selection")?;
+
+    match mode {
+        None => Ok(InteractiveSelection::Cancelled),
+        Some(0) => Ok(InteractiveSelection::CloneAndInstall),
+        Some(1) => prompt_remote(&theme),
+        _ => unreachable!(),
     }
 }
 

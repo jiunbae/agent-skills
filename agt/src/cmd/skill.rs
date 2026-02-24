@@ -284,16 +284,78 @@ fn install_profile(profile_name: &str, global: bool, force: bool) -> Result<()> 
 }
 
 fn interactive_install(global: bool, force: bool) -> Result<()> {
-    let source_dir = config::find_source_dir().context(config::source_dir_hint())?;
+    let source_dir = config::find_source_dir();
+    let local_installed = installed_skill_names(&config::local_skill_target());
+    let global_installed = installed_skill_names(&config::global_skill_target());
+
+    let selection = if let Some(ref sd) = source_dir {
+        ui::interactive::run_interactive_selector(sd, &local_installed, &global_installed)?
+    } else {
+        ui::interactive::run_no_source_selector()?
+    };
+
+    match selection {
+        ui::interactive::InteractiveSelection::Profile(prof_name) => {
+            let sd = source_dir.context(config::source_dir_hint())?;
+            let resolved = config::resolve_profile(&prof_name, &sd)?;
+            if !ui::interactive::confirm_install(&resolved.skills, global)? {
+                ui::info("Installation cancelled.");
+                return Ok(());
+            }
+            install_profile(&prof_name, global, force)
+        }
+        ui::interactive::InteractiveSelection::Skills(skills) => {
+            let sd = source_dir.context(config::source_dir_hint())?;
+            if !ui::interactive::confirm_install(&skills, global)? {
+                ui::info("Installation cancelled.");
+                return Ok(());
+            }
+            install_selected_skills(&sd, &skills, global, force)
+        }
+        ui::interactive::InteractiveSelection::Remote(spec) => {
+            install_remote(&spec, global, force)
+        }
+        ui::interactive::InteractiveSelection::CloneAndInstall => {
+            clone_and_install(global, force)
+        }
+        ui::interactive::InteractiveSelection::Cancelled => {
+            ui::info("Installation cancelled.");
+            Ok(())
+        }
+    }
+}
+
+fn clone_and_install(global: bool, force: bool) -> Result<()> {
+    let home = dirs::home_dir().context("Cannot determine home directory")?;
+    let target = home.join(".agent-skills");
+
+    if target.exists() {
+        ui::info(&format!("Skills repo already exists: {}", target.display()));
+    } else {
+        ui::info("Cloning jiunbae/agent-skills...");
+        let status = std::process::Command::new("git")
+            .args(["clone", "--depth", "1", "https://github.com/jiunbae/agent-skills.git"])
+            .arg(&target)
+            .status()
+            .context("Failed to run git clone")?;
+        if !status.success() {
+            bail!("git clone failed");
+        }
+        ui::success(&format!("Cloned to {}", target.display()));
+    }
+
+    // Now run interactive install with the fresh source
+    ui::info("Launching interactive installer...");
+    eprintln!();
     let local_installed = installed_skill_names(&config::local_skill_target());
     let global_installed = installed_skill_names(&config::global_skill_target());
 
     let selection =
-        ui::interactive::run_interactive_selector(&source_dir, &local_installed, &global_installed)?;
+        ui::interactive::run_interactive_selector(&target, &local_installed, &global_installed)?;
 
     match selection {
         ui::interactive::InteractiveSelection::Profile(prof_name) => {
-            let resolved = config::resolve_profile(&prof_name, &source_dir)?;
+            let resolved = config::resolve_profile(&prof_name, &target)?;
             if !ui::interactive::confirm_install(&resolved.skills, global)? {
                 ui::info("Installation cancelled.");
                 return Ok(());
@@ -305,12 +367,12 @@ fn interactive_install(global: bool, force: bool) -> Result<()> {
                 ui::info("Installation cancelled.");
                 return Ok(());
             }
-            install_selected_skills(&source_dir, &skills, global, force)
+            install_selected_skills(&target, &skills, global, force)
         }
         ui::interactive::InteractiveSelection::Remote(spec) => {
             install_remote(&spec, global, force)
         }
-        ui::interactive::InteractiveSelection::Cancelled => {
+        _ => {
             ui::info("Installation cancelled.");
             Ok(())
         }
@@ -480,7 +542,7 @@ fn list(installed: bool, local: bool, global: bool, profiles: bool, json: bool) 
             total_installed
         );
     } else {
-        // No source dir — show installed only
+        // No source dir — infer groups from symlink targets
         list_skills_in_dir(&local_dir, "local", &mut entries)?;
         list_skills_in_dir(&global_dir, "global", &mut entries)?;
 
@@ -490,9 +552,11 @@ fn list(installed: bool, local: bool, global: bool, profiles: bool, json: bool) 
         }
         if entries.is_empty() {
             ui::info("No skills found.");
+            eprintln!("\nTo see all available skills, clone the skills repo:");
+            eprintln!("  git clone https://github.com/jiunbae/agent-skills ~/.agent-skills");
             return Ok(());
         }
-        print_flat(&entries);
+        print_grouped_installed(&local_dir, &global_dir);
     }
 
     Ok(())
@@ -633,6 +697,85 @@ fn read_skill_description(path: &Path) -> String {
         }
     }
     String::new()
+}
+
+fn print_grouped_installed(local_dir: &Path, global_dir: &Path) {
+    use std::collections::BTreeMap;
+
+    // Deduplicate: key = skill name, value = (group, scope, desc)
+    // Local takes priority over global
+    let mut seen: BTreeMap<String, (String, String, String)> = BTreeMap::new();
+
+    for (dir, scope) in [(local_dir, "local"), (global_dir, "global")] {
+        if let Ok(read) = fs::read_dir(dir) {
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                if seen.contains_key(&name) {
+                    continue; // local already registered
+                }
+                let path = entry.path();
+                let desc = read_skill_description(&path);
+
+                let group = if path.is_symlink() {
+                    fs::read_link(&path)
+                        .ok()
+                        .and_then(|target| {
+                            target.parent().and_then(|p| {
+                                p.file_name().map(|g| g.to_string_lossy().to_string())
+                            })
+                        })
+                        .unwrap_or_else(|| "other".to_string())
+                } else {
+                    "other".to_string()
+                };
+
+                seen.insert(name, (group, scope.to_string(), desc));
+            }
+        }
+    }
+
+    // Group by group name
+    let mut groups: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for (name, (group, scope, _desc)) in &seen {
+        groups
+            .entry(group.clone())
+            .or_default()
+            .push((name.clone(), scope.clone()));
+    }
+
+    println!(
+        "{}  ({}=local {}=global)",
+        "Installed skills".cyan(),
+        "L".green(),
+        "G".blue()
+    );
+    println!("{}", "=".repeat(40));
+
+    let mut total = 0usize;
+    for (group, skills) in &groups {
+        total += skills.len();
+        println!(
+            "\n{} ({})",
+            format!("{}/", group).yellow().bold(),
+            skills.len()
+        );
+        for (name, scope) in skills {
+            let tag = if scope == "local" {
+                format!("{}", "L".green())
+            } else {
+                format!("{}", "G".blue())
+            };
+            println!("  {} {}", tag, name);
+        }
+    }
+
+    println!("\n{}: {} installed", "Summary".cyan(), total);
+    eprintln!("\nTo see all available skills:");
+    eprintln!("  git clone https://github.com/jiunbae/agent-skills ~/.agent-skills");
+    eprintln!("  agt skill install            # interactive installer");
 }
 
 fn print_flat(entries: &[serde_json::Value]) {
