@@ -353,17 +353,8 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
         bail!("No personas/ directory found in {}/{}", spec.owner, spec.repo);
     }
 
-    let target_dir = if global {
-        config::global_persona_target()
-    } else {
-        config::local_persona_target()
-    };
-    fs::create_dir_all(&target_dir)?;
-
-    let scope = if global { "global" } else { "local" };
-    let mut installed = 0;
-    let mut skipped = 0;
-
+    // Discover all personas in the repo
+    let mut available: Vec<(String, String, PathBuf, String)> = Vec::new(); // (name, role, path, raw_name)
     for entry in fs::read_dir(&persona_dir)?.flatten() {
         let path = entry.path();
         let raw_name = entry.file_name().to_string_lossy().to_string();
@@ -371,7 +362,6 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
             continue;
         }
 
-        // Only install directories with PERSONA.md or .md files
         let is_persona = if path.is_dir() {
             path.join("PERSONA.md").exists()
                 || fs::read_dir(&path)
@@ -386,7 +376,60 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
         }
 
         let name = raw_name.strip_suffix(".md").unwrap_or(&raw_name).to_string();
-        let dest = target_dir.join(&name);
+        let (role, _, _) = if path.is_dir() {
+            read_persona_info(&path)
+        } else {
+            read_persona_info_from_file(&path)
+        };
+        available.push((name, role, path, raw_name));
+    }
+
+    if available.is_empty() {
+        bail!("No personas found in {}/{}", spec.owner, spec.repo);
+    }
+
+    ui::info(&format!("Found {} personas", available.len()));
+
+    // Interactive selection if TTY
+    let is_tty = console::Term::stderr().is_term();
+    let installed_names = installed_persona_names(
+        &if global { config::global_persona_target() } else { config::local_persona_target() },
+    );
+
+    let names_to_install: Vec<String> = if is_tty {
+        let persona_list: Vec<(String, String)> = available
+            .iter()
+            .map(|(name, role, _, _)| (name.clone(), role.clone()))
+            .collect();
+
+        match ui::interactive::select_personas(&persona_list, &installed_names, global)? {
+            Some(names) => names,
+            None => {
+                ui::info("Installation cancelled.");
+                return Ok(());
+            }
+        }
+    } else {
+        available.iter().map(|(name, _, _, _)| name.clone()).collect()
+    };
+
+    let target_dir = if global {
+        config::global_persona_target()
+    } else {
+        config::local_persona_target()
+    };
+    fs::create_dir_all(&target_dir)?;
+
+    let scope = if global { "global" } else { "local" };
+    let mut installed = 0;
+    let mut skipped = 0;
+
+    for (name, _role, path, raw_name) in &available {
+        if !names_to_install.contains(name) {
+            continue;
+        }
+
+        let dest = target_dir.join(name);
 
         if dest.exists() || dest.is_symlink() {
             if force {
@@ -402,11 +445,10 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
         }
 
         if path.is_dir() {
-            util::copy_dir_recursive(&path, &dest)?;
+            util::copy_dir_recursive(path, &dest)?;
         } else {
-            // Single .md file: create dir with PERSONA.md inside
             fs::create_dir_all(&dest)?;
-            fs::copy(&path, dest.join("PERSONA.md"))?;
+            fs::copy(path, dest.join("PERSONA.md"))?;
         }
 
         let persona_spec = remote::RemoteSpec {

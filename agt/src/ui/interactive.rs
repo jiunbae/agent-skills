@@ -206,6 +206,78 @@ pub fn confirm_install(skills: &[(String, String)], global: bool) -> Result<bool
         .context("Failed to render confirmation")
 }
 
+/// Interactive persona selector for repo-level install.
+/// Returns selected persona names, or None if cancelled.
+pub fn select_personas(
+    personas: &[(String, String)], // (name, role)
+    installed: &[String],
+    global: bool,
+) -> Result<Option<Vec<String>>> {
+    let theme = ColorfulTheme::default();
+
+    let scope = if global { "global" } else { "local" };
+    let items: Vec<String> = personas
+        .iter()
+        .map(|(name, role)| {
+            let tag = if installed.contains(name) {
+                "[*]"
+            } else {
+                "[ ]"
+            };
+            if role.is_empty() {
+                format!("{} {}", tag, name)
+            } else {
+                format!("{} {} - {}", tag, name, role)
+            }
+        })
+        .collect();
+
+    let defaults: Vec<bool> = personas
+        .iter()
+        .map(|(name, _)| !installed.contains(name))
+        .collect();
+
+    let selections = MultiSelect::with_theme(&theme)
+        .with_prompt(format!(
+            "Select personas to install ({}) (Space to toggle, Enter to confirm)",
+            scope
+        ))
+        .items(&items)
+        .defaults(&defaults)
+        .interact_opt()
+        .context("Failed to render persona selection")?;
+
+    match selections {
+        None => Ok(None),
+        Some(indices) if indices.is_empty() => Ok(None),
+        Some(indices) => {
+            let names: Vec<String> = indices
+                .into_iter()
+                .map(|i| personas[i].0.clone())
+                .collect();
+
+            // Confirm
+            eprintln!("\nThe following {} personas will be installed ({}):", names.len(), scope);
+            for name in &names {
+                eprintln!("  {}", name);
+            }
+            eprintln!();
+
+            let confirmed = Confirm::with_theme(&theme)
+                .with_prompt("Proceed with installation?")
+                .default(true)
+                .interact()
+                .context("Failed to render confirmation")?;
+
+            if confirmed {
+                Ok(Some(names))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
 fn read_skill_description(path: &Path) -> String {
     let skill_md = path.join("SKILL.md");
     if let Ok(content) = std::fs::read_to_string(skill_md) {
