@@ -136,14 +136,27 @@ fn install(
     let skill_path = find_skill_in_source(&source_dir, &name)
         .context(format!("Skill '{}' not found in source library", name))?;
 
+    // Extract group from skill_path (parent of skill dir)
+    let group = skill_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|g| g.to_string_lossy().to_string())
+        .unwrap_or_default();
+
     let target_dir = if global {
         config::global_skill_target()
     } else {
         config::local_skill_target()
     };
 
-    fs::create_dir_all(&target_dir)?;
-    let link_path = target_dir.join(&name);
+    // Preserve group prefix: target_dir/group/skill_name
+    let group_dir = if group.is_empty() {
+        target_dir.clone()
+    } else {
+        target_dir.join(&group)
+    };
+    fs::create_dir_all(&group_dir)?;
+    let link_path = group_dir.join(&name);
 
     util::ensure_target_clear(&link_path, force, &name)?;
 
@@ -154,7 +167,7 @@ fn install(
     ))?;
 
     let scope = if global { "global" } else { "local" };
-    ui::success(&format!("Installed skill '{}' ({})", name, scope));
+    ui::success(&format!("Installed skill '{}/{}' ({})", group, name, scope));
     Ok(())
 }
 
@@ -290,7 +303,11 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
             continue;
         }
 
-        let dest = target_dir.join(skill_name);
+        // Preserve group prefix: target_dir/group/skill_name
+        let group_dir = target_dir.join(group);
+        fs::create_dir_all(&group_dir)?;
+        let dest = group_dir.join(skill_name);
+
         if dest.exists() || dest.is_symlink() {
             if force {
                 if dest.is_symlink() || dest.is_file() {
@@ -312,7 +329,7 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
             git_ref: spec.git_ref.clone(),
         };
         remote::write_metadata(&dest, &skill_spec)?;
-        ui::success(&format!("Installed skill '{}' ({})", skill_name, scope));
+        ui::success(&format!("Installed skill '{}/{}' ({})", group, skill_name, scope));
         installed += 1;
     }
 
@@ -324,19 +341,14 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
 }
 
 fn uninstall(name: &str, global: bool) -> Result<()> {
-    util::validate_name(name)?;
-
     let target_dir = if global {
         config::global_skill_target()
     } else {
         config::local_skill_target()
     };
 
-    let skill_path = target_dir.join(name);
-
-    if !skill_path.exists() && !skill_path.is_symlink() {
-        bail!("Skill '{}' is not installed", name);
-    }
+    let skill_path = find_installed_skill(&target_dir, name)
+        .context(format!("Skill '{}' is not installed", name))?;
 
     if skill_path.is_symlink() {
         fs::remove_file(&skill_path)?;
@@ -347,6 +359,31 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     let scope = if global { "global" } else { "local" };
     ui::success(&format!("Uninstalled skill '{}' ({})", name, scope));
     Ok(())
+}
+
+/// Find an installed skill by name. Checks both:
+///   target_dir/<name>                  (legacy flat)
+///   target_dir/<group>/<name>          (new grouped layout)
+///   target_dir/<group>/<name> via "group/name" input
+fn find_installed_skill(target_dir: &Path, name: &str) -> Option<PathBuf> {
+    // Direct match (flat layout or "group/name" input)
+    let direct = target_dir.join(name);
+    if direct.exists() || direct.is_symlink() {
+        return Some(direct);
+    }
+    // Search group subdirs
+    if let Ok(entries) = fs::read_dir(target_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && !path.join("SKILL.md").exists() {
+                let candidate = path.join(name);
+                if candidate.exists() || candidate.is_symlink() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn install_profile(profile_name: &str, global: bool, force: bool) -> Result<()> {
@@ -379,7 +416,10 @@ fn install_profile(profile_name: &str, global: bool, force: bool) -> Result<()> 
             continue;
         }
 
-        let link_path = target_dir.join(skill_name);
+        // Preserve group prefix: target_dir/group/skill_name
+        let group_dir = target_dir.join(group);
+        fs::create_dir_all(&group_dir)?;
+        let link_path = group_dir.join(skill_name);
 
         if link_path.exists() || link_path.is_symlink() {
             if force {
@@ -395,8 +435,8 @@ fn install_profile(profile_name: &str, global: bool, force: bool) -> Result<()> 
         }
 
         symlink(&skill_path, &link_path).context(format!(
-            "Failed to create symlink for '{}'",
-            skill_name
+            "Failed to create symlink for '{}/{}'",
+            group, skill_name
         ))?;
         installed += 1;
     }
@@ -529,7 +569,10 @@ fn install_selected_skills(
             continue;
         }
 
-        let link_path = target_dir.join(skill_name);
+        // Preserve group prefix: target_dir/group/skill_name
+        let group_dir = target_dir.join(group);
+        fs::create_dir_all(&group_dir)?;
+        let link_path = group_dir.join(skill_name);
 
         if link_path.exists() || link_path.is_symlink() {
             if force {
@@ -545,10 +588,10 @@ fn install_selected_skills(
         }
 
         symlink(&skill_path, &link_path).context(format!(
-            "Failed to create symlink for '{}'",
-            skill_name
+            "Failed to create symlink for '{}/{}'",
+            group, skill_name
         ))?;
-        ui::success(&format!("Installed skill '{}' ({})", skill_name, scope));
+        ui::success(&format!("Installed skill '{}/{}' ({})", group, skill_name, scope));
         installed += 1;
     }
 
@@ -699,19 +742,18 @@ fn init() -> Result<()> {
 }
 
 fn which(name: &str) -> Result<()> {
-    util::validate_name(name)?;
-    // Check local
-    let local = config::local_skill_target().join(name);
-    if local.exists() {
-        let resolved = fs::canonicalize(&local).unwrap_or(local);
+    // Check local (grouped then flat)
+    let local_dir = config::local_skill_target();
+    if let Some(found) = find_installed_skill(&local_dir, name) {
+        let resolved = fs::canonicalize(&found).unwrap_or(found);
         println!("{}", resolved.display());
         return Ok(());
     }
 
-    // Check global
-    let global = config::global_skill_target().join(name);
-    if global.exists() {
-        let resolved = fs::canonicalize(&global).unwrap_or(global);
+    // Check global (grouped then flat)
+    let global_dir = config::global_skill_target();
+    if let Some(found) = find_installed_skill(&global_dir, name) {
+        let resolved = fs::canonicalize(&found).unwrap_or(found);
         println!("{}", resolved.display());
         return Ok(());
     }
@@ -777,7 +819,21 @@ fn installed_skill_names(dir: &Path) -> Vec<String> {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with('.') {
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            // Check if this is a group directory
+            if path.is_dir() && !path.join("SKILL.md").exists() {
+                if let Ok(children) = fs::read_dir(&path) {
+                    for child in children.flatten() {
+                        let child_name = child.file_name().to_string_lossy().to_string();
+                        if !child_name.starts_with('.') {
+                            names.push(child_name);
+                        }
+                    }
+                }
+            } else {
                 names.push(name);
             }
         }
@@ -795,6 +851,31 @@ fn list_skills_in_dir(
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.') {
+                continue;
+            }
+
+            // Check if this is a group directory (no SKILL.md)
+            if path.is_dir() && !path.join("SKILL.md").exists() {
+                if let Ok(children) = fs::read_dir(&path) {
+                    for child in children.flatten() {
+                        let child_name = child.file_name().to_string_lossy().to_string();
+                        if child_name.starts_with('.') {
+                            continue;
+                        }
+                        let child_path = child.path();
+                        let desc = read_skill_description(&child_path);
+                        let is_remote = child_path.join(".remote-source").exists();
+                        let is_symlink = child_path.is_symlink();
+                        entries.push(serde_json::json!({
+                            "name": format!("{}/{}", name, child_name),
+                            "group": name,
+                            "scope": scope,
+                            "description": desc,
+                            "remote": is_remote,
+                            "symlink": is_symlink,
+                        }));
+                    }
+                }
                 continue;
             }
 
@@ -827,48 +908,70 @@ fn read_skill_description(path: &Path) -> String {
 fn print_grouped_installed(local_dir: &Path, global_dir: &Path) {
     use std::collections::BTreeMap;
 
-    // Deduplicate: key = skill name, value = (group, scope, desc)
+    // Deduplicate: key = "group/skill", value = (group, scope, desc)
     // Local takes priority over global
     let mut seen: BTreeMap<String, (String, String, String)> = BTreeMap::new();
 
     for (dir, scope) in [(local_dir, "local"), (global_dir, "global")] {
         if let Ok(read) = fs::read_dir(dir) {
             for entry in read.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') {
+                let entry_name = entry.file_name().to_string_lossy().to_string();
+                if entry_name.starts_with('.') {
                     continue;
                 }
-                if seen.contains_key(&name) {
-                    continue; // local already registered
-                }
                 let path = entry.path();
-                let desc = read_skill_description(&path);
 
-                let group = if path.is_symlink() {
-                    fs::read_link(&path)
-                        .ok()
-                        .and_then(|target| {
-                            target.parent().and_then(|p| {
-                                p.file_name().map(|g| g.to_string_lossy().to_string())
-                            })
-                        })
-                        .unwrap_or_else(|| "other".to_string())
+                // Check if this is a group directory (contains skill subdirs)
+                if path.is_dir() && !path.join("SKILL.md").exists() {
+                    // This is a group directory — scan its children
+                    if let Ok(children) = fs::read_dir(&path) {
+                        for child in children.flatten() {
+                            let skill_name = child.file_name().to_string_lossy().to_string();
+                            if skill_name.starts_with('.') {
+                                continue;
+                            }
+                            let key = format!("{}/{}", entry_name, skill_name);
+                            if seen.contains_key(&key) {
+                                continue;
+                            }
+                            let child_path = child.path();
+                            let desc = read_skill_description(&child_path);
+                            seen.insert(key, (entry_name.clone(), scope.to_string(), desc));
+                        }
+                    }
                 } else {
-                    "other".to_string()
-                };
-
-                seen.insert(name, (group, scope.to_string(), desc));
+                    // Legacy flat layout or symlink — infer group from symlink target
+                    let key = format!("_/{}", entry_name);
+                    if seen.contains_key(&key) {
+                        continue;
+                    }
+                    let desc = read_skill_description(&path);
+                    let group = if path.is_symlink() {
+                        fs::read_link(&path)
+                            .ok()
+                            .and_then(|target| {
+                                target.parent().and_then(|p| {
+                                    p.file_name().map(|g| g.to_string_lossy().to_string())
+                                })
+                            })
+                            .unwrap_or_else(|| "other".to_string())
+                    } else {
+                        "other".to_string()
+                    };
+                    seen.insert(key, (group, scope.to_string(), desc));
+                }
             }
         }
     }
 
-    // Group by group name
+    // Group by group name, extract skill name from key
     let mut groups: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for (name, (group, scope, _desc)) in &seen {
+    for (key, (group, scope, _desc)) in &seen {
+        let skill_name = key.split('/').last().unwrap_or(key).to_string();
         groups
             .entry(group.clone())
             .or_default()
-            .push((name.clone(), scope.clone()));
+            .push((skill_name, scope.clone()));
     }
 
     println!(
