@@ -341,6 +341,7 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
 }
 
 fn uninstall(name: &str, global: bool) -> Result<()> {
+    let name = name.trim_end_matches('/');
     let target_dir = if global {
         config::global_skill_target()
     } else {
@@ -348,50 +349,16 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     };
     let scope = if global { "global" } else { "local" };
 
-    // Check if name matches a group directory (e.g. "callabo")
+    // Check if name matches a real group directory (e.g. "callabo/")
     let group_dir = target_dir.join(name);
     if group_dir.is_dir() && !group_dir.join("SKILL.md").exists() {
-        // It's a group — list skills inside
-        let skills: Vec<String> = fs::read_dir(&group_dir)?
-            .flatten()
-            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect();
+        return uninstall_group(&group_dir, name, scope);
+    }
 
-        if skills.is_empty() {
-            bail!("Group '{}' is empty", name);
-        }
-
-        // Confirm if TTY
-        if console::Term::stderr().is_term() {
-            eprintln!("Will uninstall {} skills from group '{}':", skills.len(), name);
-            for s in &skills {
-                eprintln!("  {}/{}", name, s);
-            }
-            eprintln!();
-            let confirmed = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("Proceed?")
-                .default(true)
-                .interact()
-                .context("Failed to render confirmation")?;
-            if !confirmed {
-                ui::info("Cancelled.");
-                return Ok(());
-            }
-        }
-
-        for s in &skills {
-            let path = group_dir.join(s);
-            if path.is_symlink() || path.is_file() {
-                fs::remove_file(&path)?;
-            } else {
-                fs::remove_dir_all(&path)?;
-            }
-            ui::success(&format!("Uninstalled skill '{}/{}' ({})", name, s, scope));
-        }
-        // Remove empty group dir
-        let _ = fs::remove_dir(&group_dir);
-        return Ok(());
+    // Check if name matches a virtual group (e.g. "other" — flat skills with inferred group)
+    let virtual_skills = find_virtual_group_skills(&target_dir, name);
+    if !virtual_skills.is_empty() {
+        return uninstall_virtual_group(&virtual_skills, name, scope);
     }
 
     // Single skill
@@ -412,6 +379,115 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     }
 
     ui::success(&format!("Uninstalled skill '{}' ({})", name, scope));
+    Ok(())
+}
+
+/// Uninstall all skills in a real group directory.
+fn uninstall_group(group_dir: &Path, group_name: &str, scope: &str) -> Result<()> {
+    let skills: Vec<String> = fs::read_dir(group_dir)?
+        .flatten()
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+
+    if skills.is_empty() {
+        bail!("Group '{}' is empty", group_name);
+    }
+
+    if console::Term::stderr().is_term() {
+        eprintln!("Will uninstall {} skills from group '{}':", skills.len(), group_name);
+        for s in &skills {
+            eprintln!("  {}/{}", group_name, s);
+        }
+        eprintln!();
+        let confirmed = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Proceed?")
+            .default(true)
+            .interact()
+            .context("Failed to render confirmation")?;
+        if !confirmed {
+            ui::info("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    for s in &skills {
+        let path = group_dir.join(s);
+        if path.is_symlink() || path.is_file() {
+            fs::remove_file(&path)?;
+        } else {
+            fs::remove_dir_all(&path)?;
+        }
+        ui::success(&format!("Uninstalled skill '{}/{}' ({})", group_name, s, scope));
+    }
+    let _ = fs::remove_dir(group_dir);
+    Ok(())
+}
+
+/// Find flat (non-grouped) skills whose inferred group matches the given name.
+/// "other" matches skills that have no group or can't infer one.
+fn find_virtual_group_skills(target_dir: &Path, group_name: &str) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    if let Ok(entries) = fs::read_dir(target_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let entry_name = entry.file_name().to_string_lossy().to_string();
+            if entry_name.starts_with('.') {
+                continue;
+            }
+            // Skip real group directories
+            if path.is_dir() && !path.join("SKILL.md").exists() {
+                continue;
+            }
+            // Infer group from symlink target
+            let inferred = if path.is_symlink() {
+                fs::read_link(&path)
+                    .ok()
+                    .and_then(|target| {
+                        target.parent().and_then(|p| {
+                            p.file_name().map(|g| g.to_string_lossy().to_string())
+                        })
+                    })
+                    .unwrap_or_else(|| "other".to_string())
+            } else {
+                "other".to_string()
+            };
+            if inferred == group_name {
+                matches.push(path);
+            }
+        }
+    }
+    matches
+}
+
+/// Uninstall flat skills that belong to a virtual group.
+fn uninstall_virtual_group(skills: &[PathBuf], group_name: &str, scope: &str) -> Result<()> {
+    if console::Term::stderr().is_term() {
+        eprintln!("Will uninstall {} skills from '{}':", skills.len(), group_name);
+        for s in skills {
+            eprintln!("  {}", s.file_name().unwrap_or_default().to_string_lossy());
+        }
+        eprintln!();
+        let confirmed = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Proceed?")
+            .default(true)
+            .interact()
+            .context("Failed to render confirmation")?;
+        if !confirmed {
+            ui::info("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    for path in skills {
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if path.is_symlink() || path.is_file() {
+            fs::remove_file(path)?;
+        } else {
+            fs::remove_dir_all(path)?;
+        }
+        ui::success(&format!("Uninstalled skill '{}' ({})", name, scope));
+    }
     Ok(())
 }
 
