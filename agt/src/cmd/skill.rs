@@ -346,7 +346,55 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     } else {
         config::local_skill_target()
     };
+    let scope = if global { "global" } else { "local" };
 
+    // Check if name matches a group directory (e.g. "callabo")
+    let group_dir = target_dir.join(name);
+    if group_dir.is_dir() && !group_dir.join("SKILL.md").exists() {
+        // It's a group — list skills inside
+        let skills: Vec<String> = fs::read_dir(&group_dir)?
+            .flatten()
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        if skills.is_empty() {
+            bail!("Group '{}' is empty", name);
+        }
+
+        // Confirm if TTY
+        if console::Term::stderr().is_term() {
+            eprintln!("Will uninstall {} skills from group '{}':", skills.len(), name);
+            for s in &skills {
+                eprintln!("  {}/{}", name, s);
+            }
+            eprintln!();
+            let confirmed = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("Proceed?")
+                .default(true)
+                .interact()
+                .context("Failed to render confirmation")?;
+            if !confirmed {
+                ui::info("Cancelled.");
+                return Ok(());
+            }
+        }
+
+        for s in &skills {
+            let path = group_dir.join(s);
+            if path.is_symlink() || path.is_file() {
+                fs::remove_file(&path)?;
+            } else {
+                fs::remove_dir_all(&path)?;
+            }
+            ui::success(&format!("Uninstalled skill '{}/{}' ({})", name, s, scope));
+        }
+        // Remove empty group dir
+        let _ = fs::remove_dir(&group_dir);
+        return Ok(());
+    }
+
+    // Single skill
     let skill_path = find_installed_skill(&target_dir, name)
         .context(format!("Skill '{}' is not installed", name))?;
 
@@ -356,7 +404,13 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
         fs::remove_dir_all(&skill_path)?;
     }
 
-    let scope = if global { "global" } else { "local" };
+    // Clean up empty group dir
+    if let Some(parent) = skill_path.parent() {
+        if parent != target_dir {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+
     ui::success(&format!("Uninstalled skill '{}' ({})", name, scope));
     Ok(())
 }
