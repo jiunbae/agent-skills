@@ -250,7 +250,7 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
         let local_installed = installed_skill_names(&config::local_skill_target());
         let global_installed = installed_skill_names(&config::global_skill_target());
 
-        let selection = ui::interactive::run_interactive_selector(
+        let selection = ui::interactive::run_interactive_selector_remote(
             &repo_root, &local_installed, &global_installed,
         )?;
 

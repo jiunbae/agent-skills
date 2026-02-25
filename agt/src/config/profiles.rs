@@ -47,7 +47,18 @@ fn load_profiles_file(source_dir: &Path) -> Option<BTreeMap<String, ProfileDef>>
 }
 
 fn available_profiles(source_dir: &Path) -> BTreeMap<String, ProfileDef> {
-    let mut profiles = builtin_profiles();
+    available_profiles_with_builtins(source_dir, true)
+}
+
+fn available_profiles_with_builtins(
+    source_dir: &Path,
+    include_builtins: bool,
+) -> BTreeMap<String, ProfileDef> {
+    let mut profiles = if include_builtins {
+        builtin_profiles()
+    } else {
+        BTreeMap::new()
+    };
     if let Some(file_profiles) = load_profiles_file(source_dir) {
         for (name, def) in file_profiles {
             profiles.insert(name, def);
@@ -113,7 +124,19 @@ pub fn resolve_profile(name: &str, source_dir: &Path) -> anyhow::Result<Resolved
 }
 
 pub fn list_profiles(source_dir: &Path) -> Vec<(String, String, usize)> {
-    let profiles = available_profiles(source_dir);
+    list_profiles_inner(source_dir, true)
+}
+
+/// List profiles without builtins — for remote repos that have their own profiles.yml.
+pub fn list_profiles_remote(source_dir: &Path) -> Vec<(String, String, usize)> {
+    list_profiles_inner(source_dir, false)
+}
+
+fn list_profiles_inner(
+    source_dir: &Path,
+    include_builtins: bool,
+) -> Vec<(String, String, usize)> {
+    let profiles = available_profiles_with_builtins(source_dir, include_builtins);
     let mut result: Vec<(String, String, usize)> = profiles
         .into_iter()
         .map(|(name, def)| {

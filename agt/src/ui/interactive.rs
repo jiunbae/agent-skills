@@ -16,13 +16,38 @@ pub fn run_interactive_selector(
     local_installed: &[String],
     global_installed: &[String],
 ) -> Result<InteractiveSelection> {
+    run_interactive_selector_inner(source_dir, local_installed, global_installed, false)
+}
+
+/// Interactive selector for remote repos — skips builtin profiles.
+pub fn run_interactive_selector_remote(
+    source_dir: &Path,
+    local_installed: &[String],
+    global_installed: &[String],
+) -> Result<InteractiveSelection> {
+    run_interactive_selector_inner(source_dir, local_installed, global_installed, true)
+}
+
+fn run_interactive_selector_inner(
+    source_dir: &Path,
+    local_installed: &[String],
+    global_installed: &[String],
+    remote: bool,
+) -> Result<InteractiveSelection> {
     let theme = ColorfulTheme::default();
 
-    let modes = &[
-        "Install a profile (curated set)",
-        "Browse by group",
-        "Install from remote (owner/repo/path)",
-    ];
+    let modes: &[&str] = if remote {
+        &[
+            "Install a profile (curated set)",
+            "Browse by group",
+        ]
+    } else {
+        &[
+            "Install a profile (curated set)",
+            "Browse by group",
+            "Install from remote (owner/repo/path)",
+        ]
+    };
     let mode = Select::with_theme(&theme)
         .with_prompt("How would you like to install skills?")
         .items(modes)
@@ -32,15 +57,19 @@ pub fn run_interactive_selector(
 
     match mode {
         None => Ok(InteractiveSelection::Cancelled),
-        Some(0) => select_profile(source_dir, &theme),
+        Some(0) => select_profile(source_dir, &theme, remote),
         Some(1) => browse_by_group(source_dir, local_installed, global_installed, &theme),
-        Some(2) => prompt_remote(&theme),
+        Some(2) if !remote => prompt_remote(&theme),
         _ => unreachable!(),
     }
 }
 
-fn select_profile(source_dir: &Path, theme: &ColorfulTheme) -> Result<InteractiveSelection> {
-    let profiles = config::list_profiles(source_dir);
+fn select_profile(source_dir: &Path, theme: &ColorfulTheme, remote: bool) -> Result<InteractiveSelection> {
+    let profiles = if remote {
+        config::list_profiles_remote(source_dir)
+    } else {
+        config::list_profiles(source_dir)
+    };
     if profiles.is_empty() {
         bail!("No profiles available");
     }
