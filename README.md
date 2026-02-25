@@ -25,7 +25,7 @@
 
 A collection of **skills**, **personas**, and **hooks** for AI coding agents (Claude Code, Codex CLI, Gemini CLI). Each skill is a self-contained markdown module that gives an agent domain-specific capabilities.
 
-> **CLI tool:** Install and manage skills with **[agt](https://github.com/open330/agt)** — `npm install -g @open330/agt`
+> **CLI tool:** Install and manage skills with **[agt](https://github.com/open330/agt)** — `npm install -g @open330/agt` or just `npx @open330/agt`
 
 ---
 
@@ -36,21 +36,17 @@ A collection of **skills**, **personas**, and **hooks** for AI coding agents (Cl
 ```prompt
 Install the agent-skills toolkit into this project:
 
-1. Install the agt CLI if not present:
-   npm install -g @open330/agt
+1. Install the "core" profile (essential skills for every workspace):
+   npx @open330/agt skill install --profile core
 
-2. Clone the skills repository:
-   git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+2. Install all available personas globally:
+   npx @open330/agt persona install --global --from jiunbae/agent-skills
 
-3. Install the "core" profile (essential skills for every workspace):
-   agt skill install --profile core
+3. Verify installation:
+   npx @open330/agt skill list
+   npx @open330/agt persona list
 
-4. Install all available personas globally:
-   agt persona install --global --from jiunbae/agent-skills
-
-5. Verify installation:
-   agt skill list
-   agt persona list
+Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
 <div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=33+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
@@ -59,11 +55,19 @@ Install the agent-skills toolkit into this project:
 
 ## Slowstart for Humans
 
-### With agt CLI (Recommended)
+### With npx (No Install)
+
+```bash
+npx @open330/agt skill install --profile core          # Install core skills
+npx @open330/agt skill install -g --from jiunbae/agent-skills  # Browse & install from repo
+npx @open330/agt persona install -g --from jiunbae/agent-skills
+```
+
+### With agt CLI (Global Install)
 
 ```bash
 npm install -g @open330/agt
-git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+agt skill install --profile core
 agt skill install -g git-commit-pr     # Install a skill globally
 agt persona install -g --all           # Install all personas globally
 ```
