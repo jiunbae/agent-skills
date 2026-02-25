@@ -3,8 +3,41 @@ use flate2::read::GzDecoder;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tar::Archive;
 use tempfile::TempDir;
+
+/// Resolve a GitHub token from environment or `gh auth token`.
+fn get_github_token() -> Option<String> {
+    if let Ok(t) = std::env::var("GITHUB_TOKEN") {
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+    if let Ok(t) = std::env::var("GH_TOKEN") {
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+    // Fall back to gh CLI
+    Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
+/// Build a ureq request with optional auth header.
+fn authed_get(url: &str) -> ureq::Request {
+    let req = ureq::get(url);
+    if let Some(token) = get_github_token() {
+        req.set("Authorization", &format!("Bearer {}", token))
+    } else {
+        req
+    }
+}
 
 /// Parsed remote specification
 #[derive(Debug, Clone)]
@@ -77,7 +110,7 @@ pub fn fetch_file(spec: &RemoteSpec) -> Result<Vec<u8>> {
         spec.owner, spec.repo, spec.git_ref, spec.path
     );
 
-    let response = ureq::get(&url)
+    let response = authed_get(&url)
         .call()
         .context(format!("Failed to download: {}", url))?;
 
@@ -97,8 +130,12 @@ pub fn fetch_file(spec: &RemoteSpec) -> Result<Vec<u8>> {
 pub fn fetch_dir(spec: &RemoteSpec) -> Result<(TempDir, PathBuf)> {
     let tmp_dir = TempDir::new().context("Failed to create temp directory")?;
 
-    // Try tags first (more common for versioned refs), then heads
+    // Try API tarball (works with auth for private repos), then archive URLs
     let urls = [
+        format!(
+            "https://api.github.com/repos/{}/{}/tarball/{}",
+            spec.owner, spec.repo, spec.git_ref
+        ),
         format!(
             "https://github.com/{}/{}/archive/refs/tags/{}.tar.gz",
             spec.owner, spec.repo, spec.git_ref
@@ -119,7 +156,11 @@ pub fn fetch_dir(spec: &RemoteSpec) -> Result<(TempDir, PathBuf)> {
             }
         }
 
-        let response = match ureq::get(url).call() {
+        let response = match authed_get(url)
+            .set("Accept", "application/vnd.github+json")
+            .set("User-Agent", "agt-cli")
+            .call()
+        {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -148,7 +189,10 @@ pub fn fetch_dir(spec: &RemoteSpec) -> Result<(TempDir, PathBuf)> {
     }
 
     let root = extracted_root.context(format!(
-        "Download failed: {}/{}@{}",
+        "Download failed: {}/{}@{}\n\
+         If this is a private repo, ensure authentication is available:\n  \
+         gh auth login          (gh CLI)\n  \
+         GITHUB_TOKEN=<token>   (environment variable)",
         spec.owner, spec.repo, spec.git_ref
     ))?;
 
