@@ -41,9 +41,39 @@ fn builtin_profiles() -> BTreeMap<String, ProfileDef> {
 }
 
 fn load_profiles_file(source_dir: &Path) -> Option<BTreeMap<String, ProfileDef>> {
-    let path = source_dir.join("profiles.yml");
-    let content = std::fs::read_to_string(&path).ok()?;
-    serde_yaml::from_str(&content).ok()
+    let mut merged = BTreeMap::new();
+
+    // Try profiles.yml first (canonical name)
+    let canonical = source_dir.join("profiles.yml");
+    if let Ok(content) = std::fs::read_to_string(&canonical) {
+        if let Ok(profiles) = serde_yaml::from_str::<BTreeMap<String, ProfileDef>>(&content) {
+            merged.extend(profiles);
+        }
+    }
+
+    // Also scan all *.yml files at root (repos may split profiles across files)
+    if let Ok(entries) = std::fs::read_dir(source_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("yml")
+                && path.file_name().unwrap_or_default() != "profiles.yml"
+            {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(profiles) =
+                        serde_yaml::from_str::<BTreeMap<String, ProfileDef>>(&content)
+                    {
+                        merged.extend(profiles);
+                    }
+                }
+            }
+        }
+    }
+
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    }
 }
 
 fn available_profiles(source_dir: &Path) -> BTreeMap<String, ProfileDef> {
