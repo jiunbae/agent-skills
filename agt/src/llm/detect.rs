@@ -2,6 +2,7 @@
 pub enum LlmCli {
     Codex,
     Claude,
+    OpenCode,
     Gemini,
     Ollama,
 }
@@ -11,6 +12,7 @@ impl std::fmt::Display for LlmCli {
         match self {
             LlmCli::Codex => write!(f, "codex"),
             LlmCli::Claude => write!(f, "claude"),
+            LlmCli::OpenCode => write!(f, "opencode"),
             LlmCli::Gemini => write!(f, "gemini"),
             LlmCli::Ollama => write!(f, "ollama"),
         }
@@ -28,7 +30,7 @@ fn command_exists(cmd: &str) -> bool {
 }
 
 /// Detect available LLM CLI.
-/// Priority: codex > claude (skip if CLAUDECODE set) > gemini > ollama
+/// Priority: codex > claude (skip if CLAUDECODE set) > opencode > gemini > ollama
 pub fn detect() -> Option<LlmCli> {
     if command_exists("codex") {
         return Some(LlmCli::Codex);
@@ -37,6 +39,10 @@ pub fn detect() -> Option<LlmCli> {
     // Skip claude if running inside Claude Code
     if std::env::var("CLAUDECODE").is_err() && command_exists("claude") {
         return Some(LlmCli::Claude);
+    }
+
+    if command_exists("opencode") {
+        return Some(LlmCli::OpenCode);
     }
 
     if command_exists("gemini") {
@@ -48,4 +54,26 @@ pub fn detect() -> Option<LlmCli> {
     }
 
     None
+}
+
+/// Detect all available LLM CLIs (for parallel execution).
+#[allow(dead_code)]
+pub fn detect_all() -> Vec<LlmCli> {
+    let mut found = Vec::new();
+    if command_exists("codex") {
+        found.push(LlmCli::Codex);
+    }
+    if std::env::var("CLAUDECODE").is_err() && command_exists("claude") {
+        found.push(LlmCli::Claude);
+    }
+    if command_exists("opencode") {
+        found.push(LlmCli::OpenCode);
+    }
+    if command_exists("gemini") {
+        found.push(LlmCli::Gemini);
+    }
+    if command_exists("ollama") {
+        found.push(LlmCli::Ollama);
+    }
+    found
 }

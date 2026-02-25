@@ -67,6 +67,9 @@ pub enum PersonaAction {
         /// Use Gemini for generation
         #[arg(long, value_name = "DESC")]
         gemini: Option<String>,
+        /// Use OpenCode for generation
+        #[arg(long, value_name = "DESC")]
+        opencode: Option<String>,
     },
     /// Show persona content (reads the markdown file)
     Show {
@@ -92,6 +95,9 @@ pub enum PersonaAction {
         /// Use Gemini for review
         #[arg(long)]
         gemini: bool,
+        /// Use OpenCode for review
+        #[arg(long)]
+        opencode: bool,
         /// Review staged changes only
         #[arg(long)]
         staged: bool,
@@ -136,7 +142,8 @@ pub fn execute(action: PersonaAction) -> Result<()> {
             codex,
             claude,
             gemini,
-        } => create(&name, ai, codex, claude, gemini),
+            opencode,
+        } => create(&name, ai, codex, claude, gemini, opencode),
         PersonaAction::Show { name } => show(&name),
         PersonaAction::Which { name } => which(&name),
         PersonaAction::Review {
@@ -145,6 +152,7 @@ pub fn execute(action: PersonaAction) -> Result<()> {
             codex,
             claude,
             gemini,
+            opencode,
             staged,
             base,
             output,
@@ -154,7 +162,7 @@ pub fn execute(action: PersonaAction) -> Result<()> {
             } else {
                 Some(prompt.join(" "))
             };
-            review(&name, custom_prompt, codex, claude, gemini, staged, base, output)
+            review(&name, custom_prompt, codex, claude, gemini, opencode, staged, base, output)
         }
     }
 }
@@ -684,6 +692,7 @@ fn create(
     codex: Option<String>,
     claude: Option<String>,
     gemini: Option<String>,
+    opencode: Option<String>,
 ) -> Result<()> {
     util::validate_name(name)?;
     let target_dir = config::local_persona_target();
@@ -698,12 +707,15 @@ fn create(
     let ai_desc = ai
         .or(codex.clone())
         .or(claude.clone())
-        .or(gemini.clone());
+        .or(gemini.clone())
+        .or(opencode.clone());
 
     let cli_override = if codex.is_some() {
         Some(llm::LlmCli::Codex)
     } else if claude.is_some() {
         Some(llm::LlmCli::Claude)
+    } else if opencode.is_some() {
+        Some(llm::LlmCli::OpenCode)
     } else if gemini.is_some() {
         Some(llm::LlmCli::Gemini)
     } else {
@@ -769,6 +781,7 @@ fn review(
     use_codex: bool,
     use_claude: bool,
     use_gemini: bool,
+    use_opencode: bool,
     staged: bool,
     base: Option<String>,
     output: Option<String>,
@@ -783,10 +796,12 @@ fn review(
         llm::LlmCli::Codex
     } else if use_claude {
         llm::LlmCli::Claude
+    } else if use_opencode {
+        llm::LlmCli::OpenCode
     } else if use_gemini {
         llm::LlmCli::Gemini
     } else {
-        llm::detect().context("No LLM CLI found. Install codex, claude, gemini, or ollama.")?
+        llm::detect().context("No LLM CLI found. Install codex, claude, opencode, gemini, or ollama.")?
     };
 
     // Build prompt: custom prompt mode vs diff review mode

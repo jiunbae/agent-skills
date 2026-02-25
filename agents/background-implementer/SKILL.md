@@ -45,12 +45,15 @@ ROUND=$(printf "R%02d" $(( $(ls .context/impl/R*-*.md 2>/dev/null | sed 's/.*\/R
 |----------|----------|---------|
 | **Claude** | Complex logic, APIs, multi-file changes | `Task({ run_in_background: true })` |
 | **Codex** | DB migrations, models, focused code gen | `nohup codex exec --full-auto -C {workdir} "prompt" > log 2>&1 &` |
+| **OpenCode** | General implementation, multi-model support | `nohup opencode run -q -f text "prompt" > log 2>&1 &` |
 | **Gemini** | Tests, documentation, code review | `nohup gemini -p "prompt" --yolo -o text > log 2>/dev/null &` |
-| **Ollama** | Simple utils, types | `ollama run codellama` |
+| **Ollama** | Simple utils, types | `ollama run $OLLAMA_MODEL` |
 
+> **OpenCode**: Use `opencode run -q -f text "prompt"` for non-interactive mode. `-q` suppresses the spinner, `-f text` outputs plain text. Use `--attach http://localhost:PORT` to connect to a running server (avoids cold boot). Supports multiple providers/models via config.
 > **Gemini v0.26+**: Use `-p "prompt"` for non-interactive mode. Use `--yolo` for auto-approve file writes. Use `-o text` for clean output. Redirect stdout to capture: `> output.md`. Do NOT use `-s` (that's `--sandbox`, not silent).
-> **Codex v0.101+** (model: gpt-5.3-codex): Use `codex exec --full-auto` for non-interactive. Use `-C dir` to set working directory. Use `-o file.md` to save last message. Use `nohup ... > log 2>&1 &` for background. Sandbox is `workspace-write` by default (reads anywhere, writes only to workspace + /tmp). For parallel Codex agents, use **git worktrees** to give each agent an isolated workspace — this prevents file conflicts. Use `--add-dir <path>` if agents need to write outside the workspace.
+> **Codex v0.101+**: Use `codex exec --full-auto` for non-interactive. Use `-C dir` to set working directory. Use `-o file.md` to save last message. Use `nohup ... > log 2>&1 &` for background. Sandbox is `workspace-write` by default (reads anywhere, writes only to workspace + /tmp). For parallel Codex agents, use **git worktrees** to give each agent an isolated workspace — this prevents file conflicts. Use `--add-dir <path>` if agents need to write outside the workspace.
 > **Claude subagents** are the most reliable for complex implementation. Always prefer Claude for tasks touching 3+ files or requiring deep codebase understanding.
+> **Ollama**: Model is configurable via `OLLAMA_MODEL` env var (default: `llama3.2`).
 
 ## Workflow
 

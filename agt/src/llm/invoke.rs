@@ -23,6 +23,14 @@ pub fn invoke(cli: LlmCli, prompt: &str) -> Result<String> {
             .spawn()
             .context("Failed to spawn claude")?,
 
+        LlmCli::OpenCode => Command::new("opencode")
+            .args(["run", "-q", "-f", "text", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to spawn opencode")?,
+
         LlmCli::Gemini => Command::new("gemini")
             .args(["-p", "-", "-o", "text"])
             .stdin(Stdio::piped())
@@ -31,13 +39,16 @@ pub fn invoke(cli: LlmCli, prompt: &str) -> Result<String> {
             .spawn()
             .context("Failed to spawn gemini")?,
 
-        LlmCli::Ollama => Command::new("ollama")
-            .args(["run", "llama3.2"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("Failed to spawn ollama")?,
+        LlmCli::Ollama => {
+            let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
+            Command::new("ollama")
+                .args(["run", &model])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("Failed to spawn ollama")?
+        }
     };
 
     // Write prompt via stdin

@@ -18,7 +18,7 @@ pub fn execute(prompt: &str, skill: Option<&str>) -> Result<()> {
 
     // Detect LLM
     let cli = llm::detect().context(
-        "No LLM CLI found. Install codex, claude, gemini, or ollama.",
+        "No LLM CLI found. Install codex, claude, opencode, gemini, or ollama.",
     )?;
 
     // Build final prompt
