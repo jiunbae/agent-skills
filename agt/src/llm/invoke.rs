@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 pub fn invoke(cli: LlmCli, prompt: &str) -> Result<String> {
     let mut child = match cli {
         LlmCli::Codex => Command::new("codex")
-            .args(["exec", "--full-auto", "-m", "o4-mini", "-"])
+            .args(["exec", "--full-auto", "-"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
