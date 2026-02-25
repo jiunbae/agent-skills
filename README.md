@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/skills-33-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
+  <a href="#quickstart-for-agents">Quickstart</a> •
   <a href="#skills-catalog">Skills</a> •
   <a href="#personas">Personas</a> •
   <a href="#hooks">Hooks</a> •
@@ -25,6 +26,34 @@
 A collection of **skills**, **personas**, and **hooks** for AI coding agents (Claude Code, Codex CLI, Gemini CLI). Each skill is a self-contained markdown module that gives an agent domain-specific capabilities.
 
 > **CLI tool:** Install and manage skills with **[agt](https://github.com/open330/agt)** — `npm install -g @open330/agt`
+
+---
+
+## Quickstart for Agents
+
+<div><img src="https://quickstart-for-agents.vercel.app/api/header.svg?theme=claude-code&logo=agent-skills&title=Install+skills,+personas,+and+hooks+for+AI+agents&mascot=hat" width="100%" /></div>
+
+```prompt
+Install the agent-skills toolkit into this project:
+
+1. Install the agt CLI if not present:
+   npm install -g @open330/agt
+
+2. Clone the skills repository:
+   git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+
+3. Install the "core" profile (essential skills for every workspace):
+   agt skill install --profile core
+
+4. Install all available personas globally:
+   agt persona install --global --from jiunbae/agent-skills
+
+5. Verify installation:
+   agt skill list
+   agt persona list
+```
+
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=33+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
 
 ---
 
