@@ -13,7 +13,7 @@
   <a href="#skills-catalog">Skills</a> •
   <a href="#personas">Personas</a> •
   <a href="#hooks">Hooks</a> •
-  <a href="#installation">Installation</a> •
+  <a href="#slowstart-for-humans">Install</a> •
   <a href="#contributing">Contributing</a>
   <br>
   <b><a href="README_ko.md">한국어</a></b>
@@ -57,28 +57,7 @@ Install the agent-skills toolkit into this project:
 
 ---
 
-## Quick Start
-
-```bash
-# Clone to ~/.agent-skills (agt discovers this automatically)
-git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
-
-# Install the agt CLI
-npm install -g @open330/agt
-
-# List available skills
-agt skill list
-
-# Install a skill to your project
-agt skill install kubernetes-skill
-
-# Or use install.sh directly
-cd ~/.agent-skills && ./install.sh --core
-```
-
----
-
-## Installation
+## Slowstart for Humans
 
 ### With agt CLI (Recommended)
 
