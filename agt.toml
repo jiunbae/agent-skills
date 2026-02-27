@@ -1,0 +1,14 @@
+# agt.toml — Post-install manifest
+# Declares setup rules that agt executes after skill installation.
+
+# Copy static context files to ~/.agents/
+[[setup.copy]]
+from = "static"
+to = "~/.agents"
+strategy = "merge"  # merge: skip existing files, replace: overwrite
+
+# Copy persona definitions to ~/.agents/personas/
+[[setup.copy]]
+from = "personas"
+to = "~/.agents/personas"
+strategy = "merge"
