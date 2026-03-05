@@ -103,6 +103,14 @@ fn browse_by_group(
         bail!("No skill groups found");
     }
 
+    // Get terminal width for truncation (avoid line-wrap rendering glitch)
+    let term_width = console::Term::stderr()
+        .size_checked()
+        .map(|(_h, w)| w as usize)
+        .unwrap_or(80);
+    // Reserve space for dialoguer's checkbox prefix ("  [x] " = ~6 chars)
+    let max_item_width = term_width.saturating_sub(6);
+
     // Build group display with counts
     let group_items: Vec<String> = groups
         .iter()
@@ -150,7 +158,8 @@ fn browse_by_group(
             if desc.is_empty() {
                 format!("{} {}", tag, name)
             } else {
-                format!("{} {} - {}", tag, name, desc)
+                let line = format!("{} {} - {}", tag, name, desc);
+                truncate_to_width(&line, max_item_width)
             }
         })
         .collect();
@@ -245,6 +254,12 @@ pub fn select_personas(
     let theme = ColorfulTheme::default();
 
     let scope = if global { "global" } else { "local" };
+    let term_width = console::Term::stderr()
+        .size_checked()
+        .map(|(_h, w)| w as usize)
+        .unwrap_or(80);
+    let max_item_width = term_width.saturating_sub(6);
+
     let items: Vec<String> = personas
         .iter()
         .map(|(name, role)| {
@@ -256,7 +271,8 @@ pub fn select_personas(
             if role.is_empty() {
                 format!("{} {}", tag, name)
             } else {
-                format!("{} {} - {}", tag, name, role)
+                let line = format!("{} {} - {}", tag, name, role);
+                truncate_to_width(&line, max_item_width)
             }
         })
         .collect();
@@ -315,4 +331,20 @@ fn read_skill_description(path: &Path) -> String {
         }
     }
     String::new()
+}
+
+/// Truncate a string to fit within the given display width.
+/// Appends "…" if truncated. Counts characters (not bytes) for correct
+/// handling of CJK / emoji, though dialoguer itself uses char count.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_width {
+        return s.to_string();
+    }
+    let mut result: String = chars[..max_width.saturating_sub(1)].iter().collect();
+    result.push('…');
+    result
 }
