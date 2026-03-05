@@ -765,6 +765,19 @@ fn list(installed: bool, local: bool, global: bool, profiles: bool, json: bool) 
     // Default: grouped view showing all skills with install status
     if let Some(source_dir) = config::find_source_dir() {
         let skill_groups = config::skill_groups(&source_dir);
+
+        // Collect all source skill names for later diff
+        let mut source_skill_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for group in &skill_groups {
+            for name in config::skills_in_group(&source_dir, group) {
+                source_skill_names.insert(name);
+            }
+        }
+
+        // Merge installed skills that aren't in source (e.g. installed via --from)
+        let installed_groups = installed_skill_groups(&local_dir, &global_dir);
+
         let mut total = 0usize;
         let mut total_installed = 0usize;
 
@@ -789,6 +802,32 @@ fn list(installed: bool, local: bool, global: bool, profiles: bool, json: bool) 
                         "description": desc,
                     }));
                 }
+                // Add installed skills in this group that aren't in source
+                if let Some(extra) = installed_groups.get(group.as_str()) {
+                    for (name, scope, desc) in extra {
+                        if !skills.contains(name) {
+                            entries.push(serde_json::json!({
+                                "name": name,
+                                "group": group,
+                                "status": scope,
+                                "description": desc,
+                            }));
+                        }
+                    }
+                }
+            }
+            // Also add installed groups not in source
+            for (group, skills) in &installed_groups {
+                if !skill_groups.contains(&group.to_string()) {
+                    for (name, scope, desc) in skills {
+                        entries.push(serde_json::json!({
+                            "name": name,
+                            "group": group,
+                            "status": scope,
+                            "description": desc,
+                        }));
+                    }
+                }
             }
             println!("{}", serde_json::to_string_pretty(&entries)?);
             return Ok(());
@@ -805,7 +844,18 @@ fn list(installed: bool, local: bool, global: bool, profiles: bool, json: bool) 
         println!("{}", "=".repeat(40));
 
         for group in &skill_groups {
-            let skills = config::skills_in_group(&source_dir, group);
+            let mut skills = config::skills_in_group(&source_dir, group);
+
+            // Merge installed skills not in source for this group
+            if let Some(extra) = installed_groups.get(group.as_str()) {
+                for (name, _, _) in extra {
+                    if !skills.contains(name) {
+                        skills.push(name.clone());
+                    }
+                }
+                skills.sort();
+            }
+
             let group_installed: usize = skills
                 .iter()
                 .filter(|s| local_installed.contains(*s) || global_installed.contains(*s))
@@ -830,6 +880,31 @@ fn list(installed: bool, local: bool, global: bool, profiles: bool, json: bool) 
                     format!("{}", "○".dimmed())
                 };
                 println!("  {} {:28}", status, skill_name);
+            }
+        }
+
+        // Show installed groups not found in source
+        for (group, skills) in &installed_groups {
+            if skill_groups.contains(&group.to_string()) {
+                continue;
+            }
+            let count = skills.len();
+            total += count;
+            total_installed += count;
+
+            println!(
+                "\n{} ({}/{})",
+                format!("{}/", group).yellow().bold(),
+                count,
+                count
+            );
+            for (name, scope, _) in skills {
+                let status = if scope == "local" {
+                    format!("{}", "L".green())
+                } else {
+                    format!("{}", "G".blue())
+                };
+                println!("  {} {:28}", status, name);
             }
         }
 
@@ -942,6 +1017,79 @@ fn find_skill_in_source(source_dir: &Path, name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Build a map of group -> [(skill_name, scope, description)] from installed dirs.
+/// Discovers skills from both grouped subdirs and flat symlinks (inferring group from target).
+fn installed_skill_groups(
+    local_dir: &Path,
+    global_dir: &Path,
+) -> std::collections::BTreeMap<String, Vec<(String, String, String)>> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
+    // Track seen skill names to avoid duplicates (local takes priority)
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for (dir, scope) in [(local_dir, "local"), (global_dir, "global")] {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                let path = entry.path();
+
+                if path.is_dir() && !path.join("SKILL.md").exists() {
+                    // Group directory — scan children
+                    if let Ok(children) = fs::read_dir(&path) {
+                        for child in children.flatten() {
+                            let child_name = child.file_name().to_string_lossy().to_string();
+                            if child_name.starts_with('.') {
+                                continue;
+                            }
+                            if seen.contains(&child_name) {
+                                continue;
+                            }
+                            seen.insert(child_name.clone());
+                            let desc = read_skill_description(&child.path());
+                            groups
+                                .entry(name.clone())
+                                .or_default()
+                                .push((child_name, scope.to_string(), desc));
+                        }
+                    }
+                } else {
+                    // Flat skill — infer group from symlink target
+                    if seen.contains(&name) {
+                        continue;
+                    }
+                    seen.insert(name.clone());
+                    let group = if path.is_symlink() {
+                        fs::read_link(&path)
+                            .ok()
+                            .and_then(|target| {
+                                target.parent().and_then(|p| {
+                                    p.file_name().map(|g| g.to_string_lossy().to_string())
+                                })
+                            })
+                            .unwrap_or_else(|| "other".to_string())
+                    } else {
+                        "other".to_string()
+                    };
+                    let desc = read_skill_description(&path);
+                    groups
+                        .entry(group)
+                        .or_default()
+                        .push((name, scope.to_string(), desc));
+                }
+            }
+        }
+    }
+    // Sort skills within each group
+    for skills in groups.values_mut() {
+        skills.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+    groups
 }
 
 fn installed_skill_names(dir: &Path) -> Vec<String> {
