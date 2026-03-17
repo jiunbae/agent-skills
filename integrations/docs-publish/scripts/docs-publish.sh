@@ -1,5 +1,5 @@
 #!/bin/bash
-# docs-publish.sh - Publish markdown documents to docs.jiun.dev
+# docs-publish.sh - Publish markdown documents to a Docsify server
 #
 # Usage:
 #   docs-publish.sh push <file-or-dir>     # Upload file/directory
@@ -10,10 +10,10 @@
 #   docs-publish.sh url <name>             # Get URL for a document
 set -euo pipefail
 
-DOCS_HOST="REDACTED_IP"
-DOCS_USER="root"
-DOCS_ROOT="/var/www/docs"
-DOCS_URL="https://docs.jiun.dev"
+DOCS_HOST="${DOCS_HOST:?Error: DOCS_HOST not set}"
+DOCS_USER="${DOCS_USER:-root}"
+DOCS_ROOT="${DOCS_ROOT:-/var/www/docs}"
+DOCS_URL="${DOCS_URL:?Error: DOCS_URL not set}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -29,8 +29,16 @@ _ensure_name() {
     local name="$1"
     # Strip .md extension if present
     name="${name%.md}"
-    # Sanitize: lowercase, replace spaces with hyphens
-    echo "$name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9/_-]//g'
+    # Sanitize: lowercase, replace spaces with hyphens, allow only safe chars
+    name=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9/_-]//g')
+    # Block path traversal
+    if echo "$name" | grep -qE '(^|/)\.\.(/|$)'; then
+        echo -e "${RED}Error:${NC} path traversal detected in name: $1" >&2
+        return 1
+    fi
+    # Remove leading slashes
+    name="${name#/}"
+    echo "$name"
 }
 
 _date_prefix() {
@@ -51,7 +59,14 @@ cmd_push() {
     local src="${1:?Error: specify file or directory to push}"
 
     if [ -f "$src" ]; then
-        local basename=$(basename "$src")
+        local basename
+        basename=$(basename "$src")
+        # Sanitize filename for safe remote path
+        basename=$(echo "$basename" | sed 's/[^a-zA-Z0-9._-]//g')
+        if [ -z "$basename" ]; then
+            echo -e "${RED}Error:${NC} invalid filename after sanitization" >&2
+            exit 1
+        fi
         echo -e "${CYAN}Pushing${NC} ${basename}..."
         rsync -az --progress "$src" "${DOCS_USER}@${DOCS_HOST}:${DOCS_ROOT}/${basename}"
         local name="${basename%.md}"
@@ -99,7 +114,7 @@ cmd_write() {
         _ssh "mkdir -p '${DOCS_ROOT}/${dir}'"
     fi
 
-    echo "$content" | _ssh "cat > '${DOCS_ROOT}/${filename}' && chown www-data:www-data '${DOCS_ROOT}/${filename}'"
+    printf '%s\n' "$content" | _ssh "cat > '${DOCS_ROOT}/${filename}' && chown www-data:www-data '${DOCS_ROOT}/${filename}'"
     _ssh "/usr/local/bin/update-sidebar" 2>/dev/null || true
     echo -e "${GREEN}Published:${NC} ${DOCS_URL}/#/${name}"
 }

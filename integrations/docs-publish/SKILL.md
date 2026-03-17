@@ -1,13 +1,13 @@
 ---
 name: docs-publish
-description: Publishes markdown documents to docs.jiun.dev for external sharing. Supports upload, edit, delete, and listing. Use for "문서 공개", "docs 업로드", "외부 공유", "docs-push", "publish" requests.
+description: Publishes markdown documents to your-docs-domain for external sharing. Supports upload, edit, delete, and listing. Use for "문서 공개", "docs 업로드", "외부 공유", "docs-push", "publish" requests.
 ---
 
 # Docs Publish - 마크다운 문서 외부 공개
 
 ## Overview
 
-마크다운 문서를 `docs.jiun.dev`에 퍼블리시하여 외부 링크로 공유하는 스킬입니다.
+마크다운 문서를 `your-docs-domain`에 퍼블리시하여 외부 링크로 공유하는 스킬입니다.
 
 **핵심 기능:**
 - 마크다운 파일 업로드 → 즉시 외부 접근 가능한 URL 생성
@@ -18,7 +18,7 @@ description: Publishes markdown documents to docs.jiun.dev for external sharing.
 
 **퍼블리시 URL 형식:**
 ```
-https://docs.jiun.dev/#/YYYY-MM-DD-document-name
+https://<DOCS_URL>/#/YYYY-MM-DD-document-name
 ```
 
 **파일명 컨벤션:**
@@ -29,7 +29,7 @@ https://docs.jiun.dev/#/YYYY-MM-DD-document-name
 
 ## Prerequisites
 
-docs 서버 (REDACTED_IP)에 SSH 접근 가능해야 합니다.
+docs 서버에 SSH 접근 가능해야 합니다. 환경변수 `DOCS_HOST`와 `DOCS_URL`이 설정되어야 합니다.
 
 ## Workflow
 
@@ -91,10 +91,10 @@ echo "updated content" | ./scripts/docs-publish.sh write "document-name"
 ```
 사용자: 이 API 문서 외부에 공유할 수 있게 publish 해줘
 
-Claude: docs.jiun.dev에 퍼블리시합니다.
+Claude: your-docs-domain에 퍼블리시합니다.
 
 ✅ 퍼블리시 완료
-- URL: https://docs.jiun.dev/#/2026-03-16-api-documentation
+- URL: https://<DOCS_URL>/#/2026-03-16-api-documentation
 - 이 링크로 외부에서 바로 접근 가능합니다.
 ```
 
@@ -106,7 +106,7 @@ Claude: docs.jiun.dev에 퍼블리시합니다.
 Claude: 기존 문서를 가져와서 수정합니다.
 
 ✅ 업데이트 완료
-- URL: https://docs.jiun.dev/#/api-documentation
+- URL: https://<DOCS_URL>/#/api-documentation
 ```
 
 ### 예시 3: 문서 삭제
@@ -125,8 +125,8 @@ Claude: 삭제합니다.
 사용자: docs에 뭐 올라가있어?
 
 Claude: 퍼블리시된 문서 목록 (최신순):
-- 2026-03-16-gpai-visualizer-research → https://docs.jiun.dev/#/2026-03-16-gpai-visualizer-research
-- 2026-03-08-tmux-to-zellij-migration → https://docs.jiun.dev/#/2026-03-08-tmux-to-zellij-migration
+- 2026-03-16-gpai-visualizer-research → https://<DOCS_URL>/#/2026-03-16-gpai-visualizer-research
+- 2026-03-08-tmux-to-zellij-migration → https://<DOCS_URL>/#/2026-03-08-tmux-to-zellij-migration
 ```
 
 ### 예시 5: Obsidian articles 일괄 퍼블리시
@@ -139,17 +139,17 @@ Claude: Obsidian vault의 articles를 일괄 업로드합니다.
 ./scripts/docs-publish.sh push ~/s-lastorder/articles/
 
 ✅ 38개 문서 퍼블리시 완료
-- URL: https://docs.jiun.dev
+- URL: https://<DOCS_URL>
 ```
 
 ## Configuration
 
-| 설정 | 값 |
-|------|-----|
-| 서버 | REDACTED_IP (docs LXC) |
-| 문서 루트 | /var/www/docs |
-| 외부 URL | https://docs.jiun.dev |
-| 인증 | SSH key (root) |
+| 환경변수 | 설명 | 필수 |
+|----------|------|------|
+| `DOCS_HOST` | docs 서버 IP/호스트명 | Yes |
+| `DOCS_URL` | 외부 접근 URL | Yes |
+| `DOCS_USER` | SSH 사용자 (기본: root) | No |
+| `DOCS_ROOT` | 서버 문서 루트 (기본: /var/www/docs) | No |
 
 ## Best Practices
 

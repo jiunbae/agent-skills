@@ -14,7 +14,7 @@
 set -e
 
 # 기본 설정
-IAC_FOLDER_ID="${BW_FOLDER_ID:-REDACTED_FOLDER_ID}"
+IAC_FOLDER_ID="${BW_FOLDER_ID:?Error: BW_FOLDER_ID not set}"
 
 # 색상 정의
 RED='\033[0;31m'

@@ -68,10 +68,10 @@ cmd_servers() {
         echo "Create one with:"
         cat << 'EOF'
 servers:
-  reaper:
-    host: server.example.internal
-    user: june
-    model_base: /nfs/train/models
+  my-server:
+    host: server.internal
+    user: username
+    model_base: /path/to/models
 EOF
         return 1
     fi
