@@ -61,10 +61,21 @@ agt persona show security-reviewer
 
 | 파일 | 역할 | 도메인 |
 |------|------|--------|
-| `security-reviewer.md` | Senior AppSec Engineer | OWASP, 인증, 인젝션, 데이터 노출 |
+| `security-reviewer.md` | Senior AppSec Engineer | OWASP, 인증/인가, 인젝션, 데이터 노출 |
 | `architecture-reviewer.md` | Principal Architect | SOLID, 결합도, API 설계, 레이어 |
 | `code-quality-reviewer.md` | Staff Engineer | 가독성, 복잡도, DRY, 테스트 |
 | `performance-reviewer.md` | Performance Engineer | 메모리, CPU, I/O, 확장성 |
+| `database-reviewer.md` | Senior DBA | 스키마, 인덱스, 쿼리, 트랜잭션 |
+| `devops-reviewer.md` | DevOps / SRE | CI/CD, 컨테이너, IaC, 배포 |
+| `frontend-reviewer.md` | Senior Frontend Engineer | 컴포넌트, 상태관리, 접근성, 번들 |
+| `ai-llm-reviewer.md` | Staff AI Engineer | 프롬프트 인젝션, 토큰 비용, tool-use 안전성, eval |
+| `privacy-reviewer.md` | Privacy Engineer / DPO | PII/생체정보, 동의, 보존, 삭제권, GDPR |
+| `testing-reviewer.md` | Staff Test Engineer | 커버리지, flaky, 결정론적 테스트, contract |
+| `data-engineering-reviewer.md` | Analytics / Data Engineer | 멱등성, 백필, 스키마 드리프트, dbt |
+| `observability-reviewer.md` | SRE / Observability | 구조적 로깅, 트레이싱, 메트릭, 알림 |
+| `api-dx-reviewer.md` | Principal API/DX Engineer | semver, breaking change, SDK DX, changelog |
+
+> `marketing-manager-reviewer.md`, `product-manager-reviewer.md`, `sns-content-strategist.md` 등 비코드 페르소나는 개인 라이브러리(이 저장소) 전용입니다.
 
 ## 에이전트에서 직접 사용
 
