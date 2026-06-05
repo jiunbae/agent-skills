@@ -24,6 +24,7 @@ declare -A FILE_TYPES=(
     ["readme"]="README.md|리드미|설명서|가이드"
     ["notion"]="NOTION.md|노션 설정|노션 페이지|업로드 설정|notion"
     ["vault"]="VAULT.md|시크릿|비밀번호|API 키|credentials|vault|vaultwarden|인증 정보"
+    ["review-index"]="review-index.yml|리뷰 인덱스|review index|persona review router|reviewer selector|페르소나 라우터"
     ["persona"]="personas/|페르소나|persona|reviewer|에이전트 페르소나|agent persona|리뷰어 페르소나"
 )
 
@@ -52,9 +53,9 @@ resolve_file_type() {
 find_by_pattern() {
     local pattern="$1"
     if [[ "$pattern" == */ ]]; then
-        find "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1
+        find -L "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1
     else
-        find "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1
+        find -L "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1
     fi
 }
 
@@ -74,8 +75,8 @@ build_index() {
     while IFS= read -r -d '' file; do
         local filename=$(basename "$file")
         local relpath=${file#$AGENTS_DIR/}
-        local size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
-        local modified=$(stat -f%m "$file" 2>/dev/null || stat -c%Y "$file" 2>/dev/null || echo "0")
+        local size=$(stat -L -f%z "$file" 2>/dev/null || stat -Lc%s "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
+        local modified=$(stat -L -f%m "$file" 2>/dev/null || stat -Lc%Y "$file" 2>/dev/null || stat -c%Y "$file" 2>/dev/null || echo "0")
 
         # 파일 타입 감지
         local file_type=$(resolve_file_type "$filename" "$relpath" "unknown")
@@ -87,7 +88,7 @@ build_index() {
         fi
 
         echo -n '    {"path": "'$relpath'", "type": "'$file_type'", "size": '$size', "modified": '$modified'}'
-    done < <(find "$AGENTS_DIR" -name "*.md" -type f -print0 2>/dev/null)
+    done < <(find -L "$AGENTS_DIR" \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) -type f -print0 2>/dev/null)
 
     echo ""
     echo "  ]"
@@ -113,14 +114,14 @@ list_files() {
     while IFS= read -r -d '' file; do
         local filename=$(basename "$file")
         local relpath=${file#$AGENTS_DIR/}
-        local size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
+        local size=$(stat -L -f%z "$file" 2>/dev/null || stat -Lc%s "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
         local size_human=$(numfmt --to=iec $size 2>/dev/null || echo "${size}B")
 
         # 파일 타입
         local file_type=$(resolve_file_type "$filename" "$relpath" "other")
 
         echo "| \`$filename\` | $file_type | $size_human | \`$relpath\` |"
-    done < <(find "$AGENTS_DIR" -name "*.md" -type f -print0 2>/dev/null | sort -z)
+    done < <(find -L "$AGENTS_DIR" \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) -type f -print0 2>/dev/null | sort -z)
 
     echo ""
     echo "**Base Path**: \`$AGENTS_DIR\`"
@@ -169,7 +170,7 @@ search_files() {
 
     # 파일 내용 검색
     if [ "$found" = false ]; then
-        local content_matches=$(grep -ril "$query" "$AGENTS_DIR"/*.md 2>/dev/null | head -3 || true)
+        local content_matches=$(grep -ril "$query" "$AGENTS_DIR"/*.md "$AGENTS_DIR"/*.yml "$AGENTS_DIR"/*.yaml 2>/dev/null | head -3 || true)
 
         if [ -n "$content_matches" ]; then
             echo "### Content Matches"

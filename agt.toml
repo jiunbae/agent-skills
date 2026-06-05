@@ -7,8 +7,6 @@ from = "static"
 to = "~/.agents"
 strategy = "merge"  # merge: skip existing files, replace: overwrite
 
-# Copy persona definitions to ~/.agents/personas/
-[[setup.copy]]
-from = "personas"
-to = "~/.agents/personas"
-strategy = "merge"
+# Personas are installed selectively with `agt persona install`.
+# Keep ~/.agents/personas as a curated active set instead of copying
+# the whole persona library on every post-install run.

@@ -162,7 +162,17 @@ pub fn execute(action: PersonaAction) -> Result<()> {
             } else {
                 Some(prompt.join(" "))
             };
-            review(&name, custom_prompt, codex, claude, gemini, opencode, staged, base, output)
+            review(
+                &name,
+                custom_prompt,
+                codex,
+                claude,
+                gemini,
+                opencode,
+                staged,
+                base,
+                output,
+            )
         }
     }
 }
@@ -178,8 +188,7 @@ fn install(
         return install_remote(&spec_str, global, force);
     }
 
-    let source_dir = config::find_source_dir()
-        .context(config::source_dir_hint())?;
+    let source_dir = config::find_source_dir().context(config::source_dir_hint())?;
     let persona_lib = config::persona_library(&source_dir);
 
     if all {
@@ -254,16 +263,7 @@ fn install_all(persona_lib: &Path, global: bool, force: bool) -> Result<()> {
     fs::create_dir_all(&target_dir)?;
 
     let mut count = 0;
-    for entry in fs::read_dir(persona_lib)?.flatten() {
-        let path = entry.path();
-        let raw_name = entry.file_name().to_string_lossy().to_string();
-
-        // Skip README and hidden files
-        if raw_name.starts_with('.') || raw_name == "README.md" {
-            continue;
-        }
-
-        let name = raw_name.strip_suffix(".md").unwrap_or(&raw_name).to_string();
+    for (name, path) in discover_personas_in_dir(persona_lib)? {
         let link_path = target_dir.join(&name);
 
         if link_path.exists() || link_path.is_symlink() {
@@ -274,7 +274,10 @@ fn install_all(persona_lib: &Path, global: bool, force: bool) -> Result<()> {
                     fs::remove_dir_all(&link_path)?;
                 }
             } else {
-                ui::warn(&format!("Skipping '{}' (already exists, use --force)", name));
+                ui::warn(&format!(
+                    "Skipping '{}' (already exists, use --force)",
+                    name
+                ));
                 continue;
             }
         }
@@ -352,13 +355,20 @@ fn install_remote(spec_str: &str, global: bool, force: bool) -> Result<()> {
 }
 
 fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> Result<()> {
-    ui::info(&format!("Downloading {}/{}@{}...", spec.owner, spec.repo, spec.git_ref));
+    ui::info(&format!(
+        "Downloading {}/{}@{}...",
+        spec.owner, spec.repo, spec.git_ref
+    ));
     let (_tmp_dir, repo_root) = remote::fetch_dir(spec)?;
 
     // Look for personas/ directory in the repo
     let persona_dir = repo_root.join("personas");
     if !persona_dir.is_dir() {
-        bail!("No personas/ directory found in {}/{}", spec.owner, spec.repo);
+        bail!(
+            "No personas/ directory found in {}/{}",
+            spec.owner,
+            spec.repo
+        );
     }
 
     // Discover all personas in the repo
@@ -373,7 +383,10 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
         let is_persona = if path.is_dir() {
             path.join("PERSONA.md").exists()
                 || fs::read_dir(&path)
-                    .map(|rd| rd.flatten().any(|e| e.path().extension().is_some_and(|ext| ext == "md")))
+                    .map(|rd| {
+                        rd.flatten()
+                            .any(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+                    })
                     .unwrap_or(false)
         } else {
             path.extension().is_some_and(|e| e == "md")
@@ -383,7 +396,10 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
             continue;
         }
 
-        let name = raw_name.strip_suffix(".md").unwrap_or(&raw_name).to_string();
+        let name = raw_name
+            .strip_suffix(".md")
+            .unwrap_or(&raw_name)
+            .to_string();
         let (role, _, _) = if path.is_dir() {
             read_persona_info(&path)
         } else {
@@ -400,9 +416,11 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
 
     // Interactive selection if TTY
     let is_tty = console::Term::stderr().is_term();
-    let installed_names = installed_persona_names(
-        &if global { config::global_persona_target() } else { config::local_persona_target() },
-    );
+    let installed_names = installed_persona_names(&if global {
+        config::global_persona_target()
+    } else {
+        config::local_persona_target()
+    });
 
     let names_to_install: Vec<String> = if is_tty {
         let persona_list: Vec<(String, String)> = available
@@ -418,7 +436,10 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
             }
         }
     } else {
-        available.iter().map(|(name, _, _, _)| name.clone()).collect()
+        available
+            .iter()
+            .map(|(name, _, _, _)| name.clone())
+            .collect()
     };
 
     let target_dir = if global {
@@ -481,7 +502,10 @@ fn uninstall(name: &str, global: bool) -> Result<()> {
     util::validate_name(name)?;
     // Try to find the persona: check dir, .md file, in both local and global
     let (path, scope) = if global {
-        (find_installed_persona(name, &config::global_persona_target()), "global")
+        (
+            find_installed_persona(name, &config::global_persona_target()),
+            "global",
+        )
     } else {
         // Try local first, then auto-detect global
         let local = find_installed_persona(name, &config::local_persona_target());
@@ -700,7 +724,11 @@ fn create(
 
     let persona_dir = target_dir.join(name);
     if persona_dir.exists() {
-        bail!("Persona '{}' already exists at {}", name, persona_dir.display());
+        bail!(
+            "Persona '{}' already exists at {}",
+            name,
+            persona_dir.display()
+        );
     }
 
     // Determine if AI generation is requested
@@ -731,7 +759,11 @@ fn create(
     fs::create_dir_all(&persona_dir)?;
     fs::write(persona_dir.join("PERSONA.md"), content)?;
 
-    ui::success(&format!("Created persona '{}' at {}", name, persona_dir.display()));
+    ui::success(&format!(
+        "Created persona '{}' at {}",
+        name,
+        persona_dir.display()
+    ));
     Ok(())
 }
 
@@ -801,7 +833,8 @@ fn review(
     } else if use_gemini {
         llm::LlmCli::Gemini
     } else {
-        llm::detect().context("No LLM CLI found. Install codex, claude, opencode, gemini, or ollama.")?
+        llm::detect()
+            .context("No LLM CLI found. Install codex, claude, opencode, gemini, or ollama.")?
     };
 
     // Build prompt: custom prompt mode vs diff review mode
@@ -818,7 +851,10 @@ fn review(
             ui::warn("No changes to review.");
             return Ok(());
         }
-        ui::info(&format!("Reviewing with {} using persona '{}'...", cli, name));
+        ui::info(&format!(
+            "Reviewing with {} using persona '{}'...",
+            cli, name
+        ));
         format!(
             "You are acting as the following persona:\n\n{}\n\n\
              Review the following code changes and provide feedback:\n\n\
@@ -866,14 +902,7 @@ fn find_persona(name: &str) -> Result<PathBuf> {
     // Check library (dir or .md)
     if let Some(source_dir) = config::find_source_dir() {
         let lib = config::persona_library(&source_dir);
-        let lib_dir = lib.join(name);
-        let lib_md = lib.join(format!("{}.md", name));
-        if lib_dir.exists() {
-            return Ok(lib_dir);
-        }
-        if lib_md.exists() {
-            return Ok(lib_md);
-        }
+        return find_in_library(&lib, name);
     }
 
     bail!("Persona '{}' not found", name);
@@ -883,8 +912,9 @@ fn find_persona(name: &str) -> Result<PathBuf> {
 /// - Directory with PERSONA.md inside
 /// - Single .md file
 fn find_persona_md(path: &Path) -> Result<PathBuf> {
-    // If path is already a .md file
-    if path.is_file() && path.extension().is_some_and(|e| e == "md") {
+    // If path is already a file. Installed personas may be extensionless
+    // symlinks whose target is a markdown file.
+    if path.is_file() {
         return Ok(path.to_path_buf());
     }
 
@@ -900,10 +930,7 @@ fn find_persona_md(path: &Path) -> Result<PathBuf> {
             }
         }
     }
-    bail!(
-        "No PERSONA.md found in {}",
-        path.display()
-    );
+    bail!("No PERSONA.md found in {}", path.display());
 }
 
 fn installed_persona_names(dir: &Path) -> Vec<String> {
@@ -927,43 +954,82 @@ fn list_personas_in_dir(
     scope: &str,
     entries: &mut Vec<serde_json::Value>,
 ) -> Result<()> {
-    if let Ok(read) = fs::read_dir(dir) {
-        for entry in read.flatten() {
-            let path = entry.path();
-            let raw_name = entry.file_name().to_string_lossy().to_string();
-            if raw_name.starts_with('.') || raw_name == "README.md" {
-                continue;
-            }
+    for (name, path) in discover_personas_in_dir(dir)? {
+        let (role, domain, kind) = if path.is_dir() {
+            read_persona_info(&path)
+        } else {
+            read_persona_info_from_file(&path)
+        };
 
-            // Handle both directories and .md files
-            let (name, role, domain, kind) = if path.is_dir() {
-                let (role, domain, kind) = read_persona_info(&path);
-                (raw_name, role, domain, kind)
-            } else if path.extension().is_some_and(|e| e == "md") {
-                let persona_name = raw_name.strip_suffix(".md").unwrap_or(&raw_name).to_string();
-                let (role, domain, kind) = read_persona_info_from_file(&path);
-                (persona_name, role, domain, kind)
-            } else {
-                continue;
-            };
+        let is_remote = path.is_dir() && path.join(".remote-source").exists();
 
-            let is_remote = if path.is_dir() {
-                path.join(".remote-source").exists()
-            } else {
-                false
-            };
-
-            entries.push(serde_json::json!({
-                "name": name,
-                "scope": scope,
-                "role": role,
-                "domain": domain,
-                "type": kind,
-                "remote": is_remote,
-            }));
-        }
+        entries.push(serde_json::json!({
+            "name": name,
+            "scope": scope,
+            "role": role,
+            "domain": domain,
+            "type": kind,
+            "remote": is_remote,
+        }));
     }
     Ok(())
+}
+
+fn discover_personas_in_dir(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let mut discovered = Vec::new();
+    let mut entries: Vec<_> = fs::read_dir(dir)?.flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let raw_name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_persona_entry(&raw_name) {
+            continue;
+        }
+
+        if path.is_file() {
+            if path.extension().is_none() || path.extension().is_some_and(|e| e == "md") {
+                let name = raw_name
+                    .strip_suffix(".md")
+                    .unwrap_or(&raw_name)
+                    .to_string();
+                discovered.push((name, path));
+            }
+            continue;
+        }
+
+        if !path.is_dir() || path.join("SKILL.md").exists() {
+            continue;
+        }
+
+        if path.join("PERSONA.md").exists() {
+            discovered.push((raw_name, path));
+            continue;
+        }
+
+        let mut nested: Vec<_> = fs::read_dir(&path)?.flatten().collect();
+        nested.sort_by_key(|entry| entry.file_name());
+        for nested_entry in nested {
+            let nested_path = nested_entry.path();
+            let nested_name = nested_entry.file_name().to_string_lossy().to_string();
+            if should_skip_persona_entry(&nested_name) {
+                continue;
+            }
+            if nested_path.is_file() && nested_path.extension().is_some_and(|e| e == "md") {
+                let name = nested_name
+                    .strip_suffix(".md")
+                    .unwrap_or(&nested_name)
+                    .to_string();
+                discovered.push((name, nested_path));
+            }
+        }
+    }
+
+    Ok(discovered)
+}
+
+fn should_skip_persona_entry(name: &str) -> bool {
+    name.starts_with('.') || name == "README.md" || name == "00-README.md"
 }
 
 fn read_persona_info(path: &Path) -> (String, String, String) {
@@ -1029,11 +1095,7 @@ fn get_diff(staged: bool, base: Option<&str>) -> Result<String> {
         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
-fn generate_persona(
-    name: &str,
-    desc: &str,
-    cli_override: Option<llm::LlmCli>,
-) -> Result<String> {
+fn generate_persona(name: &str, desc: &str, cli_override: Option<llm::LlmCli>) -> Result<String> {
     let cli = cli_override
         .or_else(llm::detect)
         .context("No LLM CLI found for persona generation")?;
@@ -1062,4 +1124,3 @@ fn default_persona_template(name: &str) -> String {
         name, name
     )
 }
-
