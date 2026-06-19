@@ -24,6 +24,9 @@ declare -A FILE_TYPES=(
     ["readme"]="README.md|리드미|설명서|가이드"
     ["notion"]="NOTION|노션 설정|노션 페이지|업로드 설정|notion"
     ["linear"]="LINEAR|리니어|linear|이슈 생성|issue create|티켓 생성|ticket|issue"
+    ["sentry"]="SENTRY|센트리|sentry|에러 조회|error lookup|exception|stack trace|프로덕션 에러"
+    ["kibana"]="KIBANA|키바나|kibana|로그 조회|log search|elasticsearch|transaction trace|트랜잭션 추적"
+    ["slack"]="SLACK.md|슬랙|slack|알림|메시지|chat.postMessage|webhook"
     ["vault"]="VAULT.md|시크릿|비밀번호|API 키|credentials|vault|vaultwarden|인증 정보"
     ["review-index"]="review-index.yml|리뷰 인덱스|review index|persona review router|reviewer selector|페르소나 라우터"
     ["persona"]="personas/|페르소나|persona|reviewer|에이전트 페르소나|agent persona|리뷰어 페르소나"
@@ -56,6 +59,11 @@ find_by_pattern() {
     if [[ "$pattern" == */ ]]; then
         find -L "$AGENTS_DIR/$pattern" \( -name "*.yaml" -o -name "*.yml" -o -name "*.md" \) -type f 2>/dev/null | head -1
     else
+        if [[ "$pattern" == *.* ]]; then
+            local exact_match
+            exact_match=$(find -L "$AGENTS_DIR" -name "$pattern" -type f 2>/dev/null | head -1)
+            [[ -n "$exact_match" ]] && { echo "$exact_match"; return; }
+        fi
         local ext
         for ext in yaml yml md; do
             local match
@@ -155,8 +163,19 @@ search_files() {
         local keywords="${FILE_TYPES[$type]}"
         local keywords_lower=$(echo "$keywords" | tr '[:upper:]' '[:lower:]')
 
-        # 키워드 매칭
+        local keyword_match=false
         if echo "$keywords_lower" | grep -qi "$query_lower"; then
+            keyword_match=true
+        else
+            local token token_match=true
+            for token in $query_lower; do
+                [[ "$keywords_lower" != *"$token"* ]] && token_match=false && break
+            done
+            [[ "$token_match" = true ]] && keyword_match=true
+        fi
+
+        # 키워드 매칭
+        if [ "$keyword_match" = true ]; then
             local pattern=$(echo "$keywords" | cut -d'|' -f1)
             local file_path=$(find_by_pattern "$pattern")
 
@@ -253,6 +272,9 @@ Types:
   config            Configuration (CONFIG.md)
   notion            Notion integration config (NOTION.yaml preferred)
   linear            Linear integration config (LINEAR.yaml preferred)
+  sentry            Sentry integration config (SENTRY.yaml preferred)
+  kibana            Kibana integration config (KIBANA.yaml preferred)
+  slack             Slack integration config (SLACK.md)
 
 Examples:
   # List all files
@@ -266,6 +288,8 @@ Examples:
   static-index.sh get whoami
   static-index.sh get security
   static-index.sh get linear
+  static-index.sh get sentry
+  static-index.sh get kibana
 EOF
 }
 
