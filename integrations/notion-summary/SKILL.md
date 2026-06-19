@@ -11,18 +11,19 @@ Upload session summaries and reports to Notion.
 ## Prerequisites
 
 ```bash
-# Notion API token (from static/NOTION.md)
+# Notion API token (config in ~/.agents/NOTION.yaml, legacy fallback ~/.agents/NOTION.md)
 export NOTION_TOKEN="secret_xxx"
 
-# Database ID for reports
+# Optional env override for reports
+export NOTION_DATA_SOURCE_ID="xxx"
 export NOTION_DB_ID="xxx"
 ```
 
 ## Quick Upload
 
 ```bash
-# Via Notion MCP or API
-notion-upload --title "Session Summary" --content "$CONTENT" --db $NOTION_DB_ID
+# Via configured ~/.agents/NOTION.yaml target
+notion-upload --title "Session Summary" --content "$CONTENT"
 ```
 
 ## Workflow

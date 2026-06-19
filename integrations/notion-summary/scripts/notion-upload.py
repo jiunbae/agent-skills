@@ -47,21 +47,115 @@ def get_agents_dir():
     return Path(os.environ.get('AGENTS_DIR', Path.home() / '.agents'))
 
 
+def parse_scalar(value):
+    value = value.strip()
+    if not value:
+        return ""
+    if value[0:1] in ('"', "'") and value[-1:] == value[0]:
+        return value[1:-1]
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in ("null", "none", "~"):
+        return None
+    return value
+
+
+def parse_simple_yaml(path):
+    """Parse the small YAML subset used by ~/.agents/*.yaml configs."""
+    root = {}
+    stack = [(-1, root)]
+    for raw_line in path.read_text().splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith('#'):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(' '))
+        line = raw_line.strip()
+        if ':' not in line:
+            continue
+        key, value = line.split(':', 1)
+        key = key.strip()
+        value = value.strip()
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        if not value:
+            child = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = parse_scalar(value)
+    return root
+
+
+def yaml_get(config, dotted_path, default=None):
+    current = config
+    for part in dotted_path.split('.'):
+        if not isinstance(current, dict) or part not in current:
+            return default
+        current = current[part]
+    return current
+
+
+def default_notion_config():
+    return {
+        'page_id': None,
+        'database_id': None,
+        'data_source_id': None,
+        'page_name': None,
+        'title_property': 'title',
+        'date_subpage': True,
+        'project_classify': True,
+        'default_project': 'general',
+        'target_type': 'database',
+        'config_file': None,
+        'config_format': None,
+    }
+
+
+def parse_notion_yaml_config():
+    config_path = Path(os.environ.get('NOTION_CONFIG_FILE', get_agents_dir() / 'NOTION.yaml'))
+    if not config_path.exists():
+        return None
+
+    data = parse_simple_yaml(config_path)
+    config = default_notion_config()
+    config['config_file'] = str(config_path)
+    config['config_format'] = 'yaml'
+
+    target_type = yaml_get(data, 'notion.default_target.type', 'data_source')
+    target_id = yaml_get(data, 'notion.default_target.id')
+    config['target_type'] = 'database' if target_type in ('database', 'data_source') else target_type
+    if target_type == 'page':
+        config['page_id'] = target_id
+    else:
+        config['database_id'] = target_id
+        if target_type == 'data_source':
+            config['data_source_id'] = target_id
+
+    config['title_property'] = yaml_get(data, 'notion.default_target.title_property', 'title')
+    config['date_subpage'] = bool(yaml_get(data, 'upload.date_subpage', True))
+    config['project_classify'] = bool(yaml_get(data, 'upload.project_classify', True))
+    config['default_project'] = yaml_get(data, 'upload.default_project', 'general')
+    return config
+
+
 def parse_notion_config():
-    """~/.agents/NOTION.md 파일에서 설정 파싱"""
+    """~/.agents/NOTION.yaml 우선, 없으면 legacy NOTION.md 파싱"""
+    yaml_config = parse_notion_yaml_config()
+    if yaml_config:
+        return yaml_config
+
     config_path = get_agents_dir() / 'NOTION.md'
 
     if not config_path.exists():
         return None
 
     content = config_path.read_text()
-    config = {
-        'page_id': None,
-        'page_name': None,
-        'date_subpage': True,
-        'project_classify': True,
-        'default_project': 'general',
-    }
+    config = default_notion_config()
+    config['config_file'] = str(config_path)
+    config['config_format'] = 'markdown'
 
     # 페이지 ID 파싱
     page_id_match = re.search(r'\*\*페이지 ID\*\*:\s*([a-f0-9-]{32,36})', content)
@@ -94,6 +188,10 @@ def parse_notion_config():
         config['target_type'] = type_match.group(1).lower()
     else:
         config['target_type'] = 'database'  # 기본값: database
+
+    title_prop_match = re.search(r'제목 property 키는 \*\*`([^`]+)`\*\*', content)
+    if title_prop_match:
+        config['title_property'] = title_prop_match.group(1)
 
     return config
 
@@ -130,9 +228,9 @@ def check_config():
         print("   설정 방법: export NOTION_TOKEN=\"secret_xxx\"")
 
     # 환경 변수로 페이지 ID 확인
-    env_page_id = os.environ.get('NOTION_PAGE_ID')
+    env_page_id = os.environ.get('NOTION_PAGE_ID') or os.environ.get('NOTION_DATA_SOURCE_ID') or os.environ.get('NOTION_DB_ID')
     if env_page_id:
-        print(f"✅ NOTION_PAGE_ID (env): {env_page_id[:8]}...")
+        print(f"✅ Notion target ID (env): {env_page_id[:8]}...")
 
     print()
 
@@ -141,13 +239,17 @@ def check_config():
     config_path = get_agents_dir() / 'NOTION.md'
 
     if config:
-        print(f"✅ Static 파일: {config_path}")
+        print(f"✅ Static 파일: {config.get('config_file') or config_path}")
+        print(f"   - 형식: {config.get('config_format', 'unknown')}")
         print(f"   - 페이지 ID: {config.get('page_id', 'N/A')}")
+        print(f"   - 데이터베이스 ID: {config.get('database_id', 'N/A')}")
+        print(f"   - 데이터소스 ID: {config.get('data_source_id', 'N/A')}")
+        print(f"   - 제목 property: {config.get('title_property', 'title')}")
         print(f"   - 페이지 이름: {config.get('page_name', 'N/A')}")
         print(f"   - 날짜별 하위 페이지: {config.get('date_subpage')}")
         print(f"   - 프로젝트별 분류: {config.get('project_classify')}")
     else:
-        print(f"❌ Static 파일: {config_path} 없음")
+        print(f"❌ Static 파일: {get_agents_dir() / 'NOTION.yaml'} 또는 {config_path} 없음")
         print("   생성 방법은 SKILL.md의 Troubleshooting 참조")
 
     print()
@@ -163,7 +265,7 @@ def check_config():
 
     # 최종 상태
     print("\n## 준비 상태")
-    if token and (config and config.get('page_id') or env_page_id):
+    if token and (config and (config.get('page_id') or config.get('database_id')) or env_page_id):
         print("✅ 업로드 준비 완료")
         return True
     else:
@@ -185,12 +287,12 @@ def create_notion_page(notion, parent_id, title, content_blocks):
     return new_page
 
 
-def create_notion_database_item(notion, database_id, title, content_blocks):
+def create_notion_database_item(notion, database_id, title, content_blocks, title_property='title'):
     """Notion 데이터베이스에 새 항목 추가"""
     new_page = notion.pages.create(
         parent={"database_id": database_id},
         properties={
-            "title": {
+            title_property: {
                 "title": [{"text": {"content": title}}]
             }
         },
@@ -562,11 +664,18 @@ def upload_document(content, title=None, project=None, doc_type=None, dry_run=Fa
         return False
 
     config = parse_notion_config()
-    page_id = os.environ.get('NOTION_PAGE_ID') or (config and config.get('page_id'))
+    target_type = config.get('target_type', 'database') if config else 'database'
+    title_property = config.get('title_property', 'title') if config else 'title'
+    page_id = (
+        os.environ.get('NOTION_PAGE_ID')
+        or os.environ.get('NOTION_DATA_SOURCE_ID')
+        or os.environ.get('NOTION_DB_ID')
+        or (config and (config.get('page_id') or config.get('database_id')))
+    )
 
     if not page_id:
-        print("Error: 페이지 ID가 설정되지 않았습니다.")
-        print("NOTION_PAGE_ID 환경 변수 또는 ~/.agents/NOTION.md 파일을 확인하세요.")
+        print("Error: Notion 업로드 대상 ID가 설정되지 않았습니다.")
+        print("NOTION_PAGE_ID/NOTION_DATA_SOURCE_ID/NOTION_DB_ID 환경 변수 또는 ~/.agents/NOTION.yaml 파일을 확인하세요.")
         return False
 
     # 민감 정보 확인
@@ -607,7 +716,8 @@ def upload_document(content, title=None, project=None, doc_type=None, dry_run=Fa
     if dry_run:
         print("\n## 미리보기 (Dry Run)\n")
         print(f"제목: {page_title}")
-        print(f"부모 페이지: {page_id}")
+        print(f"대상: {target_type} {page_id}")
+        print(f"제목 property: {title_property}")
         print(f"문서 길이: {len(content):,}자")
         print(f"Notion 블록 수: {len(blocks)}")
         if len(block_parts) > 1:
@@ -619,14 +729,13 @@ def upload_document(content, title=None, project=None, doc_type=None, dry_run=Fa
     # 실제 업로드
     try:
         notion = Client(auth=token)
-        target_type = config.get('target_type', 'database') if config else 'database'
         created_pages = []
 
         for i, part_blocks in enumerate(block_parts):
             part_title = page_title if len(block_parts) == 1 else f"{page_title} (Part {i+1})"
 
             if target_type == 'database':
-                new_page = create_notion_database_item(notion, page_id, part_title, part_blocks)
+                new_page = create_notion_database_item(notion, page_id, part_title, part_blocks, title_property)
             else:
                 new_page = create_notion_page(notion, page_id, part_title, part_blocks)
 

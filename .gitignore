@@ -59,9 +59,11 @@ NOTES.md
 TODO.md
 
 # Personal data (not for public repos)
-# All static/*.md files are ignored except README.md and *.sample.md
+# All static personal files are ignored except README.md and sample files.
 static/*.md
 !static/README.md
 !static/*.sample.md
+static/*.yaml
+!static/*.sample.yaml
 development/playwright/node_modules/
 development/playwright/scripts/*.ts

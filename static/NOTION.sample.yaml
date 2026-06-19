@@ -1,0 +1,25 @@
+version: 1
+owner: notion-summary
+access: api
+
+env:
+  token: NOTION_TOKEN
+
+notion:
+  workspace: "{{NOTION_WORKSPACE}}"
+  api_base: "https://api.notion.com/v1"
+  api_version: "2026-03-11"
+  default_target:
+    type: data_source
+    id: "{{NOTION_PAGE_OR_DATABASE_ID}}"
+    title_property: "title"
+
+upload:
+  default_doc_type: document
+  default_project: general
+  date_subpage: true
+  project_classify: true
+  title_format: "{date}-{type}-{title}"
+
+safety:
+  redact_sensitive_patterns: true

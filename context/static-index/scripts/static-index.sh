@@ -22,7 +22,7 @@ declare -A FILE_TYPES=(
     ["context"]="CONTEXT.md|컨텍스트|작업 맥락|현재 작업"
     ["config"]="CONFIG.md|설정|환경설정|구성"
     ["readme"]="README.md|리드미|설명서|가이드"
-    ["notion"]="NOTION.md|노션 설정|노션 페이지|업로드 설정|notion"
+    ["notion"]="NOTION|노션 설정|노션 페이지|업로드 설정|notion"
     ["vault"]="VAULT.md|시크릿|비밀번호|API 키|credentials|vault|vaultwarden|인증 정보"
     ["review-index"]="review-index.yml|리뷰 인덱스|review index|persona review router|reviewer selector|페르소나 라우터"
     ["persona"]="personas/|페르소나|persona|reviewer|에이전트 페르소나|agent persona|리뷰어 페르소나"
@@ -53,9 +53,14 @@ resolve_file_type() {
 find_by_pattern() {
     local pattern="$1"
     if [[ "$pattern" == */ ]]; then
-        find -L "$AGENTS_DIR/$pattern" -name "*.md" -type f 2>/dev/null | head -1
+        find -L "$AGENTS_DIR/$pattern" \( -name "*.yaml" -o -name "*.yml" -o -name "*.md" \) -type f 2>/dev/null | head -1
     else
-        find -L "$AGENTS_DIR" -name "*$pattern*" -type f 2>/dev/null | head -1
+        local ext
+        for ext in yaml yml md; do
+            local match
+            match=$(find -L "$AGENTS_DIR" -name "*$pattern*.$ext" -type f 2>/dev/null | head -1)
+            [[ -n "$match" ]] && { echo "$match"; return; }
+        done
     fi
 }
 

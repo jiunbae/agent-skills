@@ -14,11 +14,12 @@
 ## Sample 파일 사용
 
 민감한 개인 정보 보호를 위해 실제 설정 파일은 `.gitignore`에서 제외됩니다.
-`*.sample.md` 파일을 복사하여 실제 파일을 생성하세요:
+`*.sample.md` / `*.sample.yaml` 파일을 복사하여 실제 파일을 생성하세요:
 
 ```bash
 # 각 sample 파일을 복사하여 실제 파일 생성
 cp NOTION.sample.md NOTION.md
+cp NOTION.sample.yaml NOTION.yaml
 cp SECURITY.sample.md SECURITY.md
 cp OBSIDIAN.sample.md OBSIDIAN.md
 cp IAC.sample.md IAC.md
@@ -32,7 +33,8 @@ cp CONTEXT.sample.md CONTEXT.md
 | 파일 | Sample | 용도 | 관리 스킬 |
 |------|--------|------|----------|
 | `WHOAMI.md` | `WHOAMI.sample.md` | 사용자 프로필 (기술 스택, 선호도) | static-index |
-| `NOTION.md` | `NOTION.sample.md` | Notion 연동 설정 | notion-summary |
+| `NOTION.yaml` | `NOTION.sample.yaml` | Notion 연동 설정 source of truth | notion-summary |
+| `NOTION.md` | `NOTION.sample.md` | Notion 연동 설명/legacy fallback | notion-summary |
 | `SECURITY.md` | `SECURITY.sample.md` | 보안 규칙 (커밋 금지 패턴) | git-commit-pr |
 | `OBSIDIAN.md` | `OBSIDIAN.sample.md` | Obsidian vault 리소스 목록 | obsidian-writer |
 | `IAC.md` | `IAC.sample.md` | IaC/Kubernetes 배포 가이드 | - |
@@ -135,8 +137,8 @@ cd ~/.agt
 
 ## 주의사항
 
-- `*.sample.md` 파일만 Git으로 버전 관리됩니다
-- 실제 설정 파일 (`*.md`, `!README.md`, `!*.sample.md`)은 `.gitignore`에서 제외됩니다
+- `*.sample.md` / `*.sample.yaml` 파일만 Git으로 버전 관리됩니다
+- 실제 설정 파일 (`*.md`, `*.yaml`, `!README.md`, `!*.sample.*`)은 `.gitignore`에서 제외됩니다
 - 민감한 정보 (페이지 ID, 클러스터 IP, 프로젝트 경로 등)는 실제 파일에만 기록하세요
 - API 키, 비밀번호는 환경 변수로 관리하세요
 
