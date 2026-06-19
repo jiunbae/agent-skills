@@ -23,6 +23,7 @@ declare -A FILE_TYPES=(
     ["config"]="CONFIG.md|설정|환경설정|구성"
     ["readme"]="README.md|리드미|설명서|가이드"
     ["notion"]="NOTION|노션 설정|노션 페이지|업로드 설정|notion"
+    ["linear"]="LINEAR|리니어|linear|이슈 생성|issue create|티켓 생성|ticket|issue"
     ["vault"]="VAULT.md|시크릿|비밀번호|API 키|credentials|vault|vaultwarden|인증 정보"
     ["review-index"]="review-index.yml|리뷰 인덱스|review index|persona review router|reviewer selector|페르소나 라우터"
     ["persona"]="personas/|페르소나|persona|reviewer|에이전트 페르소나|agent persona|리뷰어 페르소나"
@@ -250,6 +251,8 @@ Types:
   security          Security rules (SECURITY.md)
   context           Work context (CONTEXT.md)
   config            Configuration (CONFIG.md)
+  notion            Notion integration config (NOTION.yaml preferred)
+  linear            Linear integration config (LINEAR.yaml preferred)
 
 Examples:
   # List all files
@@ -262,6 +265,7 @@ Examples:
   # Get specific file path
   static-index.sh get whoami
   static-index.sh get security
+  static-index.sh get linear
 EOF
 }
 

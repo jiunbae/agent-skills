@@ -32,6 +32,7 @@ description: Provides an index of global static context files in ~/.agents/. Ret
 | 보안 규칙, 보안 정책, 민감 정보, 커밋 금지, security | `SECURITY.md` | 보안 검증 규칙 (커밋 금지 패턴, 민감 정보) |
 | 코딩 스타일, 스타일 가이드, 코드 컨벤션, formatting | `STYLE.md` | 코딩 스타일 가이드 (포맷팅, 네이밍) |
 | 노션 설정, notion, 노션 페이지, 업로드 설정 | `NOTION.yaml` (`NOTION.md` fallback) | Notion 연동 설정 (대상 ID, 업로드 옵션) |
+| 리니어, linear, 이슈 생성, issue create, 티켓 생성 | `LINEAR.yaml` (`LINEAR.md` fallback) | Linear 연동 설정 (기본 팀/담당자/state/priority/estimate, 생성 도구 entrypoint) |
 | IaC, 배포 표준, kubernetes, k8s, 배포 설정, deploy, 인프라 | `IAC.md` | IaC 배포 표준화 가이드라인 (K8s, CI/CD, 환경변수) |
 | 서비스 목록, 컨테이너 상태, 포트 매핑, docker, 실행 중인 서비스 | `SERVICES.md` | 서비스/컨테이너 중앙 관리 (포트, 상태, 이력) |
 | vault, vaultwarden, 시크릿, 비밀번호, API 키, credentials, 인증 정보 | `VAULT.md` | Vaultwarden 시크릿 관리 (API 키, DB 비밀번호, 인증 정보) |
@@ -78,6 +79,15 @@ description: Provides an index of global static context files in ~/.agents/. Ret
   - 페이지 이름
   - 업로드 설정 (날짜별/프로젝트별 분류)
   - 콘텐츠 템플릿
+
+#### LINEAR.yaml / LINEAR.md
+- **경로**: `~/.agents/LINEAR.yaml` (legacy fallback: `~/.agents/LINEAR.md`)
+- **용도**: Linear 연동 설정
+- **관리 스킬**: `integration-linear`
+- **포함 정보**:
+  - 기본 팀/담당자/state/priority/estimate
+  - `linear-issue.sh create` 도구 entrypoint
+  - 라벨 카탈로그, 생성 전 dry-run/중복 탐색 정책
 
 #### VAULT.md
 - **경로**: `~/.agents/VAULT.md`
@@ -307,6 +317,8 @@ static-index: SECURITY.md 파일을 참조하세요.
 ├── STYLE.md                 # 코딩 스타일 (선택)
 ├── NOTION.yaml              # Notion 연동 설정 (machine-readable)
 ├── NOTION.md                # Notion 연동 설명/legacy fallback
+├── LINEAR.yaml              # Linear 연동 설정 (machine-readable)
+├── LINEAR.md                # Linear 연동 설명/legacy fallback
 ├── VAULT.md                 # Vaultwarden 시크릿 가이드
 ├── personas/                # 에이전트 페르소나 (agt persona로 관리)
 │   ├── security-reviewer.md
@@ -336,6 +348,7 @@ agt/
 | background-planner | WHOAMI.md | 사용자 역량 기반 기획 |
 | background-reviewer | personas/ | 페르소나 기반 멀티 에이전트 리뷰 |
 | notion-summary | NOTION.yaml (`NOTION.md` fallback) | Notion 업로드 설정 |
+| integration-linear | LINEAR.yaml (`LINEAR.md` fallback) | Linear 이슈 생성/조회 기본값과 CLI entrypoint |
 | vault-secrets | VAULT.md | 시크릿 조회/등록 가이드 |
 | iac-deploy-prep | VAULT.md | 배포 전 credentials 조회 |
 | kubernetes-skill | VAULT.md | K8s secrets, registry credentials |
