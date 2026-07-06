@@ -136,27 +136,16 @@ fn install(
     let skill_path = find_skill_in_source(&source_dir, &name)
         .context(format!("Skill '{}' not found in source library", name))?;
 
-    // Extract group from skill_path (parent of skill dir)
-    let group = skill_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|g| g.to_string_lossy().to_string())
-        .unwrap_or_default();
-
     let target_dir = if global {
         config::global_skill_target()
     } else {
         config::local_skill_target()
     };
 
-    // Preserve group prefix: target_dir/group/skill_name
-    let group_dir = if group.is_empty() {
-        target_dir.clone()
-    } else {
-        target_dir.join(&group)
-    };
-    fs::create_dir_all(&group_dir)?;
-    let link_path = group_dir.join(&name);
+    // Install flat: Claude Code discovers skills one level deep
+    // (~/.claude/skills/<name>/SKILL.md), so drop the source group prefix.
+    fs::create_dir_all(&target_dir)?;
+    let link_path = target_dir.join(&name);
 
     util::ensure_target_clear(&link_path, force, &name)?;
 
@@ -167,7 +156,7 @@ fn install(
     ))?;
 
     let scope = if global { "global" } else { "local" };
-    ui::success(&format!("Installed skill '{}/{}' ({})", group, name, scope));
+    ui::success(&format!("Installed skill '{}' ({})", name, scope));
     Ok(())
 }
 
@@ -303,10 +292,10 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
             continue;
         }
 
-        // Preserve group prefix: target_dir/group/skill_name
-        let group_dir = target_dir.join(group);
-        fs::create_dir_all(&group_dir)?;
-        let dest = group_dir.join(skill_name);
+        // Install flat: Claude Code discovers skills one level deep
+        // (~/.claude/skills/<name>/SKILL.md), so drop the source group prefix.
+        fs::create_dir_all(&target_dir)?;
+        let dest = target_dir.join(skill_name);
 
         if dest.exists() || dest.is_symlink() {
             if force {
@@ -329,7 +318,7 @@ fn install_remote_repo(spec: &remote::RemoteSpec, global: bool, force: bool) -> 
             git_ref: spec.git_ref.clone(),
         };
         remote::write_metadata(&dest, &skill_spec)?;
-        ui::success(&format!("Installed skill '{}/{}' ({})", group, skill_name, scope));
+        ui::success(&format!("Installed skill '{}' ({})", skill_name, scope));
         installed += 1;
     }
 
@@ -546,10 +535,10 @@ fn install_profile(profile_name: &str, global: bool, force: bool) -> Result<()> 
             continue;
         }
 
-        // Preserve group prefix: target_dir/group/skill_name
-        let group_dir = target_dir.join(group);
-        fs::create_dir_all(&group_dir)?;
-        let link_path = group_dir.join(skill_name);
+        // Install flat: Claude Code discovers skills one level deep
+        // (~/.claude/skills/<name>/SKILL.md), so drop the source group prefix.
+        fs::create_dir_all(&target_dir)?;
+        let link_path = target_dir.join(skill_name);
 
         if link_path.exists() || link_path.is_symlink() {
             if force {
@@ -699,10 +688,10 @@ fn install_selected_skills(
             continue;
         }
 
-        // Preserve group prefix: target_dir/group/skill_name
-        let group_dir = target_dir.join(group);
-        fs::create_dir_all(&group_dir)?;
-        let link_path = group_dir.join(skill_name);
+        // Install flat: Claude Code discovers skills one level deep
+        // (~/.claude/skills/<name>/SKILL.md), so drop the source group prefix.
+        fs::create_dir_all(&target_dir)?;
+        let link_path = target_dir.join(skill_name);
 
         if link_path.exists() || link_path.is_symlink() {
             if force {
@@ -721,7 +710,7 @@ fn install_selected_skills(
             "Failed to create symlink for '{}/{}'",
             group, skill_name
         ))?;
-        ui::success(&format!("Installed skill '{}/{}' ({})", group, skill_name, scope));
+        ui::success(&format!("Installed skill '{}' ({})", skill_name, scope));
         installed += 1;
     }
 
