@@ -24,6 +24,8 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+.claude/
+.context/
 .skill-index.json
 
 # Build artifacts (keep source, ignore builds)

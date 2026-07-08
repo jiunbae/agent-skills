@@ -1,13 +1,13 @@
 ---
 name: writing-to-obsidian
-description: Uploads documents to Obsidian Vault. Saves project context to workspace/{project}/context/, research/reports to articles/ with YYYY-MM-DD prefix. Use for "obsidian 업로드", "옵시디언 저장", "vault 업로드", "아티클 저장" requests.
+description: Uploads documents to Obsidian Vault AND publishes to docs.jiun.dev. Saves project context to workspace/{project}/context/, research/reports to articles/ with YYYY-MM-DD prefix. For docs publishing, adds publish:true frontmatter so vault-docs-sync auto-syncs to docs.jiun.dev every 10min. Use for "obsidian 업로드", "옵시디언 저장", "vault 업로드", "아티클 저장", "문서 공개", "docs 업로드", "외부 공유", "publish", "docs에 올려줘" requests.
 ---
 
-# Obsidian Writer - 프로젝트 문서 업로드
+# Obsidian Writer - 프로젝트 문서 업로드 & docs.jiun.dev 퍼블리시
 
 ## Overview
 
-현재 작업 중인 프로젝트의 문서를 Obsidian Vault에 업로드하는 스킬입니다.
+현재 작업 중인 프로젝트의 문서를 Obsidian Vault에 업로드하고, 필요 시 `docs.jiun.dev`에 외부 공개합니다.
 
 **핵심 기능:**
 - 현재 디렉토리(pwd) 기반 프로젝트명 자동 감지
@@ -15,6 +15,31 @@ description: Uploads documents to Obsidian Vault. Saves project context to works
 - **경로 매핑 지원**: `~/.agents/OBSIDIAN.md`의 "프로젝트 경로 매핑" 테이블에서 커스텀 경로 사용
 - 프로젝트별 문서 체계적 관리
 - 프론트매터(YAML) 자동 생성
+- **docs.jiun.dev 퍼블리시**: `publish: true` frontmatter 포함 시 10분 내 자동 외부 공개
+
+## docs.jiun.dev 퍼블리시 아키텍처
+
+```
+obsidian-writer (이 스킬)
+    ↓  articles/ 에 publish: true 포함하여 저장
+vault-docs-sync.py  [LaunchAgent, 10분마다 자동 실행]
+    ↓  publish: true 파일만 rsync
+docs.jiun.dev (https://docs.jiun.dev/#/YYYY-MM-DD-slug)
+```
+
+**규칙:**
+- `publish: true` frontmatter → 서버에 자동 업로드/유지
+- `publish: true` 없는 파일이 서버에 있으면 → 자동 삭제됨 (stale 정리)
+
+**퍼블리시 요청 시 반드시 `publish: true`를 frontmatter에 포함할 것:**
+```yaml
+---
+title: 문서 제목
+date: 2026-04-16
+tags: [tag1, tag2]
+publish: true
+---
+```
 
 **저장 구조:**
 ```
@@ -166,7 +191,28 @@ Claude: 리서치 리포트를 articles/ 폴더에 저장합니다.
 - 태그: [ai, software-engineer, cognition-labs, devin, article]
 ```
 
-### 예시 4: 설정 없을 때
+### 예시 4: docs.jiun.dev에 외부 공개 (퍼블리시)
+
+```
+사용자: 이 분석 문서 docs에 올려줘 / publish해줘 / 외부 공유해줘
+
+Claude: docs.jiun.dev에 퍼블리시합니다. articles/에 publish: true 포함하여 저장합니다.
+
+[저장되는 frontmatter]
+---
+title: 문서 제목
+date: 2026-04-16
+tags: [...]
+publish: true
+---
+
+✅ Obsidian 저장 완료
+- 경로: articles/2026-04-16-document-name.md
+- docs.jiun.dev 반영: vault-docs-sync가 10분 내 자동 업로드합니다.
+- 예상 URL: https://docs.jiun.dev/#/2026-04-16-document-name
+```
+
+### 예시 5: 설정 없을 때
 
 ```
 사용자: 옵시디언 업로드해줘
@@ -216,10 +262,13 @@ tags: [claude, context, documentation]
 - 프론트매터로 메타데이터 관리
 - 일관된 폴더 구조 유지
 - 저장 전 내용 미리보기 확인
+- **docs.jiun.dev 퍼블리시 요청 시 `publish: true`를 frontmatter에 반드시 포함**
+- 퍼블리시 대상은 `articles/` 폴더에 `YYYY-MM-DD-slug.md` 형식으로 저장
 
 **DON'T:**
 - 민감 정보(API 키, 비밀번호) 저장하지 않기
 - 기존 파일 덮어쓰기 주의 (확인 필요)
+- `publish: true` 없이 docs-publish.sh로 직접 push하면 10분 내 자동 삭제됨
 - Obsidian 잠금 파일(.obsidian) 수정하지 않기
 
 ## Troubleshooting
