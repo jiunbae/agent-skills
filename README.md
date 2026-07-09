@@ -49,7 +49,7 @@ Install the agent-skills toolkit into this project:
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
-<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=33+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=34+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
 
 ---
 
@@ -594,6 +594,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>33</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
+  <sub><strong>34</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
   <sub>CLI tool: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

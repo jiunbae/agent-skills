@@ -304,6 +304,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>33</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
+  <sub><strong>34</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
   <sub>CLI 도구: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>
