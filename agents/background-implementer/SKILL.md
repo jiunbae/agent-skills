@@ -1,9 +1,9 @@
 ---
 name: implementing-in-background
-description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel implementation in the background. Separates independent tasks from planning docs, each agent writes code directly. Context-safe with auto-save. Use for "백그라운드 구현", "bg impl", "병렬 구현", "Codex로 구현", "구현해줘", "코드 작성해줘" requests.
+description: Orchestrates multiple AI agents (Claude, Codex) for parallel implementation in the background. Separates independent tasks from planning docs, each agent writes code directly. Context-safe with auto-save. Use for "백그라운드 구현", "bg impl", "병렬 구현", "Codex로 구현", "구현해줘", "코드 작성해줘" requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, TodoWrite, AskUserQuestion
 priority: high
-tags: [implementation, background, parallel-execution, autonomous, codex, gemini, multi-llm]
+tags: [implementation, background, parallel-execution, autonomous, codex, multi-llm]
 ---
 
 # Background Implementer
@@ -26,8 +26,7 @@ Multi-LLM background implementation with context-safe parallel execution.
 .context/impl/
 ├── R01-tasks.md               # Round 1: task decomposition
 ├── R01-claude.md              # Round 1: Claude's implementation notes
-├── R01-codex.md               # Round 1: Codex's implementation notes
-├── R01-gemini.md              # Round 1: Gemini's implementation notes
+├── R01-codex-{feature}.md     # Round 1: Codex implementation notes per task
 ├── R01-summary.md             # Round 1: merged summary
 ├── R02-claude.md              # Round 2: fixes/iterations
 └── R02-summary.md
@@ -44,16 +43,10 @@ ROUND=$(printf "R%02d" $(( $(ls .context/impl/R*-*.md 2>/dev/null | sed 's/.*\/R
 | Provider | Best For | Command |
 |----------|----------|---------|
 | **Claude** | Complex logic, APIs, multi-file changes | `Task({ run_in_background: true })` |
-| **Codex** | DB migrations, models, focused code gen | `nohup codex exec --full-auto -C {workdir} "prompt" > log 2>&1 &` |
-| **OpenCode** | General implementation, multi-model support | `nohup opencode run -q -f text "prompt" > log 2>&1 &` |
-| **Gemini** | Tests, documentation, code review | `nohup gemini -p "prompt" --yolo -o text > log 2>/dev/null &` |
-| **Ollama** | Simple utils, types | `ollama run $OLLAMA_MODEL` |
+| **Codex** | DB migrations, models, focused code gen | `nohup codex exec --sandbox workspace-write -C {workdir} - < prompt.md > log 2>&1 &` |
 
-> **OpenCode**: Use `opencode run -q -f text "prompt"` for non-interactive mode. `-q` suppresses the spinner, `-f text` outputs plain text. Use `--attach http://localhost:PORT` to connect to a running server (avoids cold boot). Supports multiple providers/models via config.
-> **Gemini v0.26+**: Use `-p "prompt"` for non-interactive mode. Use `--yolo` for auto-approve file writes. Use `-o text` for clean output. Redirect stdout to capture: `> output.md`. Do NOT use `-s` (that's `--sandbox`, not silent).
-> **Codex v0.101+**: Use `codex exec --full-auto` for non-interactive. Use `-C dir` to set working directory. Use `-o file.md` to save last message. Use `nohup ... > log 2>&1 &` for background. Sandbox is `workspace-write` by default (reads anywhere, writes only to workspace + /tmp). For parallel Codex agents, use **git worktrees** to give each agent an isolated workspace — this prevents file conflicts. Use `--add-dir <path>` if agents need to write outside the workspace.
+> **Codex CLI v0.142+**: Use `codex exec` for non-interactive runs. New scripts should not use deprecated `--full-auto`; set permissions explicitly with `--sandbox workspace-write` for normal code edits. Use `-C dir`/`--cd dir` to set the working directory, `-o file.md`/`--output-last-message file.md` to save the final message, and `nohup ... > log 2>&1 &` for background execution. `codex exec` defaults to read-only, so code-writing background workers need `--sandbox workspace-write`. Use **git worktrees** for parallel write-heavy Codex workers. Use `--add-dir <path>` only for extra writable output directories such as `.context/impl`.
 > **Claude subagents** are the most reliable for complex implementation. Always prefer Claude for tasks touching 3+ files or requiring deep codebase understanding.
-> **Ollama**: Model is configurable via `OLLAMA_MODEL` env var (default: `llama3.2`).
 
 ## Workflow
 
@@ -92,43 +85,66 @@ Implement the assigned tasks and save implementation notes to .context/impl/${RO
 
 **Codex (code generation):**
 
-For parallel Codex agents, create git worktrees first:
-```bash
-# Create isolated worktree per agent
-git worktree add -b impl/{feature} /path/to/worktree-{feature} main
-cd /path/to/worktree-{feature} && pnpm install
-```
+Use Codex in one of two ways:
+- If the current orchestrator is Codex itself and the user explicitly asks for parallel Codex agents, prefer native Codex subagents from the interactive session. Ask Codex to spawn bounded `worker` or `explorer` agents, wait for them, and return distilled summaries.
+- If this skill is launching external background workers, run one `codex exec` process per independent implementation task.
 
-Then run Codex in each worktree:
+For parallel file-writing Codex workers, create an isolated git worktree per worker:
 ```bash
 PROJ_DIR="$(pwd)"
-nohup codex exec --full-auto \
-  -C /path/to/worktree-{feature} \
-  --add-dir "${PROJ_DIR}/.context/impl" \
-  -o "${PROJ_DIR}/.context/impl/${ROUND}-codex.md" \
-  "Read task file at ${PROJ_DIR}/.context/impl/${ROUND}-tasks.md and implement all described changes. Run tests to verify." \
-  > "${PROJ_DIR}/.context/impl/${ROUND}-codex.log" 2>&1 &
-```
-> **Key Codex notes:**
-> - Use `-C dir` for working directory (must be a git repo), `-o file` for last message, `nohup ... &` for background
-> - Always redirect both stdout and stderr to a log file (`> log 2>&1 &`)
-> - Sandbox: `workspace-write` (reads anywhere, writes only to workspace + /tmp)
-> - Use **absolute paths** for task files and log files (they're outside the worktree)
-> - Use `--add-dir <path>` if agent needs to write to additional directories
-> - Codex DOES write files successfully — don't mistake slow log output for failure; check worktree for actual file writes
-> - After completion, copy files from worktree to main, then clean up: `git worktree remove /path/to/worktree --force`
+BASE_BRANCH="$(git branch --show-current)"
+FEATURE="{feature}"
+WORKTREE="${PROJ_DIR}/../$(basename "${PROJ_DIR}")-${ROUND}-${FEATURE}"
 
-**Gemini (tests/docs/review):**
+git worktree add -b "impl/${ROUND}-${FEATURE}" "${WORKTREE}" "${BASE_BRANCH}"
+```
+
+Run project setup in the worktree before launching Codex if dependencies are not already present. `workspace-write` mode does not grant network access by default, so install dependencies up front or use a controlled environment with the network access you intend.
+
+Create a prompt file so shell quoting does not become part of the task:
+```markdown
+# .context/impl/${ROUND}-codex-{feature}.prompt.md
+
+Read the task file at ABSOLUTE_PROJECT_PATH/.context/impl/${ROUND}-tasks.md.
+Implement only the assigned {feature} task in this worktree.
+Write a concise implementation summary to ABSOLUTE_PROJECT_PATH/.context/impl/${ROUND}-codex-{feature}.md.
+Run the relevant tests or checks if they are available without network access.
+Do not commit changes. Leave the worktree dirty for the orchestrator to inspect.
+```
+Replace `ABSOLUTE_PROJECT_PATH` with the absolute value of `PROJ_DIR` before launching Codex.
+
+Then run Codex in the worktree:
 ```bash
-# For planning/review output (no file writes needed):
-nohup gemini -p "Review and generate test plan for: .context/impl/${ROUND}-tasks.md" \
-  -o text > .context/impl/${ROUND}-gemini.md 2>/dev/null &
+PROMPT="${PROJ_DIR}/.context/impl/${ROUND}-codex-${FEATURE}.prompt.md"
+OUT="${PROJ_DIR}/.context/impl/${ROUND}-codex-${FEATURE}.md"
+LOG="${PROJ_DIR}/.context/impl/${ROUND}-codex-${FEATURE}.log"
 
-# For file-writing tasks (auto-approve):
-nohup gemini -p "Implement tasks from .context/impl/${ROUND}-tasks.md" \
-  --yolo -o text > .context/impl/${ROUND}-gemini.log 2>/dev/null &
+nohup codex exec \
+  --sandbox workspace-write \
+  -C "${WORKTREE}" \
+  --add-dir "${PROJ_DIR}/.context/impl" \
+  -o "${OUT}" \
+  - < "${PROMPT}" > "${LOG}" 2>&1 &
 ```
-> Use `--yolo` when Gemini needs to write files. Without it, Gemini prompts for approval and hangs in background.
+
+Use `--json` only when another script will consume event streams:
+```bash
+nohup codex exec --json --sandbox workspace-write -C "${WORKTREE}" \
+  --add-dir "${PROJ_DIR}/.context/impl" \
+  -o "${OUT}" \
+  - < "${PROMPT}" > "${LOG%.log}.jsonl" 2> "${LOG}" &
+```
+
+> **Key Codex notes:**
+> - `codex exec` defaults to read-only in current releases; pass `--sandbox workspace-write` for code edits.
+> - Avoid `--full-auto` in new scripts. It is a deprecated compatibility flag.
+> - `--dangerously-bypass-approvals-and-sandbox` is only for externally isolated runners or disposable worktrees where full host access is acceptable.
+> - Non-interactive runs cannot stop for new approval prompts; actions outside the sandbox fail instead.
+> - In `workspace-write`, `.git` is protected. Tell Codex not to commit; merge or apply its diff from the orchestrator after review.
+> - Use absolute paths for task, output, and log files when they live outside the worktree.
+> - Use `--add-dir <path>` for additional writable output directories. Do not use it as a broad substitute for worktree isolation.
+> - Check the worktree for actual file writes; slow or quiet logs do not necessarily mean Codex is stuck.
+> - After completion, inspect `git -C "${WORKTREE}" status --short` and `git -C "${WORKTREE}" diff`, then apply the accepted diff to the main checkout and remove the worktree.
 
 ### Step 4: Guide User (NO MONITORING)
 
@@ -140,8 +156,7 @@ nohup gemini -p "Implement tasks from .context/impl/${ROUND}-tasks.md" \
 | Agent  | Output |
 |--------|--------|
 | Claude | .context/impl/${ROUND}-claude.md |
-| Codex  | .context/impl/${ROUND}-codex.md |
-| Gemini | .context/impl/${ROUND}-gemini.md |
+| Codex  | .context/impl/${ROUND}-codex-*.md |
 
 Check results manually:
 - `ls .context/impl/${ROUND}-*.md`
@@ -156,7 +171,7 @@ When done, ask me to "확인해줘" or "빌드 체크"
 2. **Output**: Agents save structured markdown summaries
 3. **Verify**: Read summaries only, not full output
 
-See [references/token-efficiency.md](references/token-efficiency.md) for details.
+Keep detailed prompts, logs, and implementation summaries in `.context/impl/` so the main conversation only needs to read compact summaries.
 
 ## Output Structure
 
@@ -164,8 +179,7 @@ See [references/token-efficiency.md](references/token-efficiency.md) for details
 .context/impl/
 ├── R01-tasks.md              # Round 1: task decomposition
 ├── R01-claude.md             # Round 1: Claude implementation notes
-├── R01-codex.md              # Round 1: Codex implementation notes
-├── R01-gemini.md             # Round 1: Gemini test/review notes
+├── R01-codex-{feature}.md    # Round 1: Codex implementation notes
 ├── R01-summary.md            # Round 1: merged summary
 ├── R02-tasks.md              # Round 2: follow-up tasks
 ├── R02-claude.md
@@ -184,9 +198,8 @@ See [references/token-efficiency.md](references/token-efficiency.md) for details
 - Run 10+ agents simultaneously
 - Have multiple agents edit same file
 
-## References
+## Version Notes
 
-- [Provider setup & CLI install](references/providers.md)
-- [Agent prompt templates](references/templates.md)
-- [Wave execution strategy](references/parallel-patterns.md)
-- [Token efficiency patterns](references/token-efficiency.md)
+- Codex guidance was refreshed against `codex-cli 0.142.5` and the current Codex manual on 2026-07-09.
+- Re-check `codex exec --help` before changing command recipes; Codex CLI flags can move faster than this skill.
+- If a future Codex release exposes a safer non-interactive approval flag for `exec`, prefer that over full sandbox bypass.

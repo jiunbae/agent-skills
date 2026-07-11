@@ -1,9 +1,9 @@
 ---
 name: background-reviewer
-description: Orchestrates multi-LLM parallel code review using Claude, Codex, and Gemini. Each agent reviews from a different perspective using agent personas (security, architecture, code quality, performance). Supports persona-based review via `agt persona review`. Use for "코드 리뷰", "리뷰해줘", "bg review", "멀티 리뷰", "background review", "페르소나 리뷰" requests.
+description: Orchestrates multi-LLM parallel code review using Claude and Codex. Each agent reviews from a different perspective using agent personas (security, architecture, code quality, performance). Supports persona-based review via `agt persona review`. Use for "코드 리뷰", "리뷰해줘", "bg review", "멀티 리뷰", "background review", "페르소나 리뷰" requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, AskUserQuestion
 priority: high
-tags: [review, code-review, background, parallel-execution, codex, gemini, multi-llm, quality, persona]
+tags: [review, code-review, background, parallel-execution, codex, multi-llm, quality, persona]
 ---
 
 # Background Reviewer
@@ -61,7 +61,7 @@ agt persona show security-reviewer  # Preview a persona's focus
 
 Custom personas can be created for project-specific needs:
 ```bash
-agt persona create db-reviewer --gemini "DBA with 15yr PostgreSQL optimization"
+agt persona create db-reviewer --codex "DBA with 15yr PostgreSQL optimization"
 agt persona create frontend-a11y --ai "React accessibility specialist"
 ```
 
@@ -72,7 +72,7 @@ agt persona create frontend-a11y --ai "React accessibility specialist"
 agt persona review security-reviewer
 
 # Specify LLM
-agt persona review security-reviewer --gemini
+agt persona review security-reviewer --claude
 agt persona review architecture-reviewer --codex
 
 # Review only staged changes
@@ -95,9 +95,9 @@ mkdir -p .context/reviews
 ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
 
 # Launch all personas in parallel — each on a different LLM
-agt persona review security-reviewer --gemini -o ".context/reviews/${ROUND}-security-reviewer.md" &
+agt persona review security-reviewer --claude -o ".context/reviews/${ROUND}-security-reviewer.md" &
 agt persona review architecture-reviewer --codex -o ".context/reviews/${ROUND}-architecture-reviewer.md" &
-agt persona review code-quality-reviewer --gemini -o ".context/reviews/${ROUND}-code-quality-reviewer.md" &
+agt persona review code-quality-reviewer --claude -o ".context/reviews/${ROUND}-code-quality-reviewer.md" &
 agt persona review performance-reviewer --codex -o ".context/reviews/${ROUND}-performance-reviewer.md" &
 wait
 
@@ -129,8 +129,7 @@ Save to .context/reviews/${ROUND}-security-reviewer.md`,
 | Provider | Perspective | Command | Strength |
 |----------|------------|---------|----------|
 | **Codex** | Code quality + bugs | `codex exec` (native review) | Best at spotting bugs, race conditions, edge cases |
-| **Claude** | Architecture + security | `Task({ run_in_background: true })` | Deep architectural analysis, OWASP checks |
-| **Gemini** | UX + documentation + types | `gemini -p "prompt"` | Broad perspective, API consistency |
+| **Claude** | Architecture + security + consistency | `Task({ run_in_background: true })` | Deep architectural analysis, OWASP checks, API consistency |
 
 ## Review Scopes
 
@@ -231,23 +230,6 @@ Use ## Category / ### Finding / Severity (critical/high/medium/low) / Descriptio
 })
 ```
 
-**Gemini (UX + Consistency):**
-```bash
-nohup gemini -p "You are a code reviewer focused on developer experience and consistency.
-
-Read the files changed between main and HEAD in this git repo.
-
-Review focus:
-1. API consistency (naming conventions, response shapes, error formats)
-2. TypeScript type safety (any usage, missing types, unsafe casts)
-3. Component patterns (prop drilling, state management, event handling)
-4. Documentation gaps (missing JSDoc, unclear function names)
-5. Code duplication and DRY violations
-
-Format: ## Category / ### Finding / severity + description + suggestion" \
-  -o text > .context/reviews/${ROUND}-gemini.md 2>/dev/null &
-```
-
 ### Step 4: Guide User
 
 ```markdown
@@ -257,7 +239,6 @@ Format: ## Category / ### Finding / severity + description + suggestion" \
 |--------|--------------------------|--------|
 | Codex  | Bugs + code quality      | .context/reviews/${ROUND}-codex.md |
 | Claude | Architecture + security  | .context/reviews/${ROUND}-claude.md |
-| Gemini | UX + consistency         | .context/reviews/${ROUND}-gemini.md |
 
 Check progress:
 - `ls .context/reviews/${ROUND}-*.md`
@@ -290,7 +271,7 @@ Read all `${ROUND}-*.md` review files and create `.context/reviews/${ROUND}-merg
 ## Statistics
 - Total findings: N
 - Critical: N, High: N, Medium: N, Low: N
-- By agent: Codex N, Claude N, Gemini N
+- By agent: Codex N, Claude N
 ```
 
 ## Output Structure
@@ -304,7 +285,6 @@ Read all `${ROUND}-*.md` review files and create `.context/reviews/${ROUND}-merg
 ├── R01-architecture-reviewer.md     # Round 1 persona review
 ├── R01-codex.md                     # Round 1 generic agent review
 ├── R01-claude.md                    # Round 1 generic agent review
-├── R01-gemini.md                    # Round 1 generic agent review
 ├── R01-merged.md                    # Round 1 merged findings
 ├── R02-security-reviewer.md         # Round 2 re-review after fixes
 ├── R02-codex.md
