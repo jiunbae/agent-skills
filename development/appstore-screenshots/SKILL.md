@@ -9,6 +9,22 @@ tags: [app-store, screenshots, ios, ipados, macos, fastlane, asc-api, release]
 
 Produce reproducible, **real-app** screenshots (not mockups) for every platform and push them to App Store Connect via API. Real captures beat hand-drawn mockups: they never drift from the shipped UI and can be regenerated from source.
 
+## 0. Bundled scripts (`scripts/`)
+
+Runnable, app-agnostic tools — copy them next to your working files or call by absolute path. All
+ASC scripts read `ASC_KEY_ID` + `ASC_ISSUER_ID` from env (optional `ASC_KEY_FILEPATH`).
+
+| Script | Purpose |
+|--------|---------|
+| `asc_api.rb` | `ruby asc_api.rb <METHOD> <path> [json\|@file]` — ES256-JWT ASC API client, no gems. Prints `HTTP <code>` then body (strip line 1 before JSON-parsing). |
+| `upload_shot.rb` | `ruby upload_shot.rb <setId> <file.png>` — one screenshot via reserve→PUT→md5-commit; prints the new id. |
+| `fetch_bezels.sh` | `bash fetch_bezels.sh [outdir]` — download REAL Apple bezels (iPhone 16 Pro, iPad Pro 12.9″) + `apertures.json` from frameit-frames. |
+| `compose_framed.py` | `… <in> <out> <W> <H> <iphone\|ipad> <cap1> [cap2]` — screenshot into a real bezel on a captioned gradient. |
+| `compose_mac_store.py` | `… <in> <out> <W> <H> <cap1> [cap2]` — macOS window capture (already bezel-shaped) onto a captioned gradient. |
+
+Env note: **macOS system ruby is < 3.0** (no endless-method `def`); scripts use classic `def`.
+`python3` needs Pillow (`pip install Pillow`).
+
 ## 1. Required dimensions (verify against Apple before a release)
 
 Apple changes accepted sizes periodically — confirm at
@@ -80,6 +96,21 @@ widget **entry views live in the extension target**, not the app target. Two-ste
   scale, sort), render `NSView`→`NSBitmapImageRep`→PNG at the target size, then `exit(0)`.
 - **Live window capture:** `screencapture -o -x -R x,y,w,h out.png` — simpler but needs a real
   window at known coordinates and a logged-in GUI session.
+- **Menu-bar popover / specific window (clean, in a real GUI session):** capture just one window by
+  id, not a region — it keeps the OS rounded corners + shadow (alpha), which `compose_mac_store.py`
+  then crops by bbox. A menu-bar popover is a transient window you must open first:
+  ```bash
+  # open the popover by clicking the status item via accessibility
+  osascript -e 'tell application "System Events" to tell process "MyApp" \
+    to click menu bar item 1 of menu bar 2'
+  # find its window id (popovers sit on a high layer, e.g. 25)
+  swift -e 'import CoreGraphics; for w in (CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as! [[String:Any]]) where (w[kCGWindowOwnerName as String] as? String)=="MyApp" { print(w[kCGWindowNumber as String]!, w[kCGWindowLayer as String]!) }'
+  screencapture -x -l<winid> popover.png
+  ```
+- **Time-sensitive UI (countdowns, "expiring" colors):** capture at a known phase so every shot
+  matches. For a 30 s TOTP ring, gate on the wall clock —
+  `while :; do s=$(python3 -c 'import time;print(int(time.time())%30)'); [ "$s" -ge 2 ] && [ "$s" -le 6 ] && break; sleep .4; done` —
+  then screenshot, so codes are always "fresh" (not the red near-expiry state).
 
 > ⚠️ **From a sandboxed / background / SSH agent context you usually CANNOT capture the macOS GUI
 > at all — no matter the tool.** There is no macOS simulator, so the app must render into a real
@@ -122,6 +153,24 @@ capture_real_screenshots.sh   →  screenshots-live/…       (pure real UI, can
 generate_marketing_assets     →  reads screenshots-live/, adds copy/frame → screenshots/
 ```
 Then the website and the store pull from the same generated real UI. One source, no drift.
+
+### Device frames must be REAL bezels, not hand-drawn (learned the hard way)
+A procedurally-drawn rounded-rect "phone" reads as fake every time (flat rim, wrong corner radius,
+no camera). The professional path (what fastlane frameit does) is compositing into **real Apple
+bezel PNGs** with a camera cutout + titanium rim + accurate radius:
+1. `fetch_bezels.sh` pulls the bezel PNGs and `apertures.json` from **frameit-frames** (`gh-pages/latest`,
+   a mirror of Apple Design Resources). Each device's `offsets.json` entry gives the screen aperture
+   `+ox+oy` and width. **Pick a bezel whose aperture width equals your capture width for a 1:1 fit** —
+   e.g. an iPhone 17 Pro capture is 1206 wide, exactly the iPhone 16 Pro aperture (frameit ships
+   frames up to iPhone 16; a same-width older model frames a newer capture perfectly).
+2. `compose_framed.py`: scale the screenshot to the aperture width, **round its corners to the
+   display radius** (else the rectangular corners poke past the bezel's rounded body and leave a
+   white halo — the #1 bug), paste at `(ox,oy)`, alpha-composite the bezel on top, crop to bbox,
+   then float on a gradient with a width-auto-fit caption and a shadow that follows the bezel alpha.
+   Phones use a large corner radius (~0.15·w), tablets a subtle one (~0.02·w).
+3. macOS is different: a `screencapture -l<winid>` window capture **already has rounded corners +
+   shadow** in its alpha, so `compose_mac_store.py` just crops the alpha bbox and places it — no
+   synthetic bezel.
 
 ## 5. Upload via App Store Connect API
 
