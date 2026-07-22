@@ -1,0 +1,199 @@
+{
+  "metadata": {
+    "title": "Korean editorial signals",
+    "purpose": "Advisory cues for conservative Korean editing; never an AI-authorship classifier.",
+    "source_inspiration": "https://github.com/epoko77-ai/im-not-ai",
+    "license": "MIT",
+    "version": 1
+  },
+  "categories": {
+    "translationese": "번역투와 불필요한 피동",
+    "template": "기계적인 전개와 상투어",
+    "hedging": "겹친 추측과 완곡 표현",
+    "connective": "문두 접속어 반복",
+    "verbosity": "중복 수식과 불필요한 명사화",
+    "formatting": "과한 시각 장식"
+  },
+  "rules": [
+    {
+      "id": "TR-01",
+      "category": "translationese",
+      "severity": "medium",
+      "pattern": "(?:을|를)\\s+통해",
+      "minimum_occurrences": 1,
+      "cue": "'~를 통해'가 단순 수단을 장황하게 표현할 수 있음",
+      "guidance": "문맥이 허용하면 조사 '~로' 또는 직접 동사로 줄인다.",
+      "exceptions": "실제 통로, 채널, 매개 과정 자체가 중요한 문장에서는 유지한다."
+    },
+    {
+      "id": "TR-02",
+      "category": "translationese",
+      "severity": "medium",
+      "pattern": "에\\s+있어서",
+      "minimum_occurrences": 1,
+      "cue": "'~에 있어서'가 불필요하게 추상적일 수 있음",
+      "guidance": "'~에서', '~에는' 또는 구체적인 관계로 바꾼다.",
+      "exceptions": "법률·학술 문맥에서 관계 범위를 정확히 한정하면 유지한다."
+    },
+    {
+      "id": "TR-03",
+      "category": "translationese",
+      "severity": "medium",
+      "pattern": "에\\s+의해(?:서|\\b)",
+      "minimum_occurrences": 2,
+      "cue": "행위자가 드러나는 문장에서도 피동 표현이 반복됨",
+      "guidance": "행위자를 주어로 세우고 능동형을 검토한다.",
+      "exceptions": "행위자보다 결과가 중요하거나 행위자를 알 수 없는 문장에서는 유지한다."
+    },
+    {
+      "id": "TR-04",
+      "category": "translationese",
+      "severity": "high",
+      "pattern": "되어진|되어져|되어지는",
+      "minimum_occurrences": 1,
+      "cue": "이중 피동 가능성",
+      "guidance": "'된', '되어', 능동 동사 중 의미에 맞는 형태를 사용한다.",
+      "exceptions": "직접 인용과 고정된 원문 표기는 변경하지 않는다."
+    },
+    {
+      "id": "TR-05",
+      "category": "translationese",
+      "severity": "low",
+      "pattern": "가지고\\s+있(?:다|습니다|으며|고)",
+      "minimum_occurrences": 2,
+      "cue": "영어 have에 가까운 소유 표현이 반복될 수 있음",
+      "guidance": "'있다', 구체적인 동사 또는 자연스러운 소유 표현을 검토한다.",
+      "exceptions": "실제로 손에 들거나 보유한다는 의미가 중요하면 유지한다."
+    },
+    {
+      "id": "TP-01",
+      "category": "template",
+      "severity": "medium",
+      "pattern": "결론적으로",
+      "minimum_occurrences": 1,
+      "cue": "결론 표지가 내용 없이 문장을 예고할 수 있음",
+      "guidance": "삭제하거나 결론 내용을 바로 말한다.",
+      "exceptions": "긴 논증에서 결론 구간을 명확히 구분해야 하면 유지한다."
+    },
+    {
+      "id": "TP-02",
+      "category": "template",
+      "severity": "high",
+      "pattern": "시사하는\\s+바가\\s+(?:크|있)",
+      "minimum_occurrences": 1,
+      "cue": "구체적 함의 없이 상투적인 평가를 덧붙일 수 있음",
+      "guidance": "무엇을 시사하는지 구체적으로 쓰거나 근거가 없으면 삭제한다.",
+      "exceptions": "앞 문장에서 함의를 명시하고 이를 정확히 가리키는 경우에는 유지한다."
+    },
+    {
+      "id": "TP-03",
+      "category": "template",
+      "severity": "low",
+      "pattern": "주목할\\s+만(?:하다|한|합니다)",
+      "minimum_occurrences": 2,
+      "cue": "근거 없는 중요도 평가가 반복될 수 있음",
+      "guidance": "주목할 이유나 관찰 결과를 직접 제시한다.",
+      "exceptions": "중요도를 뒷받침하는 기준이 문장 안에 있으면 유지한다."
+    },
+    {
+      "id": "TP-04",
+      "category": "template",
+      "severity": "medium",
+      "pattern": "첫째[\\s\\S]{0,400}둘째[\\s\\S]{0,400}셋째",
+      "minimum_occurrences": 1,
+      "cue": "세 항목 전개가 내용보다 형식에 맞춰졌을 수 있음",
+      "guidance": "실제 병렬 관계인지 확인하고 필요하면 의미 중심 소제목이나 자연스러운 문단으로 바꾼다.",
+      "exceptions": "절차, 요구사항, 비교 기준처럼 명시적 열거가 필요한 문서에서는 유지한다."
+    },
+    {
+      "id": "HG-01",
+      "category": "hedging",
+      "severity": "high",
+      "pattern": "수\\s+있을\\s+것으로\\s+(?:보인다|예상된다|판단된다)",
+      "minimum_occurrences": 1,
+      "cue": "가능성과 추측 표현이 겹침",
+      "guidance": "근거 수준에 따라 '~할 수 있다' 또는 '~로 보인다' 하나만 남긴다.",
+      "exceptions": "불확실성 수준을 엄밀히 표현하는 연구·법률 문장에서는 의미를 확인한다."
+    },
+    {
+      "id": "HG-02",
+      "category": "hedging",
+      "severity": "high",
+      "pattern": "가능성이\\s+있을\\s+수\\s+있",
+      "minimum_occurrences": 1,
+      "cue": "가능성 표현의 중복",
+      "guidance": "'가능성이 있다' 또는 '~할 수 있다'로 줄인다.",
+      "exceptions": "직접 인용은 유지한다."
+    },
+    {
+      "id": "HG-03",
+      "category": "hedging",
+      "severity": "low",
+      "pattern": "(?:것으로\\s+보인다|것으로\\s+판단된다)",
+      "minimum_occurrences": 3,
+      "cue": "같은 추측 종결이 반복됨",
+      "guidance": "문장별 근거 수준을 확인하고 확정·가능·추측을 구분한다.",
+      "exceptions": "분석 보고서에서 일관된 확률적 판단을 표현하면 유지한다."
+    },
+    {
+      "id": "CN-01",
+      "category": "connective",
+      "severity": "low",
+      "pattern": "(?:^|(?<=[.!?다요]))\\s*(?:또한|따라서|나아가|한편|즉)[,，]?",
+      "minimum_occurrences": 4,
+      "cue": "문두 접속어가 반복됨",
+      "guidance": "관계가 문장 자체로 분명하면 접속어를 덜어낸다.",
+      "exceptions": "논증 구조나 대비를 명시해야 하는 문서에서는 필요한 표지를 유지한다."
+    },
+    {
+      "id": "VB-01",
+      "category": "verbosity",
+      "severity": "medium",
+      "pattern": "(?:매우|정말|굉장히|상당히)\\s+(?:매우|정말|굉장히|상당히)",
+      "minimum_occurrences": 1,
+      "cue": "강조 부사가 겹침",
+      "guidance": "강조 하나만 남기거나 구체적인 정도와 근거를 쓴다.",
+      "exceptions": "인물의 실제 말투를 재현한 직접 인용은 유지한다."
+    },
+    {
+      "id": "VB-02",
+      "category": "verbosity",
+      "severity": "low",
+      "pattern": "(?:혁신적|획기적|놀라운|강력한)",
+      "minimum_occurrences": 4,
+      "cue": "평가 형용사가 반복됨",
+      "guidance": "평가 대신 기능, 변화 또는 근거를 구체적으로 쓴다.",
+      "exceptions": "브랜드 보이스나 인용문에 필요한 표현이면 유지한다."
+    },
+    {
+      "id": "VB-03",
+      "category": "verbosity",
+      "severity": "low",
+      "pattern": "할\\s+필요가\\s+있(?:다|습니다)",
+      "minimum_occurrences": 3,
+      "cue": "필요 표현이 반복돼 문장이 무거워질 수 있음",
+      "guidance": "의무라면 '~해야 한다', 선택이라면 구체적인 권고로 쓴다.",
+      "exceptions": "의무와 필요를 법적으로 구분해야 하는 문장에서는 유지한다."
+    },
+    {
+      "id": "FM-01",
+      "category": "formatting",
+      "severity": "low",
+      "pattern": "\\*\\*[^*\\n]+\\*\\*",
+      "minimum_occurrences": 8,
+      "cue": "볼드 강조가 잦아 위계가 흐려질 수 있음",
+      "guidance": "핵심 용어와 실제 강조가 필요한 부분만 남긴다.",
+      "exceptions": "정형 템플릿이나 접근성 규칙이 요구하는 강조는 유지한다."
+    },
+    {
+      "id": "FM-02",
+      "category": "formatting",
+      "severity": "low",
+      "pattern": "(?:^|\\n)\\s*[-*+]\\s+",
+      "minimum_occurrences": 10,
+      "cue": "짧은 불릿이 과도하게 이어질 수 있음",
+      "guidance": "실제 병렬 항목은 유지하고 설명성 항목은 문단으로 묶는 것을 검토한다.",
+      "exceptions": "체크리스트, 요구사항, 릴리스 노트에서는 불릿 구조를 유지한다."
+    }
+  ]
+}

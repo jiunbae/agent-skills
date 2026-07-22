@@ -1,0 +1,4 @@
+interface:
+  display_name: "Korean Editor"
+  short_description: "한국어 초안의 의미와 형식을 보존하며 자연스럽게 퇴고"
+  default_prompt: "Use $korean-editor to conservatively edit this Korean draft while preserving facts, voice, and formatting."
