@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Obsidian Writer - 프로젝트 문서를 Vault에 업로드
+Obsidian Writer - 프로젝트 문서와 퍼블리시 아티클을 Vault에 저장
 
-저장 경로: workspace/{프로젝트명}/context/
+저장 경로:
+    프로젝트 문서: workspace/{프로젝트명}/context/
+    아티클: articles/
 
 사용법:
     # 설정 확인
@@ -17,11 +19,15 @@ Obsidian Writer - 프로젝트 문서를 Vault에 업로드
     # 하위 폴더 지정
     ./obsidian-write.py --title "회의록" --content "내용" --subfolder "meetings"
 
+    # articles/에 저장하고 docs.jiun.dev에 퍼블리시
+    ./obsidian-write.py --title "공개 문서" --content "내용" --publish
+
     # 대화형 설정
     ./obsidian-write.py --setup
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -231,19 +237,29 @@ def generate_frontmatter(
     title: str,
     project: str,
     tags: list = None,
+    article: bool = False,
+    publish: bool = False,
 ) -> str:
     """YAML 프론트매터 생성"""
     now = datetime.now().isoformat(timespec="seconds")
 
     lines = [
         "---",
+        f"title: {json.dumps(title, ensure_ascii=False)}",
         f"created: {now}",
-        f"project: {project}",
     ]
 
+    if article:
+        lines.append(f"date: {datetime.now().strftime('%Y-%m-%d')}")
+    else:
+        lines.append(f"project: {json.dumps(project, ensure_ascii=False)}")
+
     if tags:
-        tags_str = ", ".join(tags)
+        tags_str = ", ".join(json.dumps(tag, ensure_ascii=False) for tag in tags)
         lines.append(f"tags: [{tags_str}]")
+
+    if publish:
+        lines.append("publish: true")
 
     lines.append("---")
 
@@ -258,10 +274,12 @@ def write_document(
     subfolder: str = None,
     overwrite: bool = False,
     workspace_type: str = "workspace",
+    article: bool = False,
 ) -> Path:
     """문서 파일 생성"""
-    # 경로 구성: {workspace_type}/{project}/context/{subfolder?}/{filename}
-    if subfolder:
+    if article:
+        file_path = vault_path / "articles" / filename
+    elif subfolder:
         file_path = (
             vault_path / workspace_type / project / "context" / subfolder / filename
         )
@@ -304,9 +322,22 @@ def main():
     parser.add_argument("--filename", help="파일명 (미지정 시 제목에서 생성)")
     parser.add_argument("--tags", help="태그 (쉼표 구분)")
     parser.add_argument("--overwrite", action="store_true", help="덮어쓰기 허용")
-    parser.add_argument("--no-frontmatter", action="store_true", help="프론트매터 생략")
+    parser.add_argument(
+        "--no-frontmatter",
+        action="store_true",
+        help="프론트매터 생략 (--publish와 함께 사용 불가)",
+    )
+    parser.add_argument("--article", action="store_true", help="articles/에 저장")
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="articles/에 publish: true로 저장하여 docs.jiun.dev에 공개",
+    )
 
     args = parser.parse_args()
+
+    if args.publish and args.no_frontmatter:
+        parser.error("--publish cannot be combined with --no-frontmatter")
 
     # 설정 확인
     if args.check_config:
@@ -337,6 +368,8 @@ def main():
         print(f"❌ Vault 경로가 존재하지 않습니다: {vault_path}")
         sys.exit(1)
 
+    article = args.article or args.publish
+
     # 프로젝트명 및 workspace 타입 결정
     if args.project:
         project = args.project
@@ -361,7 +394,7 @@ def main():
     content_parts = []
 
     # 프론트매터
-    if config["frontmatter"] and not args.no_frontmatter:
+    if args.publish or (config["frontmatter"] and not args.no_frontmatter):
         tags = config["default_tags"].copy() if config["auto_tags"] else []
         if args.tags:
             tags.extend([t.strip() for t in args.tags.split(",")])
@@ -370,6 +403,8 @@ def main():
             title=args.title or "",
             project=project,
             tags=tags if tags else None,
+            article=article,
+            publish=args.publish,
         )
         content_parts.append(frontmatter)
 
@@ -391,6 +426,7 @@ def main():
         subfolder=args.subfolder,
         overwrite=args.overwrite,
         workspace_type=workspace_type,
+        article=article,
     )
 
     # 상대 경로 계산
@@ -398,8 +434,14 @@ def main():
 
     print(f"✅ 업로드 완료: {relative_path}")
     print(f"📁 Vault: {vault_path}")
-    print(f"🗂️ Workspace: {workspace_type}")
-    print(f"📂 프로젝트: {project}")
+    if article:
+        print("🗂️ 유형: article")
+    else:
+        print(f"🗂️ Workspace: {workspace_type}")
+        print(f"📂 프로젝트: {project}")
+    if args.publish:
+        print(f"🌐 예상 URL: https://docs.jiun.dev/#/{file_path.stem}")
+        print("⏱️ vault-docs-sync가 10분 내 반영합니다.")
 
 
 if __name__ == "__main__":

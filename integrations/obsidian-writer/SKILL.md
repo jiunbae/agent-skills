@@ -1,320 +1,102 @@
 ---
-name: writing-to-obsidian
-description: Uploads documents to Obsidian Vault AND publishes to docs.jiun.dev. Saves project context to workspace/{project}/context/, research/reports to articles/ with YYYY-MM-DD prefix. For docs publishing, adds publish:true frontmatter so vault-docs-sync auto-syncs to docs.jiun.dev every 10min. Use for "obsidian 업로드", "옵시디언 저장", "vault 업로드", "아티클 저장", "문서 공개", "docs 업로드", "외부 공유", "publish", "docs에 올려줘" requests.
+name: obsidian-writer
+description: Save project context and articles to the configured Obsidian Vault, and publish Markdown to docs.jiun.dev through the Vault sync workflow. Use for "obsidian 업로드", "옵시디언 저장", "vault 업로드", "아티클 저장", "문서 공개", "docs 업로드", "외부 공유", or "publish" requests. Use direct server maintenance only when the user explicitly asks to inspect, temporarily push, or delete a docs.jiun.dev document.
 ---
 
-# Obsidian Writer - 프로젝트 문서 업로드 & docs.jiun.dev 퍼블리시
+# Obsidian Writer
 
-## Overview
+Use the bundled writer as the primary path for both private Vault documents and durable public documents.
 
-현재 작업 중인 프로젝트의 문서를 Obsidian Vault에 업로드하고, 필요 시 `docs.jiun.dev`에 외부 공개합니다.
+## Load configuration
 
-**핵심 기능:**
-- 현재 디렉토리(pwd) 기반 프로젝트명 자동 감지
-- `workspace/{프로젝트명}/context/` 경로에 문서 저장 (기본값)
-- **경로 매핑 지원**: `~/.agents/OBSIDIAN.md`의 "프로젝트 경로 매핑" 테이블에서 커스텀 경로 사용
-- 프로젝트별 문서 체계적 관리
-- 프론트매터(YAML) 자동 생성
-- **docs.jiun.dev 퍼블리시**: `publish: true` frontmatter 포함 시 10분 내 자동 외부 공개
-
-## docs.jiun.dev 퍼블리시 아키텍처
-
-```
-obsidian-writer (이 스킬)
-    ↓  articles/ 에 publish: true 포함하여 저장
-vault-docs-sync.py  [LaunchAgent, 10분마다 자동 실행]
-    ↓  publish: true 파일만 rsync
-docs.jiun.dev (https://docs.jiun.dev/#/YYYY-MM-DD-slug)
-```
-
-**규칙:**
-- `publish: true` frontmatter → 서버에 자동 업로드/유지
-- `publish: true` 없는 파일이 서버에 있으면 → 자동 삭제됨 (stale 정리)
-
-**퍼블리시 요청 시 반드시 `publish: true`를 frontmatter에 포함할 것:**
-```yaml
----
-title: 문서 제목
-date: 2026-04-16
-tags: [tag1, tag2]
-publish: true
----
-```
-
-**저장 구조:**
-```
-Vault/
-├── articles/                     # 리서치, 리포트, 아티클 (날짜 prefix)
-│   ├── 2026-01-31-devin-ai-overview.md
-│   └── 2026-01-30-claude-code-review.md
-├── workspace/                    # ~/workspace/* 프로젝트
-│   ├── agent-skills/
-│   │   └── context/
-│   └── other-project/
-│       └── context/
-├── workspace-vibe/               # ~/workspace-vibe/* 프로젝트
-│   ├── colorpal/
-│   │   └── context/
-│   └── shared_services/
-│       └── context/
-└── workspace-ext/                # ~/workspace-ext/* 외부 프로젝트
-    ├── clawdbot/
-    │   └── context/
-    └── vision-insight-api/
-        └── context/
-```
-
-## 경로 매핑 (Path Mapping)
-
-`~/.agents/OBSIDIAN.md`의 "프로젝트 경로 매핑"에 따라 경로가 결정됩니다:
-
-| 문서 유형 | Obsidian 경로 | 파일명 규칙 |
-|----------|--------------|------------|
-| **articles** (리서치/리포트) | `articles/` | `YYYY-MM-DD-{slug}.md` |
-| 프로젝트 문서 | `workspace/{project}/context/` | 자유 |
-
-### 프로젝트 경로 매핑
-
-| 로컬 경로 | Obsidian 경로 |
-|----------|--------------|
-| `~/workspace/{project}/` | `workspace/{project}/context/` |
-| `~/workspace-vibe/{service}/` | `workspace-vibe/{service}/context/` |
-| `~/workspace-ext/{project}/` | `workspace-ext/{project}/context/` |
-
-예시:
-- `~/workspace/agent-skills/` → `workspace/agent-skills/context/`
-- `~/workspace-vibe/colorpal/` → `workspace-vibe/colorpal/context/`
-- `~/workspace-ext/clawdbot/` → `workspace-ext/clawdbot/context/`
-- 리서치 리포트 → `articles/2026-01-31-devin-ai-overview.md`
-
-## Prerequisites
-
-### Static 파일 설정 (필수)
-
-`~/.agents/OBSIDIAN.md` 파일에 Vault 경로 설정:
-
-```markdown
-# Obsidian 설정
-
-## Vault 경로
-- **경로**: /Users/username/Documents/ObsidianVault
-
-## 문서 설정
-- **프론트매터 생성**: true
-- **태그 자동 생성**: true
-```
-
-## Workflow
-
-### Step 1: 프로젝트 감지
-
-스킬 실행 시 현재 작업 디렉토리에서 프로젝트명을 자동으로 감지합니다:
+Read `~/.agents/OBSIDIAN.md` through `static-index` when available. The file must define a valid Vault path. Verify configuration without changing it:
 
 ```bash
-# 현재 디렉토리: ~/workspace/agent-skills
-# 감지된 프로젝트명: agent-skills
-# 저장 경로: Vault/workspace/agent-skills/context/
+python3 scripts/obsidian-write.py --check-config
 ```
 
-### Step 2: 문서 업로드
+Do not publish secrets, credentials, internal addresses, or private operational data. Inspect the final Markdown before making it public.
+
+## Choose one mode
+
+### Project context
+
+Save project-specific material under `workspace/{project}/context/`, `workspace-vibe/{project}/context/`, or `workspace-ext/{project}/context/` based on the current working directory:
 
 ```bash
-# 기본 업로드 (프로젝트 자동 감지)
-./scripts/obsidian-write.py \
-  --title "API 설계 문서" \
+python3 scripts/obsidian-write.py \
+  --title "API 설계" \
   --content "마크다운 내용"
-
-# 프로젝트 명시
-./scripts/obsidian-write.py \
-  --title "문서 제목" \
-  --content "내용" \
-  --project "custom-project"
-
-# 하위 폴더 지정
-./scripts/obsidian-write.py \
-  --title "회의록" \
-  --content "내용" \
-  --subfolder "meetings"
-# 결과: workspace/agent-skills/context/meetings/회의록.md
 ```
 
-## Examples
+Optional arguments:
 
-### 예시 1: 문서 업로드
+- `--project NAME`: override the detected project
+- `--subfolder NAME`: create a folder below the project context directory
+- `--filename NAME`: choose the filename; a date prefix is added when absent
+- `--tags a,b`: append tags
+- `--overwrite`: replace an exact existing path; otherwise a numeric suffix is added
 
-```
-사용자: 이 API 설계 문서 옵시디언에 업로드해줘
+### Private article
 
-Claude: Obsidian에 업로드를 준비합니다.
+Save research or a report under `articles/YYYY-MM-DD-slug.md` without publishing it:
 
-## 업로드 정보
-
-- **프로젝트**: agent-skills (자동 감지)
-- **저장 경로**: workspace/agent-skills/context/api-design.md
-
-### 문서 미리보기
----
-created: 2025-01-15T14:30:00
-project: agent-skills
-tags: [claude, api, design]
----
-
-# API 설계 문서
-
-[문서 내용...]
-
-이대로 업로드할까요? (Y/n)
+```bash
+python3 scripts/obsidian-write.py \
+  --article \
+  --title "Research title" \
+  --content "마크다운 내용" \
+  --tags "research,topic"
 ```
 
-### 예시 2: 하위 폴더에 저장
+### Durable docs.jiun.dev publication
 
-```
-사용자: 오늘 회의 내용 옵시디언 meetings 폴더에 저장해줘
+Use `--publish`. It implies `--article`, writes `publish: true` in frontmatter, and lets `vault-docs-sync` upload the document within about ten minutes:
 
-Claude: 업로드합니다.
-
-✅ 업로드 완료
-- 경로: workspace/agent-skills/context/meetings/2025-01-15-meeting.md
-- Vault: ~/Documents/ObsidianVault
-```
-
-### 예시 3: 리서치/리포트를 articles에 저장
-
-```
-사용자: Devin AI 리서치 결과 옵시디언에 저장해줘
-
-Claude: 리서치 리포트를 articles/ 폴더에 저장합니다.
-
-✅ 업로드 완료
-- 경로: articles/2026-01-31-devin-ai-overview.md
-- 유형: article (리서치/리포트)
-- 태그: [ai, software-engineer, cognition-labs, devin, article]
+```bash
+python3 scripts/obsidian-write.py \
+  --publish \
+  --title "Public document" \
+  --content "마크다운 내용" \
+  --tags "public,documentation"
 ```
 
-### 예시 4: docs.jiun.dev에 외부 공개 (퍼블리시)
+Expected URL:
 
-```
-사용자: 이 분석 문서 docs에 올려줘 / publish해줘 / 외부 공유해줘
-
-Claude: docs.jiun.dev에 퍼블리시합니다. articles/에 publish: true 포함하여 저장합니다.
-
-[저장되는 frontmatter]
----
-title: 문서 제목
-date: 2026-04-16
-tags: [...]
-publish: true
----
-
-✅ Obsidian 저장 완료
-- 경로: articles/2026-04-16-document-name.md
-- docs.jiun.dev 반영: vault-docs-sync가 10분 내 자동 업로드합니다.
-- 예상 URL: https://docs.jiun.dev/#/2026-04-16-document-name
+```text
+https://docs.jiun.dev/#/YYYY-MM-DD-slug
 ```
 
-### 예시 5: 설정 없을 때
+Use standard Markdown links instead of Obsidian wikilinks because Docsify does not render `[[wikilinks]]` reliably.
 
-```
-사용자: 옵시디언 업로드해줘
+## Direct server maintenance
 
-Claude: ⚠️ Obsidian 설정이 필요합니다.
+Use `scripts/docs-publish.sh` only for explicit server inspection, temporary sharing, or cleanup. It requires `DOCS_HOST` and `DOCS_URL`; `DOCS_USER` and `DOCS_ROOT` are optional.
 
-~/.agents/OBSIDIAN.md 파일을 생성해주세요:
-
-# Obsidian 설정
-
-## Vault 경로
-- **경로**: [여기에 Vault 경로 입력]
-
-설정 파일을 자동으로 생성할까요? (Y/n)
+```bash
+bash scripts/docs-publish.sh list
+bash scripts/docs-publish.sh read DOCUMENT_NAME
+bash scripts/docs-publish.sh url DOCUMENT_NAME
 ```
 
-## Configuration
+Direct `push` and `write` uploads can be deleted by the next Vault sync when no matching `publish: true` article exists. Prefer `--publish` for durable documents.
 
-### ~/.agents/OBSIDIAN.md 구조
+Before `delete`, resolve the exact remote document name and confirm the destructive intent unless the user already named that exact document for deletion:
 
-```markdown
-# Obsidian 설정
-
-## Vault 경로
-- **경로**: /Users/username/Documents/ObsidianVault
-
-## 문서 설정
-- **프론트매터 생성**: true
-- **태그 자동 생성**: true
-- **기본 태그**: claude, context
+```bash
+bash scripts/docs-publish.sh delete DOCUMENT_NAME
 ```
 
-## 프론트매터 템플릿
+## Sync contract
 
-```yaml
----
-created: 2025-01-15T14:30:00
-project: agent-skills
-tags: [claude, context, documentation]
----
-```
-
-## Best Practices
-
-**DO:**
-- Vault 경로는 절대 경로로 설정
-- 프론트매터로 메타데이터 관리
-- 일관된 폴더 구조 유지
-- 저장 전 내용 미리보기 확인
-- **docs.jiun.dev 퍼블리시 요청 시 `publish: true`를 frontmatter에 반드시 포함**
-- 퍼블리시 대상은 `articles/` 폴더에 `YYYY-MM-DD-slug.md` 형식으로 저장
-
-**DON'T:**
-- 민감 정보(API 키, 비밀번호) 저장하지 않기
-- 기존 파일 덮어쓰기 주의 (확인 필요)
-- `publish: true` 없이 docs-publish.sh로 직접 push하면 10분 내 자동 삭제됨
-- Obsidian 잠금 파일(.obsidian) 수정하지 않기
-
-## Troubleshooting
-
-### 문제 1: Vault 경로 없음
-
-```
-Error: Vault path not found
-```
-
-해결:
-1. `~/.agents/OBSIDIAN.md`에 올바른 경로 설정
-2. 폴더가 실제로 존재하는지 확인
-3. 경로에 공백이 있으면 따옴표로 감싸기
-
-### 문제 2: 권한 오류
-
-```
-Error: Permission denied
-```
-
-해결:
-1. Vault 폴더 쓰기 권한 확인
-2. `chmod 755 /path/to/vault` 실행
-
-### 문제 3: 파일명 충돌
-
-```
-Warning: File already exists
-```
-
-해결:
-- 덮어쓰기 확인 프롬프트 표시
-- 또는 `--suffix` 옵션으로 번호 추가
+- `publish: true` in `articles/` means upload and retain.
+- Removing `publish: true` or removing the article causes the sync process to remove the stale server copy.
+- LaunchAgent: `~/Library/LaunchAgents/com.jiun.vault-docs-sync.plist`
+- Sync implementation: `~/workspace/settings/vault-scripts/vault-docs-sync.py`
+- Logs: `/tmp/vault-docs-sync.log` and `/tmp/vault-docs-sync.err`
 
 ## Resources
 
-| 파일 | 설명 |
-|------|------|
-| `scripts/obsidian-write.py` | 문서 생성 스크립트 |
-| `~/.agents/OBSIDIAN.md` | 사용자 설정 (static-index 참조) |
-
-## Integration with Other Skills
-
-| 스킬 | 연동 방식 |
-|------|----------|
-| static-index | OBSIDIAN.md 파일 경로 조회 |
-| security-auditor | 저장 전 민감 정보 검사 |
-| mindcontext | 프로젝트별 컨텍스트와 연동 |
+- `scripts/obsidian-write.py`: deterministic Vault writer with project, article, and publish modes
+- `scripts/docs-publish.sh`: direct Docsify server inspection and maintenance
+- `~/.agents/OBSIDIAN.md`: user-specific Vault configuration
