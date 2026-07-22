@@ -1,6 +1,8 @@
 ---
 name: korean-editor
 description: 기존 한국어 초안을 의미·사실·수치·인용·문서 구조와 작성자의 목소리를 보존하며 자연스럽게 퇴고한다. 사용자가 한국어 글의 윤문, 퇴고, 교정, 번역투 완화, 기계적이거나 AI 같은 문체 완화, 간결화, 톤 정리를 명시적으로 요청할 때 사용한다. 빈 문서에서 새 글을 쓰는 요청, 번역·요약·사실 확장, 코드 수정에는 사용하지 않는다. PR·Linear·Slack·Notion 문서는 해당 문서의 내용을 작성하는 일반 요청이 아니라 문체 편집을 명시적으로 요청한 경우에만 사용한다.
+trigger-keywords: [윤문, 퇴고, 교정, 다듬, 문체, 번역투, 어색, korean-editor, proofread]
+tags: [korean, writing, editing]
 ---
 
 # Korean Editor
