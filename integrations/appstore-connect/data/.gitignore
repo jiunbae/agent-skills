@@ -1,7 +1,0 @@
-# Session and state files (sensitive)
-browser-state.json
-session-storage.json
-*.json
-
-# Keep this .gitignore
-!.gitignore
