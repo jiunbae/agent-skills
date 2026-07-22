@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-34-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-28-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#quickstart-for-agents">Quickstart</a> •
@@ -36,20 +36,26 @@ A collection of **skills**, **personas**, and **hooks** for AI coding agents (Cl
 ```prompt
 Install the agent-skills toolkit into this project:
 
-1. Install the "core" profile (essential skills for every workspace):
-   npx @open330/agt skill install --profile core
+1. Clone the skill source so agt can discover the profiles:
+   git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
 
-2. Install all available personas globally:
+2. For Claude Code, install the "core" profile globally:
+   npx @open330/agt skill install --profile core --global
+
+   For Claude Code + Codex, use the cross-agent installer instead:
+   ~/.agent-skills/install.sh --core --codex
+
+3. Install all available personas globally:
    npx @open330/agt persona install --global --from jiunbae/agent-skills
 
-3. Verify installation:
+4. Verify installation:
    npx @open330/agt skill list
    npx @open330/agt persona list
 
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
-<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=34+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=28+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
 
 ---
 
@@ -58,6 +64,7 @@ Note: Use `npm install -g @open330/agt` first if you prefer running `agt` direct
 ### With npx (No Install)
 
 ```bash
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
 npx @open330/agt skill install --profile core          # Install core skills
 npx @open330/agt skill install -g --from jiunbae/agent-skills  # Browse & install from repo
 npx @open330/agt persona install -g --from jiunbae/agent-skills
@@ -67,10 +74,15 @@ npx @open330/agt persona install -g --from jiunbae/agent-skills
 
 ```bash
 npm install -g @open330/agt
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
 agt skill install --profile core
 agt skill install -g git-commit-pr     # Install a skill globally
 agt persona install -g --all           # Install all personas globally
 ```
+
+`agt skill install` currently manages Claude Code's `.claude/skills` paths.
+Use `install.sh --codex` when the same skills must also be discoverable by Codex
+under `~/.agents/skills`.
 
 ### With install.sh
 
@@ -79,6 +91,7 @@ git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
 cd ~/.agent-skills
 
 ./install.sh --core                    # Core skills only
+./install.sh --core --codex            # Core skills + Codex user skill links
 ./install.sh --core --hooks            # Core + hooks
 ./install.sh all --link-static --codex # Everything
 ./install.sh --list                    # List available options
@@ -89,8 +102,8 @@ cd ~/.agent-skills
 | Option | Description |
 |--------|-------------|
 | `--core` | Install core skills globally (recommended) |
-| `--link-static` | Symlink `~/.agents` -> `static/` (global context) |
-| `--codex` | Codex CLI support (AGENTS.md + skills symlink) |
+| `--link-static` | Link each `static/*` item under `~/.agents` while preserving `~/.agents/skills` |
+| `--codex` | Link selected skills individually into `~/.agents/skills` without replacing Codex system skills (also links `static/*` items under `~/.agents`) |
 | `--hooks` | Install Claude Code hooks |
 | `--personas` | Install agent personas |
 | `--copy` | Copy instead of symlink |
@@ -120,39 +133,35 @@ Installed by default with `--core`:
 | `background-implementer` | Parallel multi-LLM implementation with context safety |
 | `background-planner` | Parallel multi-LLM planning with auto-save |
 | `background-reviewer` | Multi-LLM parallel code review (security/architecture/quality) |
+| `incident-writer` | Structured incident and status-page reports |
 
 ### 🛠 development/ — Dev Tools
 
 | Skill | Description |
 |-------|-------------|
-| `appstore-screenshots` | iOS/iPadOS/macOS App Store screenshot capture & upload |
+| `appstore-screenshots` | App Store screenshot capture/upload and authenticated ASC inspection |
 | `context-worktree` | Auto git worktree per task |
 | `git-commit-pr` | Git commit & PR generation guide |
+| `grill-me` | Adversarial plan questioning before implementation |
 | `iac-deploy-prep` | IaC deployment prep (K8s, Dockerfile, CI/CD) |
-| `multi-ai-code-review` | Multi-AI code review orchestrator |
 | `playwright` | Playwright browser automation |
-| `pr-review-loop` | PR review await & auto-fix loop |
-| `task-master` | Task Master CLI task management |
 
 ### 📊 business/ — Business
 
 | Skill | Description |
 |-------|-------------|
 | `bm-analyzer` | Business model analysis & monetization strategy |
-| `document-processor` | PDF, DOCX, XLSX, PPTX processing |
 | `proposal-analyzer` | Proposal / RFP analysis |
 
 ### 🔗 integrations/ — Integrations
 
 | Skill | Description |
 |-------|-------------|
-| `appstore-connect` | App Store Connect automation |
 | `discord-skill` | Discord REST API |
-| `google-search-console` | Google Search Console API |
 | `kubernetes-skill` | Kubernetes cluster management |
 | `notion-summary` | Notion page upload |
 | `obsidian-tasks` | Obsidian TaskManager (Kanban, Dataview) |
-| `obsidian-writer` | Obsidian Vault document upload |
+| `obsidian-writer` | Obsidian Vault writing and docs.jiun.dev publishing |
 | `service-manager` | Docker container & service management |
 | `slack-skill` | Slack app development & API |
 | `vault-secrets` | Vaultwarden credentials & API key management |
@@ -183,9 +192,7 @@ Installed by default with `--core`:
 
 | Skill | Description |
 |-------|-------------|
-| `karpathy-guide` | LLM coding error reduction guidelines |
 | `skill-manager` | Skill ecosystem management |
-| `skill-recommender` | Skill auto-recommender |
 
 ---
 
@@ -273,11 +280,7 @@ my-skills/
 ```yaml
 ---
 name: my-skill-name
-description: "What this skill does. Use for 'keyword1', 'keyword2' requests."
-trigger-keywords: keyword1, keyword2, 키워드
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob
-priority: high
-tags: [category, tool-name]
+description: "What this skill does, when it should trigger, and when it should not. Use for 'keyword1' and 'keyword2' requests."
 ---
 
 # Skill Title
@@ -304,11 +307,12 @@ Step-by-step instructions for the AI agent...
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Skill identifier (kebab-case) |
-| `description` | Yes | What the skill does + trigger keywords |
-| `trigger-keywords` | No | Comma-separated activation keywords |
-| `allowed-tools` | No | Tools available to the skill |
-| `priority` | No | `high` / `medium` / `low` |
-| `tags` | No | Category tags |
+| `description` | Yes | What the skill does, trigger terms, scope, and important non-trigger boundaries |
+
+Keep the portable frontmatter baseline to `name` and `description`. Put Codex UI
+metadata, tool dependencies, and implicit-invocation policy in
+`agents/openai.yaml`. Add host-specific frontmatter only when that host's current
+validator explicitly supports it.
 
 ### PERSONA.md Format
 
@@ -406,8 +410,8 @@ Description: [WHAT_THE_SKILL_DOES]
 
 Create the file at [GROUP]/[SKILL_NAME]/SKILL.md with this structure:
 
-1. YAML frontmatter with: name, description (include trigger keywords and Korean keywords
-   if applicable), trigger-keywords, allowed-tools, priority, tags
+1. YAML frontmatter with only `name` and `description`; include English/Korean trigger
+   terms and important non-trigger boundaries in the description
 2. A "Quick Start" section with 2-3 essential commands/examples
 3. A "Workflow" section with step-by-step instructions
 4. A "Best Practices" section with DO/DON'T guidelines
@@ -422,12 +426,7 @@ Rules:
 Reference this existing skill for style:
 ---
 name: git-commit-pr
-description: "Guides git commit and PR creation with security validation. Activates on
-  commit, PR, pull request requests."
-trigger-keywords: commit, pr, pull request, 커밋
-allowed-tools: Read, Bash, Grep, Glob
-priority: high
-tags: [git, commit, pr, security]
+description: "Guides local Git commit preparation and PR drafting with security checks. Use for commit, PR, pull request, and 커밋 requests."
 ---
 ```
 
@@ -526,8 +525,9 @@ Personas to include: [LIST_OF_PERSONAS]
 Create the following structure:
 
 1. Group directories (e.g., development/, integrations/) containing skill subdirectories
-2. Each skill has a SKILL.md with YAML frontmatter (name, description, trigger-keywords,
-   allowed-tools, priority, tags) and markdown content (Quick Start, Workflow, Best Practices)
+2. Each skill has a SKILL.md with portable YAML frontmatter (`name` and `description`)
+   and concise Markdown instructions; use `agents/openai.yaml` for Codex UI metadata,
+   dependency declarations, or implicit-invocation policy
 3. A personas/ directory with PERSONA.md files for each persona
 4. A profiles.yml defining installation profiles (core, dev, full at minimum)
 5. A README.md documenting the repository
@@ -594,6 +594,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>34</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
+  <sub><strong>28</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
   <sub>CLI tool: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

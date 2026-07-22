@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#라이선스"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-34-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-28-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#스킬-카탈로그">스킬</a> •
@@ -51,7 +51,7 @@ cd ~/.agent-skills && ./install.sh --core
 
 ## 설치
 
-### agt CLI로 설치 (권장)
+### agt CLI로 설치 (Claude Code)
 
 ```bash
 npm install -g @open330/agt
@@ -60,13 +60,18 @@ agt skill install -g git-commit-pr     # 스킬 전역 설치
 agt persona install -g --all           # 모든 페르소나 전역 설치
 ```
 
-### install.sh로 설치
+`agt skill install`은 현재 Claude Code의 `.claude/skills` 경로를 관리합니다.
+동일한 스킬을 Codex의 `~/.agents/skills`에도 설치하려면 아래
+`install.sh --codex` 방식을 사용하세요.
+
+### install.sh로 설치 (Claude Code + Codex)
 
 ```bash
 git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
 cd ~/.agent-skills
 
 ./install.sh --core                    # Core 스킬만
+./install.sh --core --codex            # Core 스킬 + Codex 사용자 스킬 링크
 ./install.sh --core --hooks            # Core + 훅
 ./install.sh all --link-static --codex # 전체 설치
 ./install.sh --list                    # 옵션 목록
@@ -77,8 +82,8 @@ cd ~/.agent-skills
 | 옵션 | 설명 |
 |------|------|
 | `--core` | Core 스킬만 전역 설치 (권장) |
-| `--link-static` | `~/.agents` -> `static/` 심링크 (글로벌 컨텍스트) |
-| `--codex` | Codex CLI 지원 (AGENTS.md + 스킬 심링크) |
+| `--link-static` | `~/.agents/skills`를 보존하며 `static/*` 항목을 `~/.agents` 아래에 개별 링크 |
+| `--codex` | Codex 시스템 스킬을 보존하며 선택한 스킬을 `~/.agents/skills`에 개별 링크 (`static/*` 항목도 `~/.agents` 아래에 함께 링크) |
 | `--hooks` | Claude Code 훅 설치 |
 | `--personas` | 에이전트 페르소나 설치 |
 | `--copy` | 심링크 대신 복사 |
@@ -108,39 +113,35 @@ cd ~/.agent-skills
 | `background-implementer` | 백그라운드 병렬 구현 (멀티 LLM, 컨텍스트 안전) |
 | `background-planner` | 백그라운드 병렬 기획 (멀티 LLM, 자동 저장) |
 | `background-reviewer` | 다중 LLM 병렬 코드 리뷰 (보안/아키텍처/코드 품질) |
+| `incident-writer` | 구조화된 장애 및 상태 페이지 보고서 작성 |
 
 ### 🛠 development/ — 개발 도구
 
 | 스킬 | 설명 |
 |------|------|
-| `appstore-screenshots` | iOS/iPadOS/macOS App Store 스크린샷 캡처·업로드 |
+| `appstore-screenshots` | App Store 스크린샷 캡처·업로드 및 ASC 인증 조회 |
 | `context-worktree` | 작업별 git worktree 자동 생성 |
 | `git-commit-pr` | Git 커밋 및 PR 생성 가이드 |
+| `grill-me` | 구현 전 계획을 반대 관점에서 검증 |
 | `iac-deploy-prep` | IaC 배포 준비 (K8s, Dockerfile, CI/CD) |
-| `multi-ai-code-review` | 멀티 AI 코드 리뷰 오케스트레이터 |
 | `playwright` | Playwright 브라우저 자동화 |
-| `pr-review-loop` | PR 리뷰 대기 및 자동 수정 |
-| `task-master` | Task Master CLI 작업 관리 |
 
 ### 📊 business/ — 비즈니스
 
 | 스킬 | 설명 |
 |------|------|
 | `bm-analyzer` | 비즈니스 모델 분석 및 수익화 전략 |
-| `document-processor` | PDF, DOCX, XLSX, PPTX 문서 처리 |
 | `proposal-analyzer` | 사업 제안서/RFP 분석 |
 
 ### 🔗 integrations/ — 외부 연동
 
 | 스킬 | 설명 |
 |------|------|
-| `appstore-connect` | App Store Connect 자동화 |
 | `discord-skill` | Discord REST API |
-| `google-search-console` | Google Search Console API |
 | `kubernetes-skill` | Kubernetes 클러스터 관리 |
 | `notion-summary` | Notion 페이지 업로드 |
 | `obsidian-tasks` | Obsidian TaskManager (Kanban, Dataview) |
-| `obsidian-writer` | Obsidian Vault 문서 업로드 |
+| `obsidian-writer` | Obsidian Vault 저장 및 docs.jiun.dev 퍼블리시 |
 | `service-manager` | Docker 컨테이너 및 서비스 중앙 관리 |
 | `slack-skill` | Slack 앱 개발 및 API |
 | `vault-secrets` | Vaultwarden 자격증명 및 API 키 관리 |
@@ -171,9 +172,7 @@ cd ~/.agent-skills
 
 | 스킬 | 설명 |
 |------|------|
-| `karpathy-guide` | LLM 코딩 오류 감소 가이드라인 |
 | `skill-manager` | 스킬 생태계 관리 |
-| `skill-recommender` | 스킬 자동 추천 |
 
 ---
 
@@ -304,6 +303,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>34</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
+  <sub><strong>28</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
   <sub>CLI 도구: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>
