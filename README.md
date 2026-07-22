@@ -36,20 +36,18 @@ A collection of **skills**, **personas**, and **hooks** for AI coding agents (Cl
 ```prompt
 Install the agent-skills toolkit into this project:
 
-1. Clone the skill source so agt can discover the profiles:
-   git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+1. Install the "core" profile globally for Claude Code:
+   npx @open330/agt skill install --profile core --from jiunbae/agent-skills --global
 
-2. For Claude Code, install the "core" profile globally:
-   npx @open330/agt skill install --profile core --global
-
-   For Claude Code + Codex, use the cross-agent installer instead:
-   ~/.agent-skills/install.sh --core --codex
+2. Install the same profile globally for Codex:
+   npx @open330/agt skill install --profile core --from jiunbae/agent-skills --global --agent codex
 
 3. Install all available personas globally:
    npx @open330/agt persona install --global --from jiunbae/agent-skills
 
 4. Verify installation:
    npx @open330/agt skill list
+   npx @open330/agt skill list --agent codex
    npx @open330/agt persona list
 
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
@@ -64,8 +62,8 @@ Note: Use `npm install -g @open330/agt` first if you prefer running `agt` direct
 ### With npx (No Install)
 
 ```bash
-git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
-npx @open330/agt skill install --profile core          # Install core skills
+npx @open330/agt skill install --profile core --from jiunbae/agent-skills
+npx @open330/agt skill install --profile core --from jiunbae/agent-skills --agent codex
 npx @open330/agt skill install -g --from jiunbae/agent-skills  # Browse & install from repo
 npx @open330/agt persona install -g --from jiunbae/agent-skills
 ```
@@ -74,15 +72,15 @@ npx @open330/agt persona install -g --from jiunbae/agent-skills
 
 ```bash
 npm install -g @open330/agt
-git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
-agt skill install --profile core
-agt skill install -g git-commit-pr     # Install a skill globally
-agt persona install -g --all           # Install all personas globally
+agt skill install --profile core --from jiunbae/agent-skills
+agt skill install --profile core --from jiunbae/agent-skills --agent codex
+agt skill install -g --from jiunbae/agent-skills/development/git-commit-pr
+agt persona install -g --from jiunbae/agent-skills
 ```
 
-`agt skill install` currently manages Claude Code's `.claude/skills` paths.
-Use `install.sh --codex` when the same skills must also be discoverable by Codex
-under `~/.agents/skills`.
+`--agent claude` is the default and uses `.claude/skills`. `--agent codex`
+uses Codex's flat `.agents/skills/<skill>` discovery layout. Add `--global` for
+the corresponding user-level directory.
 
 ### With install.sh
 

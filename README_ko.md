@@ -31,19 +31,18 @@
 ## 빠른 시작
 
 ```bash
-# ~/.agent-skills에 클론 (agt가 자동으로 발견)
-git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+# Claude Code용 Core 스킬 설치
+npx @open330/agt skill install --profile core --from jiunbae/agent-skills
 
-# agt CLI 설치
-npm install -g @open330/agt
+# Codex용 Core 스킬 설치
+npx @open330/agt skill install --profile core --from jiunbae/agent-skills --agent codex
 
-# 사용 가능한 스킬 확인
-agt skill list
-
-# 프로젝트에 스킬 설치
-agt skill install kubernetes-skill
+# 설치 확인
+npx @open330/agt skill list
+npx @open330/agt skill list --agent codex
 
 # 또는 install.sh 직접 사용
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
 cd ~/.agent-skills && ./install.sh --core
 ```
 
@@ -51,18 +50,19 @@ cd ~/.agent-skills && ./install.sh --core
 
 ## 설치
 
-### agt CLI로 설치 (Claude Code)
+### agt CLI로 설치 (Claude Code + Codex)
 
 ```bash
 npm install -g @open330/agt
-git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
-agt skill install -g git-commit-pr     # 스킬 전역 설치
-agt persona install -g --all           # 모든 페르소나 전역 설치
+agt skill install --profile core --from jiunbae/agent-skills
+agt skill install --profile core --from jiunbae/agent-skills --agent codex
+agt skill install -g --from jiunbae/agent-skills/development/git-commit-pr
+agt persona install -g --from jiunbae/agent-skills
 ```
 
-`agt skill install`은 현재 Claude Code의 `.claude/skills` 경로를 관리합니다.
-동일한 스킬을 Codex의 `~/.agents/skills`에도 설치하려면 아래
-`install.sh --codex` 방식을 사용하세요.
+`--agent claude`가 기본값이며 `.claude/skills`를 사용합니다.
+`--agent codex`는 Codex의 평면형 `.agents/skills/<skill>` 발견 구조를
+사용합니다. `--global`을 추가하면 사용자 전역 경로에 설치합니다.
 
 ### install.sh로 설치 (Claude Code + Codex)
 
