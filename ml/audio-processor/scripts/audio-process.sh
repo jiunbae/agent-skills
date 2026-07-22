@@ -239,7 +239,7 @@ cmd_batch() {
     local total=0
     local success=0
 
-    for file in "$indir"/*.{wav,mp3,m4a,opus,flac,ogg} 2>/dev/null; do
+    for file in "$indir"/*.{wav,mp3,m4a,opus,flac,ogg}; do
         [[ ! -f "$file" ]] && continue
         total=$((total + 1))
 

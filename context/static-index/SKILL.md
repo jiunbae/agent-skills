@@ -1,411 +1,52 @@
 ---
 name: indexing-static-context
-description: Provides an index of global static context files in ~/.agents/. Returns appropriate static file paths for natural language queries like "내 정보", "보안 규칙". Use when other skills or agents need to locate reference information.
+description: Locates existing global context files under ~/.agents without assuming that optional files exist. Use when a task needs the user's profile, security rules, IaC conventions, service registry, Notion/Obsidian/Vault configuration, personas, or a direct "내 정보" or "글로벌 설정" lookup. Do not use it to enumerate installed skills.
 ---
 
-# Static Index - 글로벌 컨텍스트 인덱스
+# Static Context Index
 
-## Overview
-
-`~/.agents/` 디렉토리에 있는 정적 컨텍스트 파일들의 인덱스를 제공합니다. 다른 스킬이나 에이전트가 특정 정보를 찾을 때, 이 인덱스를 먼저 조회하여 적절한 파일을 찾을 수 있습니다.
-
-## When to Use
-
-이 스킬은 다음 상황에서 **자동으로** 활성화됩니다:
-
-- 다른 스킬이 글로벌 컨텍스트 정보를 필요로 할 때
-- 사용자가 "내 정보", "보안 규칙" 등 정적 데이터를 요청할 때
-- 프로젝트 설정 전 기본 정보를 확인해야 할 때
-
-**명시적 호출:**
-- "static 파일 목록 보여줘"
-- "글로벌 설정 확인"
-- "에이전트 컨텍스트 파일들"
-
-## Static File Index
-
-### 쿼리-파일 매핑 테이블
-
-| 자연어 쿼리 | 파일 | 설명 |
-|------------|------|------|
-| 내 정보, 내 프로필, 사용자 정보, whoami, 개발자 정보, 내 기술 스택 | `WHOAMI.md` | 사용자 개발 프로필 (기술 스택, 선호도, 경험) |
-| 보안 규칙, 보안 정책, 민감 정보, 커밋 금지, security | `SECURITY.md` | 보안 검증 규칙 (커밋 금지 패턴, 민감 정보) |
-| 코딩 스타일, 스타일 가이드, 코드 컨벤션, formatting | `STYLE.md` | 코딩 스타일 가이드 (포맷팅, 네이밍) |
-| 노션 설정, notion, 노션 페이지, 업로드 설정 | `NOTION.yaml` (`NOTION.md` fallback) | Notion 연동 설정 (대상 ID, 업로드 옵션) |
-| 리니어, linear, 이슈 생성, issue create, 티켓 생성 | `LINEAR.yaml` (`LINEAR.md` fallback) | Linear 연동 설정 (기본 팀/담당자/state/priority/estimate, 생성 도구 entrypoint) |
-| 센트리, sentry, 에러 조회, exception, stack trace | `SENTRY.yaml` (`SENTRY.md` fallback) | Sentry 연동 설정 (org/base URL, 조회 도구 entrypoint) |
-| 키바나, kibana, 로그 조회, log search, elasticsearch, transaction trace | `KIBANA.yaml` (`KIBANA.md` fallback) | Kibana/Elasticsearch 연동 설정 (space/index/time field, 로그 도구 entrypoint) |
-| 슬랙, slack, 알림, 메시지, webhook | `SLACK.md` | Slack Web API 설정 (테스트 채널, 메시지 전송 curl entrypoint) |
-| IaC, 배포 표준, kubernetes, k8s, 배포 설정, deploy, 인프라 | `IAC.md` | IaC 배포 표준화 가이드라인 (K8s, CI/CD, 환경변수) |
-| 서비스 목록, 컨테이너 상태, 포트 매핑, docker, 실행 중인 서비스 | `SERVICES.md` | 서비스/컨테이너 중앙 관리 (포트, 상태, 이력) |
-| vault, vaultwarden, 시크릿, 비밀번호, API 키, credentials, 인증 정보 | `VAULT.md` | Vaultwarden 시크릿 관리 (API 키, DB 비밀번호, 인증 정보) |
-| 페르소나, agent persona, reviewer, 리뷰어, security persona, architecture persona | `personas/` | 에이전트 페르소나 정의 (아이덴티티, 전문 분야, 평가 기준, 출력 포맷) |
-
-### 파일 상세 정보
-
-#### WHOAMI.md
-- **경로**: `~/.agents/WHOAMI.md`
-- **용도**: 사용자의 개발 프로필 저장
-- **템플릿**: `static/WHOAMI.sample.md`
-- **포함 정보**:
-  - 기본 정보 (이름, 역할, 경력)
-  - 프로그래밍 언어 (주력/부수)
-  - 프레임워크 & 라이브러리
-  - 개발 환경 (OS, 에디터, 셸)
-  - 코딩 스타일 선호도
-  - 아키텍처/테스트/DevOps 선호도
-
-#### SECURITY.md
-- **경로**: `~/.agents/SECURITY.md`
-- **용도**: 보안 검증 규칙 정의
-- **관리 스킬**: `git-commit-pr`
-- **포함 정보**:
-  - 커밋 금지 파일 패턴
-  - 민감 정보 패턴 (API 키, 비밀번호 등)
-  - 보안 체크리스트
-
-#### STYLE.md
-- **경로**: `~/.agents/STYLE.md`
-- **용도**: 프로젝트 공통 코딩 스타일
-- **관리 스킬**: 전역
-- **포함 정보**:
-  - 포맷팅 규칙 (들여쓰기, 줄 길이)
-  - 네이밍 컨벤션
-  - 주석 스타일
-
-#### NOTION.yaml / NOTION.md
-- **경로**: `~/.agents/NOTION.yaml` (legacy fallback: `~/.agents/NOTION.md`)
-- **용도**: Notion 연동 설정
-- **관리 스킬**: `notion-summary`
-- **포함 정보**:
-  - 업로드 대상 page/database/data source ID
-  - 페이지 이름
-  - 업로드 설정 (날짜별/프로젝트별 분류)
-  - 콘텐츠 템플릿
-
-#### LINEAR.yaml / LINEAR.md
-- **경로**: `~/.agents/LINEAR.yaml` (legacy fallback: `~/.agents/LINEAR.md`)
-- **용도**: Linear 연동 설정
-- **관리 스킬**: `integration-linear`
-- **포함 정보**:
-  - 기본 팀/담당자/state/priority/estimate
-  - `linear-issue.sh create` 도구 entrypoint
-  - 라벨 카탈로그, 생성 전 dry-run/중복 탐색 정책
-
-#### SENTRY.yaml / SENTRY.md
-- **경로**: `~/.agents/SENTRY.yaml` (legacy fallback: `~/.agents/SENTRY.md`)
-- **용도**: Sentry 이슈/이벤트 조회 설정
-- **관리 스킬**: `integration-sentry`
-- **포함 정보**:
-  - org/base URL
-  - `sentry-issue.sh` 조회 도구 entrypoint
-  - 프로젝트 목록, Linear 이슈 본문 발췌 포맷
-
-#### KIBANA.yaml / KIBANA.md
-- **경로**: `~/.agents/KIBANA.yaml` (legacy fallback: `~/.agents/KIBANA.md`)
-- **용도**: Kibana/Elasticsearch 로그 조회 설정
-- **관리 스킬**: `integration-kibana`
-- **포함 정보**:
-  - base URL/default space/default time field
-  - `kibana-logs.sh` 로그 조회 도구 entrypoint
-  - 스페이스/인덱스/필드 레시피
-
-#### SLACK.md
-- **경로**: `~/.agents/SLACK.md`
-- **용도**: Slack Web API 테스트/메시지 전송 설정
-- **관리 스킬**: `slack-skill` 또는 직접 curl
-- **포함 정보**:
-  - 테스트 채널
-  - `auth.test`, `chat.postMessage` curl entrypoint
-
-#### VAULT.md
-- **경로**: `~/.agents/VAULT.md`
-- **용도**: Vaultwarden 시크릿 관리 가이드
-- **관리 스킬**: `vault-secrets`
-- **포함 정보**:
-  - Vaultwarden 서버 접속 정보
-  - CLI 사용법 (vault-get, vault-set)
-  - 저장된 시크릿 목록 (API 키, DB credentials)
-  - 세션 관리 방법
-  - 새 시크릿 추가 가이드
-
-#### personas/
-- **경로**: `~/.agents/personas/` (글로벌), `.agents/personas/` (프로젝트 로컬)
-- **용도**: 에이전트가 특정 전문가의 관점으로 작업할 때 사용하는 페르소나 정의
-- **관리 도구**: `agt persona install/list/show`
-- **포맷**: YAML frontmatter (name, role, domain, type, tags) + Markdown body
-
-**사용 가능한 페르소나:**
-
-| 페르소나 | Role | Domain | 활용 |
-|---------|------|--------|------|
-| `security-reviewer` | Senior AppSec Engineer | security | 보안 취약점 분석, OWASP, 인증/인가 |
-| `architecture-reviewer` | Principal Software Architect | architecture | SOLID, 결합도, API 설계, 레이어 위반 |
-| `code-quality-reviewer` | Staff Engineer — Code Quality | quality | 가독성, 복잡도, DRY, 테스트 커버리지 |
-| `performance-reviewer` | Senior Performance Engineer | performance | 메모리, CPU, I/O, 확장성 |
-| `database-reviewer` | Senior Database Architect / DBA | database | 쿼리 최적화, 인덱싱, 트랜잭션 |
-| `frontend-reviewer` | Senior Frontend Engineer | frontend | 컴포넌트 설계, 접근성, 상태 관리 |
-| `devops-reviewer` | Senior DevOps / SRE | devops | CI/CD, 인프라, 모니터링, 배포 |
-
-**페르소나 파일 구조:**
-```yaml
----
-name: security-reviewer
-role: "Senior Application Security Engineer"
-domain: security
-type: review
-tags: [security, owasp, auth, injection]
----
-
-# Security Reviewer
-
-## Identity
-(배경, 전문 분야, 태도)
-
-## Review Lens
-(코드 검토 시 묻는 질문들)
-
-## Evaluation Framework
-(심각도 기준, 카테고리)
-
-## Output Format
-(리뷰 출력 구조)
-```
-
-**에이전트에서 페르소나 사용법:**
-
-페르소나는 단순한 마크다운 파일입니다. 어떤 에이전트든 파일을 읽고 그 관점을 채택할 수 있습니다:
-
-```bash
-# 페르소나 파일 위치 확인
-agt persona list                          # 모든 페르소나 목록
-agt persona show security-reviewer        # 페르소나 내용 확인
-
-# 직접 파일 읽기
-cat ~/.agents/personas/security-reviewer.md    # 글로벌
-cat .agents/personas/security-reviewer.md      # 프로젝트 로컬
-```
-
-**에이전트별 사용 패턴:**
-
-| Agent | 페르소나 적용 방법 |
-|-------|------------------|
-| **Claude Code** | 페르소나 파일 경로를 대화에서 언급 — "Read `.agents/personas/security-reviewer.md` and adopt that persona" |
-| **Codex** | `agt persona review <name> --codex` 또는 프롬프트에 파일 내용 포함 |
-| **Gemini** | `agt persona review <name> --gemini` 또는 stdin으로 전달 |
-| **Ollama** | `agt persona review <name>` (auto-detect) 또는 직접 pipe |
-| **OpenCode** | 에이전트 설정에 페르소나 파일 경로 참조 |
-| **Any Agent** | 마크다운 파일이므로 아무 에이전트든 읽기만 하면 됨 |
-
-**커스텀 페르소나 생성:**
-```bash
-agt persona create my-reviewer --ai "Senior Rust developer focused on memory safety"
-agt persona create db-expert --gemini "PostgreSQL DBA with 15yr optimization experience"
-```
-
-## Prerequisites
-
-### 스크립트 설치
-
-```bash
-# 스크립트 실행 권한 부여
-chmod +x /path/to/agt/context/static-index/scripts/static-index.sh
-
-# alias 설정 (선택)
-alias static-index='/path/to/agt/context/static-index/scripts/static-index.sh'
-```
+Return the minimum relevant global context path, then read only what the current
+task needs. Never assume a listed type exists; verify it first.
 
 ## Workflow
 
-### 스크립트 사용 (권장)
+1. Resolve this skill directory and prefer the bundled
+   `scripts/static-index.sh` helper.
+2. Search by type or natural-language query.
+3. Confirm the returned file exists.
+4. Read only the relevant section. Avoid printing credentials or unrelated
+   personal data.
+
+## Commands
 
 ```bash
-# 모든 정적 파일 목록
-static-index.sh list
+# Discover the actual files currently present. Installed skills are excluded.
+scripts/static-index.sh list
 
-# 자연어 쿼리로 파일 검색
-static-index.sh search "보안 규칙"
-static-index.sh search "내 정보"
+# Search paths by user intent.
+scripts/static-index.sh search "보안 규칙"
+scripts/static-index.sh search "IaC 배포"
 
-# 특정 타입 파일 경로 반환
-static-index.sh get whoami
-static-index.sh get security
+# Resolve one known type. A missing optional file returns non-zero.
+scripts/static-index.sh get security
+scripts/static-index.sh get iac
+scripts/static-index.sh get notion
 ```
 
-**토큰 절약 효과:**
-```
-Before: 2-3회 도구 호출 (ls, find, grep 등)
-After:  1회 스크립트 호출
-절약률: 50-60%
-```
+Supported types are `whoami`, `security`, `context`, `iac`, `services`,
+`obsidian`, `notion`, `vault`, `readme`, and `persona`. The repository may
+contain only a subset; `list` is the source of truth.
 
-### 수동 워크플로우 (참고용)
+## Boundaries
 
-### Step 1: 쿼리 분석
+- `~/.agents/skills` is Codex's user skill directory, not static context. The
+  helper excludes it.
+- Do not create missing files unless the user asks to configure that context.
+- Do not expose secret values from Vault, Notion, or other integration files in
+  summaries.
+- Do not refresh `.index.json` unless a persistent index was requested; normal
+  `list`, `search`, and `get` operations are read-only.
 
-사용자 또는 다른 스킬의 요청에서 키워드를 추출합니다.
+## Resource
 
-```
-입력: "API 만들기 전에 내 기술 스택 확인해줘"
-키워드: "내 기술 스택" → WHOAMI.md
-```
-
-### Step 2: 인덱스 조회
-
-매핑 테이블에서 일치하는 파일을 찾습니다.
-
-```python
-# 의사 코드
-query_keywords = ["내 정보", "내 프로필", "사용자 정보", "whoami"]
-if any(kw in user_query for kw in query_keywords):
-    return "~/.agents/WHOAMI.md"
-```
-
-### Step 3: 파일 존재 확인
-
-```bash
-# 파일 존재 여부 확인
-ls ~/.agents/WHOAMI.md 2>/dev/null
-```
-
-### Step 4: 결과 반환
-
-- 파일이 존재하면: 파일 경로와 간단한 설명 반환
-- 파일이 없으면: 해당 스킬을 통해 생성 안내
-
-## Examples
-
-### 예시 1: 다른 스킬에서 호출
-
-```
-context-manager 스킬: "프로젝트 설정 전 사용자 정보 필요"
-
-static-index: WHOAMI.md 파일을 참조하세요.
-경로: ~/.agents/WHOAMI.md
-내용: 사용자 개발 프로필 (기술 스택, 선호도)
-```
-
-### 예시 2: 직접 조회
-
-```
-사용자: 글로벌 설정 파일들 뭐가 있어?
-
-Claude: ~/.agents/ 디렉토리의 static 파일 목록:
-
-| 파일 | 용도 | 상태 |
-|------|------|------|
-| WHOAMI.md | 사용자 프로필 | ✓ 존재 |
-| SECURITY.md | 보안 규칙 | ✓ 존재 |
-| STYLE.md | 코딩 스타일 | ✗ 없음 |
-```
-
-### 예시 3: 보안 규칙 조회
-
-```
-git-commit-pr 스킬: "커밋 전 보안 규칙 확인 필요"
-
-static-index: SECURITY.md 파일을 참조하세요.
-경로: ~/.agents/SECURITY.md
-내용: 커밋 금지 패턴, 민감 정보 규칙
-```
-
-## 새 Static 파일 추가하기
-
-새로운 글로벌 컨텍스트 파일을 추가하려면:
-
-1. `~/.agents/` (또는 `agt/static/`)에 파일 생성
-2. 이 SKILL.md의 매핑 테이블에 항목 추가
-3. 파일 상세 정보 섹션에 설명 추가
-
-**예시: PROJECTS.md 추가**
-
-```markdown
-| 프로젝트 목록, 내 프로젝트, 진행 중인 작업 | `PROJECTS.md` | 활성 프로젝트 목록 |
-```
-
-## API for Other Skills
-
-다른 스킬에서 static-index를 활용하는 방법:
-
-```markdown
-# 다른 스킬의 SKILL.md에서
-
-## Prerequisites
-
-작업 전 다음 static 파일을 확인합니다:
-- `WHOAMI.md`: 사용자 프로필 (static-index 참조)
-- `SECURITY.md`: 보안 규칙 (static-index 참조)
-```
-
-## File Locations
-
-```
-~/.agents/                    # 심링크 → agt/static/
-├── WHOAMI.md                # 사용자 프로필
-├── SECURITY.md              # 보안 규칙
-├── STYLE.md                 # 코딩 스타일 (선택)
-├── NOTION.yaml              # Notion 연동 설정 (machine-readable)
-├── NOTION.md                # Notion 연동 설명/legacy fallback
-├── LINEAR.yaml              # Linear 연동 설정 (machine-readable)
-├── LINEAR.md                # Linear 연동 설명/legacy fallback
-├── SENTRY.yaml              # Sentry 연동 설정 (machine-readable)
-├── SENTRY.md                # Sentry 연동 설명/legacy fallback
-├── KIBANA.yaml              # Kibana 연동 설정 (machine-readable)
-├── KIBANA.md                # Kibana 연동 설명/legacy fallback
-├── SLACK.md                 # Slack Web API 설정
-├── VAULT.md                 # Vaultwarden 시크릿 가이드
-├── personas/                # 에이전트 페르소나 (agt persona로 관리)
-│   ├── security-reviewer.md
-│   ├── architecture-reviewer.md
-│   └── ...
-└── README.md                # 디렉토리 설명
-
-agt/
-├── static/                  # 실제 파일 위치 (Git 관리)
-│   ├── WHOAMI.md
-│   ├── SECURITY.md
-│   ├── NOTION.yaml
-│   ├── NOTION.md
-│   ├── VAULT.md
-│   └── README.md
-└── context/
-    └── static-index/
-        └── SKILL.md         # 이 파일
-```
-
-## Integration with Other Skills
-
-| 스킬 | 참조하는 Static 파일 | 용도 |
-|------|---------------------|------|
-| git-commit-pr | SECURITY.md, WHOAMI.md | 커밋 전 보안 검증, 스타일 참조 |
-| context-manager | WHOAMI.md, STYLE.md | 프로젝트 컨텍스트 구성 |
-| background-planner | WHOAMI.md | 사용자 역량 기반 기획 |
-| background-reviewer | personas/ | 페르소나 기반 멀티 에이전트 리뷰 |
-| notion-summary | NOTION.yaml (`NOTION.md` fallback) | Notion 업로드 설정 |
-| integration-linear | LINEAR.yaml (`LINEAR.md` fallback) | Linear 이슈 생성/조회 기본값과 CLI entrypoint |
-| integration-sentry | SENTRY.yaml (`SENTRY.md` fallback) | Sentry 이슈/이벤트 조회 기본값과 CLI entrypoint |
-| integration-kibana | KIBANA.yaml (`KIBANA.md` fallback) | Kibana 로그 조회 기본값과 CLI entrypoint |
-| slack-skill | SLACK.md | Slack Web API 테스트 채널과 메시지 전송 entrypoint |
-| vault-secrets | VAULT.md | 시크릿 조회/등록 가이드 |
-| iac-deploy-prep | VAULT.md | 배포 전 credentials 조회 |
-| kubernetes-skill | VAULT.md | K8s secrets, registry credentials |
-
-## Best Practices
-
-**DO:**
-- 정보 검색 시 항상 static-index를 먼저 확인
-- 새 글로벌 파일 추가 시 인덱스 업데이트
-- 파일 존재 여부 확인 후 사용
-
-**DON'T:**
-- 민감한 정보를 static 파일에 저장하지 않기
-- 프로젝트별 설정을 글로벌 static에 저장하지 않기
-- 인덱스 없이 직접 파일 경로 하드코딩하지 않기
-
----
-
-## Resources
-
-| 파일 | 설명 |
-|------|------|
-| `scripts/static-index.sh` | 정적 파일 인덱싱 및 검색 스크립트 |
+- `scripts/static-index.sh`: Bash 3.2-compatible context discovery helper.

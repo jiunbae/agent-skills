@@ -1,10 +1,7 @@
 ---
 name: developing-slack-apps
 description: Develops Slack apps and API integrations. Supports Bolt framework, Block Kit UI, event handling, and slash commands. Use for "Slack", "슬랙", "봇", "webhook" requests or Slack app development.
-trigger-keywords: slack, 슬랙, slack bot, bolt, webhook, slash command
 allowed-tools: Read, Write, Edit, Bash, WebFetch
-priority: medium
-tags: [slack, api, bot, messaging, webhook, block-kit]
 ---
 
 # Slack App Development

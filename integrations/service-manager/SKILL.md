@@ -1,7 +1,6 @@
 ---
 name: managing-services
 description: Centrally manages Docker containers and services. Supports service registration, listing, status updates, and port conflict detection. Use for "서비스 등록", "서비스 목록", "포트 확인", "컨테이너 관리", "docker 상태" requests.
-trigger-keywords: 서비스 등록, 서비스 목록, 포트 확인, 컨테이너 관리, docker 상태
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 

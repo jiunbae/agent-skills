@@ -1,0 +1,7 @@
+interface:
+  display_name: "Background Planner"
+  short_description: "Parallel multi-agent planning workflow"
+  default_prompt: "Use $planning-in-background to produce and merge independent planning perspectives."
+
+policy:
+  allow_implicit_invocation: false

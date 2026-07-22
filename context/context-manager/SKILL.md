@@ -1,6 +1,6 @@
 ---
 name: managing-context
-description: Discovers and loads relevant project context from markdown documentation before each task. Matches context documents based on keywords, file paths, and task types. Use at task start to access project plans, architecture, and implementation status.
+description: Discovers relevant project context in Markdown documentation by matching the current task to plans, architecture, guides, and operations notes. Use when a request depends on existing project decisions or explicitly asks to inspect project context. Do not trigger for simple questions or tasks that already have sufficient context.
 ---
 
 # Context Manager
@@ -60,22 +60,22 @@ Brief user on loaded context:
 | Task type match | 20% |
 | Recency | 10% |
 
-## After Task: Update Context
+## After Task: Update Context When Requested
 
-If significant work done:
-```bash
-# Update implementation status
-echo "- [x] Feature X completed" >> context/planning/status.md
-```
+Do not mutate context documentation automatically. Update an existing status or
+planning document only when the user requested documentation changes or when the
+task explicitly includes keeping that document current. Preserve its structure
+and use the host's normal safe-editing workflow.
 
 ## Best Practices
 
 **DO:**
 - Check context at task start
-- Update status after completing work
+- Update status after completing work when the task authorizes it
 - Keep docs concise
 
 **DON'T:**
 - Load entire context directory
 - Create duplicate documentation
 - Use date-based filenames (git tracks history)
+- Change context documents without task authorization

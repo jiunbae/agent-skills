@@ -2,8 +2,6 @@
 name: incident-writer
 description: Creates and manages incident reports for jiun.dev/status with consistent formatting. Generates frontmatter, timeline, and body sections based on severity. Use for "인시던트 작성", "장애 보고서", "incident report", "status 작성", "장애 기록" requests.
 allowed-tools: Read, Bash, Grep, Glob, Write, Edit, AskUserQuestion, WebSearch
-priority: medium
-tags: [incident, status-page, post-mortem, reporting, jiun-dev]
 ---
 
 # Incident Writer

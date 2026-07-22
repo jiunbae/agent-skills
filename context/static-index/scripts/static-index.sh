@@ -1,320 +1,213 @@
-#!/bin/bash
-#
-# static-index.sh - 정적 컨텍스트 파일 인덱싱 및 검색
-#
-# 사용법:
-#   static-index.sh list              # 모든 정적 파일 목록
-#   static-index.sh search <query>    # 자연어 쿼리로 파일 검색
-#   static-index.sh get <type>        # 특정 타입 파일 경로 반환
-#   static-index.sh refresh           # 인덱스 갱신
-#
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
-# 기본 경로
 AGENTS_DIR="${AGENTS_DIR:-$HOME/.agents}"
 INDEX_FILE="$AGENTS_DIR/.index.json"
 
-# 파일 타입 정의
-declare -A FILE_TYPES=(
-    ["whoami"]="WHOAMI.md|사용자 프로필|개발자 정보|내 정보|프로필"
-    ["security"]="SECURITY.md|보안 규칙|보안 정책|민감 정보|보안"
-    ["context"]="CONTEXT.md|컨텍스트|작업 맥락|현재 작업"
-    ["config"]="CONFIG.md|설정|환경설정|구성"
-    ["readme"]="README.md|리드미|설명서|가이드"
-    ["notion"]="NOTION|노션 설정|노션 페이지|업로드 설정|notion"
-    ["linear"]="LINEAR|리니어|linear|이슈 생성|issue create|티켓 생성|ticket|issue"
-    ["sentry"]="SENTRY|센트리|sentry|에러 조회|error lookup|exception|stack trace|프로덕션 에러"
-    ["kibana"]="KIBANA|키바나|kibana|로그 조회|log search|elasticsearch|transaction trace|트랜잭션 추적"
-    ["slack"]="SLACK.md|슬랙|slack|알림|메시지|chat.postMessage|webhook"
-    ["vault"]="VAULT.md|시크릿|비밀번호|API 키|credentials|vault|vaultwarden|인증 정보"
-    ["review-index"]="review-index.yml|리뷰 인덱스|review index|persona review router|reviewer selector|페르소나 라우터"
-    ["persona"]="personas/|페르소나|persona|reviewer|에이전트 페르소나|agent persona|리뷰어 페르소나"
-)
-
-# 파일 타입 판별 (공용 함수)
-# 인자: $1=filename(basename), $2=relpath
-# 출력: 타입 문자열 (unknown/other if no match)
-resolve_file_type() {
-    local filename="$1"
-    local relpath="$2"
-    local default="${3:-unknown}"
-
-    for type in "${!FILE_TYPES[@]}"; do
-        local pattern=$(echo "${FILE_TYPES[$type]}" | cut -d'|' -f1)
-        if [[ "$pattern" == */ ]]; then
-            [[ "$relpath" == ${pattern}* ]] && echo "$type" && return
-        else
-            [[ "$filename" == *"$pattern"* ]] && echo "$type" && return
-        fi
-    done
-    echo "$default"
-}
-
-# 패턴으로 파일 경로 찾기 (공용 함수)
-# 인자: $1=pattern
-# 출력: 첫 번째 매칭 파일 경로
-find_by_pattern() {
-    local pattern="$1"
-    if [[ "$pattern" == */ ]]; then
-        find -L "$AGENTS_DIR/$pattern" \( -name "*.yaml" -o -name "*.yml" -o -name "*.md" \) -type f 2>/dev/null | head -1
-    else
-        if [[ "$pattern" == *.* ]]; then
-            local exact_match
-            exact_match=$(find -L "$AGENTS_DIR" -name "$pattern" -type f 2>/dev/null | head -1)
-            [[ -n "$exact_match" ]] && { echo "$exact_match"; return; }
-        fi
-        local ext
-        for ext in yaml yml md; do
-            local match
-            match=$(find -L "$AGENTS_DIR" -name "*$pattern*.$ext" -type f 2>/dev/null | head -1)
-            [[ -n "$match" ]] && { echo "$match"; return; }
-        done
-    fi
-}
-
-# 인덱스 생성
-build_index() {
-    if [ ! -d "$AGENTS_DIR" ]; then
-        echo "Directory not found: $AGENTS_DIR"
-        exit 1
-    fi
-
-    echo "{"
-    echo '  "updated": "'$(date -Iseconds)'",'
-    echo '  "base_path": "'$AGENTS_DIR'",'
-    echo '  "files": ['
-
-    local first=true
-    while IFS= read -r -d '' file; do
-        local filename=$(basename "$file")
-        local relpath=${file#$AGENTS_DIR/}
-        local size=$(stat -L -f%z "$file" 2>/dev/null || stat -Lc%s "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
-        local modified=$(stat -L -f%m "$file" 2>/dev/null || stat -Lc%Y "$file" 2>/dev/null || stat -c%Y "$file" 2>/dev/null || echo "0")
-
-        # 파일 타입 감지
-        local file_type=$(resolve_file_type "$filename" "$relpath" "unknown")
-
-        if [ "$first" = true ]; then
-            first=false
-        else
-            echo ","
-        fi
-
-        echo -n '    {"path": "'$relpath'", "type": "'$file_type'", "size": '$size', "modified": '$modified'}'
-    done < <(find -L "$AGENTS_DIR" \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) -type f -print0 2>/dev/null)
-
-    echo ""
-    echo "  ]"
-    echo "}"
-}
-
-# 파일 목록
-list_files() {
-    if [ ! -d "$AGENTS_DIR" ]; then
-        echo "## Static Files Index"
-        echo ""
-        echo "Directory not found: \`$AGENTS_DIR\`"
-        echo ""
-        echo "Create it with: \`mkdir -p $AGENTS_DIR\`"
-        return
-    fi
-
-    echo "## Static Files Index"
-    echo ""
-    echo "| File | Type | Size | Path |"
-    echo "|------|------|------|------|"
-
-    while IFS= read -r -d '' file; do
-        local filename=$(basename "$file")
-        local relpath=${file#$AGENTS_DIR/}
-        local size=$(stat -L -f%z "$file" 2>/dev/null || stat -Lc%s "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo "0")
-        local size_human=$(numfmt --to=iec $size 2>/dev/null || echo "${size}B")
-
-        # 파일 타입
-        local file_type=$(resolve_file_type "$filename" "$relpath" "other")
-
-        echo "| \`$filename\` | $file_type | $size_human | \`$relpath\` |"
-    done < <(find -L "$AGENTS_DIR" \( -name "*.md" -o -name "*.yml" -o -name "*.yaml" \) -type f -print0 2>/dev/null | sort -z)
-
-    echo ""
-    echo "**Base Path**: \`$AGENTS_DIR\`"
-}
-
-# 자연어 검색
-search_files() {
-    local query="$1"
-
-    if [ -z "$query" ]; then
-        echo "Usage: static-index.sh search <query>"
-        exit 1
-    fi
-
-    echo "## Search Results: \"$query\""
-    echo ""
-
-    # 쿼리를 소문자로 변환
-    local query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
-
-    local found=false
-
-    # 타입별 키워드 매칭
-    for type in "${!FILE_TYPES[@]}"; do
-        local keywords="${FILE_TYPES[$type]}"
-        local keywords_lower=$(echo "$keywords" | tr '[:upper:]' '[:lower:]')
-
-        local keyword_match=false
-        if echo "$keywords_lower" | grep -qi "$query_lower"; then
-            keyword_match=true
-        else
-            local token token_match=true
-            for token in $query_lower; do
-                [[ "$keywords_lower" != *"$token"* ]] && token_match=false && break
-            done
-            [[ "$token_match" = true ]] && keyword_match=true
-        fi
-
-        # 키워드 매칭
-        if [ "$keyword_match" = true ]; then
-            local pattern=$(echo "$keywords" | cut -d'|' -f1)
-            local file_path=$(find_by_pattern "$pattern")
-
-            if [ -n "$file_path" ] && [ -f "$file_path" ]; then
-                echo "### Match: $type"
-                echo ""
-                echo "| Item | Value |"
-                echo "|------|-------|"
-                echo "| File | \`$(basename $file_path)\` |"
-                echo "| Path | \`$file_path\` |"
-                echo "| Keywords | ${keywords//|/, } |"
-                echo ""
-                found=true
-            fi
-        fi
-    done
-
-    # 파일 내용 검색
-    if [ "$found" = false ]; then
-        local content_matches=$(grep -ril "$query" "$AGENTS_DIR"/*.md "$AGENTS_DIR"/*.yml "$AGENTS_DIR"/*.yaml 2>/dev/null | head -3 || true)
-
-        if [ -n "$content_matches" ]; then
-            echo "### Content Matches"
-            echo ""
-            while IFS= read -r file; do
-                echo "- \`$file\`"
-            done <<< "$content_matches"
-            found=true
-        fi
-    fi
-
-    if [ "$found" = false ]; then
-        echo "No matches found for: \"$query\""
-        echo ""
-        echo "Available types: ${!FILE_TYPES[*]}"
-    fi
-}
-
-# 특정 타입 파일 가져오기
-get_file() {
-    local type="$1"
-
-    if [ -z "$type" ]; then
-        echo "Usage: static-index.sh get <type>"
-        echo "Types: ${!FILE_TYPES[*]}"
-        exit 1
-    fi
-
-    local type_lower=$(echo "$type" | tr '[:upper:]' '[:lower:]')
-
-    if [ -n "${FILE_TYPES[$type_lower]}" ]; then
-        local pattern=$(echo "${FILE_TYPES[$type_lower]}" | cut -d'|' -f1)
-        local file_path=$(find_by_pattern "$pattern")
-
-        if [ -n "$file_path" ] && [ -f "$file_path" ]; then
-            echo "$file_path"
-        else
-            echo "File not found for type: $type"
-            exit 1
-        fi
-    else
-        echo "Unknown type: $type"
-        echo "Available types: ${!FILE_TYPES[*]}"
-        exit 1
-    fi
-}
-
-# 인덱스 갱신
-refresh_index() {
-    echo "Refreshing index..."
-    build_index > "$INDEX_FILE"
-    echo "Index saved to: $INDEX_FILE"
-    list_files
-}
-
-# 도움말
-show_help() {
-    cat << EOF
-static-index.sh - Static Context File Indexing
-
-Usage:
-  static-index.sh <command> [args]
-
-Commands:
-  list              List all indexed files
-  search <query>    Search files by natural language query
-  get <type>        Get file path by type
-  refresh           Rebuild the index
-
-Types:
-  whoami            User profile (WHOAMI.md)
-  security          Security rules (SECURITY.md)
-  context           Work context (CONTEXT.md)
-  config            Configuration (CONFIG.md)
-  notion            Notion integration config (NOTION.yaml preferred)
-  linear            Linear integration config (LINEAR.yaml preferred)
-  sentry            Sentry integration config (SENTRY.yaml preferred)
-  kibana            Kibana integration config (KIBANA.yaml preferred)
-  slack             Slack integration config (SLACK.md)
-
-Examples:
-  # List all files
-  static-index.sh list
-
-  # Search for security rules
-  static-index.sh search "보안 규칙"
-  static-index.sh search "내 정보"
-
-  # Get specific file path
-  static-index.sh get whoami
-  static-index.sh get security
-  static-index.sh get linear
-  static-index.sh get sentry
-  static-index.sh get kibana
+type_records() {
+    cat <<'EOF'
+whoami	WHOAMI.md	사용자 프로필 개발자 정보 내 정보 프로필 whoami
+security	SECURITY.md	보안 규칙 보안 정책 민감 정보 security
+context	CONTEXT.md	컨텍스트 작업 맥락 현재 작업 context
+iac	IAC.md	IaC 배포 kubernetes k8s 인프라
+services	SERVICES.md	서비스 컨테이너 포트 docker
+obsidian	OBSIDIAN.md	옵시디언 obsidian vault
+notion	NOTION	노션 notion 업로드 설정
+vault	VAULT.md	시크릿 비밀번호 API 키 credentials vault vaultwarden
+readme	README.md	리드미 설명서 가이드 readme
+persona	personas/	페르소나 persona reviewer 리뷰어
 EOF
 }
 
-# 메인
+context_files() {
+    find -L "$AGENTS_DIR" \
+        -path "$AGENTS_DIR/skills" -prune -o \
+        \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \) \
+        -type f -print0 2>/dev/null
+}
+
+resolve_file_type() {
+    local filename="$1"
+    local relpath="$2"
+    local fallback="${3:-unknown}"
+    local type pattern keywords
+
+    while IFS=$'\t' read -r type pattern keywords; do
+        if [[ "$pattern" == */ ]]; then
+            [[ "$relpath" == "$pattern"* ]] && printf '%s\n' "$type" && return
+        elif [[ "$filename" == *"$pattern"* ]]; then
+            printf '%s\n' "$type"
+            return
+        fi
+    done < <(type_records)
+
+    printf '%s\n' "$fallback"
+}
+
+find_by_pattern() {
+    local pattern="$1"
+    local ext match
+
+    if [[ "$pattern" == */ ]]; then
+        find -L "$AGENTS_DIR/$pattern" \
+            \( -name '*.yaml' -o -name '*.yml' -o -name '*.md' \) \
+            -type f -print -quit 2>/dev/null || true
+        return 0
+    fi
+
+    if [[ "$pattern" == *.* ]]; then
+        find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
+            -name "$pattern" -type f -print -quit 2>/dev/null || true
+        return 0
+    fi
+
+    for ext in yaml yml md; do
+        match=$(find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
+            -name "$pattern.$ext" -type f -print -quit 2>/dev/null || true)
+        [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
+    done
+
+    for ext in yaml yml md; do
+        match=$(find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
+            -name "*$pattern*.$ext" ! -name '*.sample.*' -type f -print -quit 2>/dev/null || true)
+        [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
+    done
+
+    return 0
+}
+
+file_size() {
+    stat -L -f%z "$1" 2>/dev/null || stat -Lc%s "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || printf '0\n'
+}
+
+file_modified() {
+    stat -L -f%m "$1" 2>/dev/null || stat -Lc%Y "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || printf '0\n'
+}
+
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+build_index() {
+    [[ -d "$AGENTS_DIR" ]] || { printf 'Directory not found: %s\n' "$AGENTS_DIR" >&2; return 1; }
+
+    printf '{\n'
+    printf '  "updated": "%s",\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf '  "base_path": "%s",\n' "$(json_escape "$AGENTS_DIR")"
+    printf '  "files": ['
+
+    local first=true file filename relpath size modified file_type
+    while IFS= read -r -d '' file; do
+        filename=$(basename "$file")
+        relpath=${file#"$AGENTS_DIR"/}
+        size=$(file_size "$file")
+        modified=$(file_modified "$file")
+        file_type=$(resolve_file_type "$filename" "$relpath")
+
+        [[ "$first" == true ]] || printf ','
+        first=false
+        printf '\n    {"path": "%s", "type": "%s", "size": %s, "modified": %s}' \
+            "$(json_escape "$relpath")" "$file_type" "$size" "$modified"
+    done < <(context_files)
+
+    printf '\n  ]\n}\n'
+}
+
+list_files() {
+    [[ -d "$AGENTS_DIR" ]] || { printf 'Directory not found: `%s`\n' "$AGENTS_DIR"; return 1; }
+
+    printf '## Static Files Index\n\n'
+    printf '| File | Type | Size | Path |\n'
+    printf '|------|------|------|------|\n'
+
+    local file filename relpath size file_type
+    while IFS= read -r -d '' file; do
+        filename=$(basename "$file")
+        relpath=${file#"$AGENTS_DIR"/}
+        size=$(file_size "$file")
+        file_type=$(resolve_file_type "$filename" "$relpath" other)
+        printf '| `%s` | %s | %sB | `%s` |\n' "$filename" "$file_type" "$size" "$relpath"
+    done < <(context_files)
+
+    printf '\n**Base Path**: `%s`\n' "$AGENTS_DIR"
+}
+
+search_files() {
+    local query="${1:-}"
+    [[ -n "$query" ]] || { printf 'Usage: static-index.sh search <query>\n' >&2; return 1; }
+
+    printf '## Search Results: "%s"\n\n' "$query"
+    local query_lower type pattern keywords keywords_lower file_path
+    local found=false
+    query_lower=$(printf '%s' "$query" | tr '[:upper:]' '[:lower:]')
+
+    while IFS=$'\t' read -r type pattern keywords; do
+        keywords_lower=$(printf '%s' "$keywords" | tr '[:upper:]' '[:lower:]')
+        [[ "$keywords_lower" == *"$query_lower"* ]] || continue
+        file_path=$(find_by_pattern "$pattern")
+        [[ -n "$file_path" && -f "$file_path" ]] || continue
+        printf -- '- %s: `%s`\n' "$type" "$file_path"
+        found=true
+    done < <(type_records)
+
+    if [[ "$found" == false ]]; then
+        local file matches=0
+        while IFS= read -r -d '' file; do
+            grep -qi -- "$query" "$file" 2>/dev/null || continue
+            printf -- '- content: `%s`\n' "$file"
+            matches=$((matches + 1))
+            [[ "$matches" -ge 3 ]] && break
+        done < <(context_files)
+        [[ "$matches" -gt 0 ]] && found=true
+    fi
+
+    [[ "$found" == true ]] || printf 'No matches found for: "%s"\n' "$query"
+}
+
+get_file() {
+    local requested="${1:-}"
+    [[ -n "$requested" ]] || { printf 'Usage: static-index.sh get <type>\n' >&2; return 1; }
+
+    local type pattern keywords file_path
+    while IFS=$'\t' read -r type pattern keywords; do
+        [[ "$type" == "$requested" ]] || continue
+        file_path=$(find_by_pattern "$pattern")
+        [[ -n "$file_path" && -f "$file_path" ]] || {
+            printf 'File not found for type: %s\n' "$requested" >&2
+            return 1
+        }
+        printf '%s\n' "$file_path"
+        return
+    done < <(type_records)
+
+    printf 'Unknown type: %s\n' "$requested" >&2
+    return 1
+}
+
+refresh_index() {
+    build_index > "$INDEX_FILE"
+    printf 'Index saved to: %s\n' "$INDEX_FILE"
+}
+
+show_help() {
+    cat <<'EOF'
+static-index.sh - Static context discovery
+
+Usage:
+  static-index.sh list
+  static-index.sh search <query>
+  static-index.sh get <type>
+  static-index.sh refresh
+EOF
+}
+
 case "${1:-}" in
-    list)
-        list_files
-        ;;
-    search)
-        search_files "$2"
-        ;;
-    get)
-        get_file "$2"
-        ;;
-    refresh)
-        refresh_index
-        ;;
-    index|build)
-        build_index
-        ;;
-    help|--help|-h)
-        show_help
-        ;;
-    *)
-        show_help
-        exit 1
-        ;;
+    list) list_files ;;
+    search) search_files "${2:-}" ;;
+    get) get_file "${2:-}" ;;
+    refresh) refresh_index ;;
+    index|build) build_index ;;
+    help|--help|-h) show_help ;;
+    *) show_help; exit 1 ;;
 esac

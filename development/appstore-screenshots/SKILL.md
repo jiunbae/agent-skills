@@ -1,8 +1,6 @@
 ---
-name: capturing-appstore-screenshots
-description: Methodology for capturing REAL-app (not mockup) App Store screenshots for iOS, iPadOS, and macOS, and uploading them via the App Store Connect API. Covers required dimensions per platform, deterministic capture techniques (simulator, device, offscreen/screenshot-mode render), localization, marketing-frame composition, and the reserve→upload→commit API flow. Use for "App Store 스크린샷", "앱스토어 스크린샷", "스크린샷 캡처", "스토어 스크린샷 방법론", "screenshot capture", "store screenshots" requests.
-allowed-tools: Read, Bash, Grep, Glob, Write, Edit
-tags: [app-store, screenshots, ios, ipados, macos, fastlane, asc-api, release]
+name: appstore-screenshots
+description: Capture reproducible real-app App Store screenshots for iOS, iPadOS, and macOS; compose marketing frames; upload screenshot assets; and perform authenticated App Store Connect API inspection for apps, builds, and beta groups. Use for "App Store 스크린샷", "앱스토어 스크린샷", "스토어 이미지 업로드", "ASC API 조회", "TestFlight 빌드 조회", "screenshot capture", or "store screenshots" requests. Do not use for generic browser automation.
 ---
 
 # App Store Screenshots — Capture & Upload Methodology
@@ -24,6 +22,35 @@ ASC scripts read `ASC_KEY_ID` + `ASC_ISSUER_ID` from env (optional `ASC_KEY_FILE
 
 Env note: **macOS system ruby is < 3.0** (no endless-method `def`); scripts use classic `def`.
 `python3` needs Pillow (`pip install Pillow`).
+
+### Generic App Store Connect API inspection
+
+`asc_api.rb` replaces ad-hoc `jwt encode` and the removed TypeScript/Playwright client. It signs an
+ES256 JWT directly with Ruby OpenSSL. Configure credentials without printing their values:
+
+```bash
+export ASC_KEY_ID="..."
+export ASC_ISSUER_ID="..."
+export ASC_KEY_FILEPATH="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+```
+
+Run read-only API queries:
+
+```bash
+ruby scripts/asc_api.rb GET /v1/apps
+ruby scripts/asc_api.rb GET "/v1/builds?filter[app]=${APP_ID}&limit=200"
+ruby scripts/asc_api.rb GET "/v1/apps/${APP_ID}/betaGroups?limit=200"
+```
+
+For POST or PATCH bodies, pass JSON directly or use `@payload.json`. Resolve resource IDs with GET
+requests first, inspect the exact target, and obtain explicit authorization before mutations because
+App Store Connect API changes affect production distribution data. Never log the private key or JWT.
+
+Follow pagination links in API responses instead of assuming one page is complete. Apple requires
+JWT authorization and ES256 signing; tokens normally must expire within 20 minutes. Verify unfamiliar
+or changing endpoints against Apple's current
+[App Store Connect API documentation](https://developer.apple.com/documentation/appstoreconnectapi)
+before mutation.
 
 ## 1. Required dimensions (verify against Apple before a release)
 

@@ -1,6 +1,6 @@
 ---
 name: committing-and-creating-pr
-description: Guides git commit and PR creation with security validation to prevent sensitive information leaks. Activates on "커밋", "commit", "PR", "pull request" requests. Enforces consistent commit style.
+description: Guides local Git commit preparation and pull-request drafting with staged-diff and secret checks. Use when the user asks to commit changes, prepare a conventional commit, or draft a PR. When a dedicated GitHub publishing workflow is available, use it for pushing and opening the PR after these local checks.
 ---
 
 # Git Commit & PR Guide
@@ -39,8 +39,6 @@ git commit -m "$(cat <<'EOF'
 feat(auth): add JWT token validation
 
 Implement token validation middleware with refresh logic.
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -51,8 +49,6 @@ EOF
 <type>(<scope>): <subject>
 
 <body>
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 ```
 
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
@@ -68,8 +64,6 @@ gh pr create --title "feat: add feature" --body "$(cat <<'EOF'
 ## Test plan
 - [ ] Unit tests pass
 - [ ] Manual testing done
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```

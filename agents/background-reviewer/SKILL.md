@@ -1,315 +1,108 @@
 ---
 name: background-reviewer
-description: Orchestrates multi-LLM parallel code review using Claude and Codex. Each agent reviews from a different perspective using agent personas (security, architecture, code quality, performance). Supports persona-based review via `agt persona review`. Use for "코드 리뷰", "리뷰해줘", "bg review", "멀티 리뷰", "background review", "페르소나 리뷰" requests.
-allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, AskUserQuestion
-priority: high
-tags: [review, code-review, background, parallel-execution, codex, multi-llm, quality, persona]
+description: Run bounded parallel code reviews with independent reviewer personas, merge and prioritize findings, and optionally repeat a review-fix-verification cycle. Use only when the user explicitly requests a background, parallel, multi-agent, persona, multi-LLM, or iterative review such as "bg review", "멀티 리뷰", "페르소나 리뷰", "리뷰 루프", or "keep reviewing". Do not trigger for an ordinary code review.
 ---
 
 # Background Reviewer
 
-Multi-LLM parallel code review with specialized agent personas.
+Run independent reviews in parallel, consolidate only actionable findings, and stop at explicit safety boundaries.
 
-## Quick Start
+## Establish scope
 
-```bash
-# 1. Determine review scope and round number
-# 2. Create: .context/reviews/
-# 3. Run review agents with personas in background
-# 4. Each persona saves findings to {round}-{persona}.md
-# 5. Merge into prioritized findings when ready
-```
+Determine one review target before delegating:
 
-## Output Convention
+- branch diff: `git diff <base>...HEAD`
+- uncommitted changes: `git diff` plus `git diff --cached`
+- selected files or directories named by the user
 
-```
-.context/reviews/
-├── R01-security-reviewer.md        # Round 1: security persona
-├── R01-architecture-reviewer.md    # Round 1: architecture persona
-├── R01-code-quality-reviewer.md    # Round 1: code quality persona
-├── R01-performance-reviewer.md     # Round 1: performance persona
-├── R01-merged.md                   # Round 1: merged findings
-├── R02-security-reviewer.md        # Round 2: after fixes, re-review
-└── R02-merged.md
-```
+Treat review as read-only. Modify code only when the user also requested fixes or an iterative review-fix loop.
 
-**Round number** increments each time reviews are run (R01 = first pass, R02 = after fixes, R03 = final check).
+Create `.context/reviews/` only when persisted artifacts are useful. Use `R01`, `R02`, and so on for repeated rounds.
 
-Detect next round:
-```bash
-ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-# → R01, R02, R03, ...
-```
+## Delegate bounded reviews
 
-## Persona-Based Review (Recommended)
+Prefer the current host's native collaboration tools. Spawn two to four independent reviewers only when their scopes can run independently. Give each reviewer:
 
-Each reviewer adopts a detailed agent persona from `.agents/personas/` or `~/.agents/personas/`. Personas define identity, review lens, evaluation framework, and output format — producing consistent, specialized reviews.
+- the exact diff, files, or branch range to inspect
+- one focused lens
+- project-specific build or test context required for accurate findings
+- a read-only instruction and a concise output schema
 
-### Available Personas
+Useful lenses:
 
-```bash
-agt persona list                    # See all available personas
-agt persona show security-reviewer  # Preview a persona's focus
-```
+| Lens | Focus |
+|------|-------|
+| correctness | logic errors, edge cases, state transitions, concurrency |
+| security | trust boundaries, auth, injection, secrets, data exposure |
+| architecture | coupling, contracts, compatibility, failure modes |
+| quality | clarity, maintainability, tests, error handling |
+| performance | avoidable I/O, memory, latency, scaling risks |
 
-| Persona | Role | Focus |
-|---------|------|-------|
-| `security-reviewer` | Senior AppSec Engineer | OWASP, auth, injection, data exposure |
-| `architecture-reviewer` | Principal Architect | SOLID, coupling, API design, layer violations |
-| `code-quality-reviewer` | Staff Engineer | Readability, complexity, DRY, test coverage |
-| `performance-reviewer` | Performance Engineer | Memory, CPU, I/O, scalability |
+Do not send every reviewer the other reviewers' conclusions. Independent passes are more valuable than consensus copied from shared context.
 
-Custom personas can be created for project-specific needs:
-```bash
-agt persona create db-reviewer --codex "DBA with 15yr PostgreSQL optimization"
-agt persona create frontend-a11y --ai "React accessibility specialist"
-```
+If native reviewers are unavailable and the user explicitly requested multiple providers, use installed `agt persona review` commands with read-only providers. Otherwise perform the perspectives sequentially in the current session.
 
-### Persona Quick Review (Single)
+## Merge findings
 
-```bash
-# Single persona review with auto-detected LLM
-agt persona review security-reviewer
+Wait for every bounded reviewer, then verify each material finding against the code before reporting it. Deduplicate issues that share the same root cause and increase confidence when independent reviewers found the same defect.
 
-# Specify LLM
-agt persona review security-reviewer --claude
-agt persona review architecture-reviewer --codex
-
-# Review only staged changes
-agt persona review security-reviewer --staged
-
-# Compare against a branch
-agt persona review security-reviewer --base main
-
-# Save to file with round naming
-ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-agt persona review security-reviewer -o ".context/reviews/${ROUND}-security-reviewer.md"
-```
-
-### Parallel Persona Review (Multi-LLM)
-
-Run multiple personas simultaneously, each on a different LLM:
-
-```bash
-mkdir -p .context/reviews
-ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-
-# Launch all personas in parallel — each on a different LLM
-agt persona review security-reviewer --claude -o ".context/reviews/${ROUND}-security-reviewer.md" &
-agt persona review architecture-reviewer --codex -o ".context/reviews/${ROUND}-architecture-reviewer.md" &
-agt persona review code-quality-reviewer --claude -o ".context/reviews/${ROUND}-code-quality-reviewer.md" &
-agt persona review performance-reviewer --codex -o ".context/reviews/${ROUND}-performance-reviewer.md" &
-wait
-
-echo "Round ${ROUND} reviews complete"
-ls -la .context/reviews/${ROUND}-*.md
-```
-
-### Persona Review via Claude Task Agent
-
-For Claude Code sessions, use Task agents with persona content:
-
-```typescript
-// Read persona file and pass as context
-Task({
-  subagent_type: "general-purpose",
-  prompt: `Adopt this persona completely and review the current git changes:
-
-$(cat .agents/personas/security-reviewer.md)
-
-Review the git diff (git diff HEAD) from this persona's perspective.
-Use the persona's Output Format for your review.
-Save to .context/reviews/${ROUND}-security-reviewer.md`,
-  run_in_background: true
-})
-```
-
-## Provider Selection & Perspectives
-
-| Provider | Perspective | Command | Strength |
-|----------|------------|---------|----------|
-| **Codex** | Code quality + bugs | `codex exec` (native review) | Best at spotting bugs, race conditions, edge cases |
-| **Claude** | Architecture + security + consistency | `Task({ run_in_background: true })` | Deep architectural analysis, OWASP checks, API consistency |
-
-## Review Scopes
-
-### 1. Branch Diff Review (most common)
-```bash
-# Review changes between current branch and main
-git diff main...HEAD > /tmp/review-diff.txt
-```
-
-### 2. Uncommitted Changes Review
-```bash
-# Review staged + unstaged changes
-git diff > /tmp/review-diff.txt
-git diff --cached >> /tmp/review-diff.txt
-```
-
-### 3. Specific Files Review
-```bash
-# Review specific files or directories
-cat src/flows/engine/*.ts > /tmp/review-target.txt
-```
-
-## Workflow
-
-### Step 1: Setup Review Session
-
-```bash
-mkdir -p .context/reviews
-ROUND=$(printf "R%02d" $(( $(ls .context/reviews/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-
-# Generate diff for reviewers
-git diff main...HEAD > ".context/reviews/${ROUND}-diff.patch"
-
-# List changed files
-git diff --name-only main...HEAD > ".context/reviews/${ROUND}-changed-files.txt"
-```
-
-### Step 2: Create Review Brief
-
-Write `.context/reviews/${ROUND}-brief.md`:
-```markdown
-# Review Brief (${ROUND})
-- Branch: feat/dashboard
-- Base: main
-- Changed files: (list)
-- Focus areas: (optional user-specified)
-```
-
-### Step 3: Launch Review Agents
-
-**Codex (Native Review — PRIORITY):**
-```bash
-# Codex v0.101+ has dedicated review capabilities (model: gpt-5.3-codex)
-
-# Option A: Custom review via exec --full-auto (recommended)
-nohup codex exec --full-auto \
-  --add-dir .context/reviews \
-  "Review the git diff between main and HEAD. Focus on:
-   1. Bugs and logic errors
-   2. Race conditions and edge cases
-   3. Error handling gaps
-   4. Performance issues
-   5. Type safety concerns
-   Save your review to .context/reviews/${ROUND}-codex.md
-   Format: ## Category / ### Finding / severity + description + suggestion" \
-  > .context/reviews/${ROUND}-codex.log 2>&1 &
-
-# Option B: Using codex exec review (native review subcommand)
-nohup codex exec review \
-  -o .context/reviews/${ROUND}-codex.md \
-  > .context/reviews/${ROUND}-codex.log 2>&1 &
-```
-> **Codex review notes:**
-> - Sandbox: `workspace-write` (reads anywhere, writes only to workspace + /tmp)
-> - Use `--add-dir .context/reviews` so Codex can write review files
-> - Always redirect logs: `> log 2>&1 &`
-> - Codex DOES write files in nohup mode — check the target directory, not just logs
-
-**Claude (Architecture + Security):**
-```typescript
-Task({
-  subagent_type: "general-purpose",
-  prompt: `You are a senior security and architecture reviewer.
-
-Read the review brief: .context/reviews/${ROUND}-brief.md
-Read changed files listed in: .context/reviews/${ROUND}-changed-files.txt
-
-Review focus:
-1. **Security**: OWASP Top 10 (injection, XSS, SSRF, auth bypass, data exposure)
-2. **Architecture**: SOLID violations, coupling, separation of concerns
-3. **API design**: RESTful conventions, error responses, validation completeness
-4. **Data integrity**: Race conditions in concurrent access, transaction safety
-5. **Backward compatibility**: Breaking changes to existing APIs or types
-
-Output format: Save to .context/reviews/${ROUND}-claude.md
-Use ## Category / ### Finding / Severity (critical/high/medium/low) / Description / Suggestion`,
-  run_in_background: true
-})
-```
-
-### Step 4: Guide User
+Use this structure for a persisted merged report:
 
 ```markdown
-## Review Agents Running (${ROUND})
+# Code Review Summary (R01)
 
-| Agent  | Perspective              | Output |
-|--------|--------------------------|--------|
-| Codex  | Bugs + code quality      | .context/reviews/${ROUND}-codex.md |
-| Claude | Architecture + security  | .context/reviews/${ROUND}-claude.md |
+## Critical
+- [file:line] Defect, impact, evidence, and smallest safe fix
 
-Check progress:
-- `ls .context/reviews/${ROUND}-*.md`
+## High
+- ...
 
-When ready: "머지해줘" or "리뷰 결과 확인"
+## Medium / Low
+- ...
+
+## Agreements
+- Findings independently reported by multiple reviewers
+
+## Verification gaps
+- Checks that could not be run and why
 ```
 
-### Step 5: Merge Reviews (on request)
+Severity meanings:
 
-Read all `${ROUND}-*.md` review files and create `.context/reviews/${ROUND}-merged.md`:
+- critical: security vulnerability, data-loss risk, or crash-level defect
+- high: likely logic error, missing validation, or breaking change
+- medium: meaningful robustness or maintainability problem
+- low: optional improvement with limited impact
 
-```markdown
-# Code Review Summary (${ROUND})
+Do not report style preferences as defects unless they violate an applicable project rule.
 
-## Critical Findings (must fix)
-- [Finding from any agent, deduplicated]
+## Optional review-fix loop
 
-## High Priority
-- [...]
+Enter this loop only when the user explicitly requested fixes, continuous improvement, or repeated review.
 
-## Medium Priority
-- [...]
+For each round:
 
-## Low Priority / Suggestions
-- [...]
+1. Review and merge findings.
+2. Reproduce or verify critical and high findings.
+3. Fix authorized findings in severity order.
+4. Run the narrowest relevant tests, then broader project checks when justified.
+5. Re-review the changed areas and record remaining findings.
 
-## Agreements (multiple agents flagged)
-- [Findings that 2+ agents independently identified]
+Stop when any condition is met:
 
-## Statistics
-- Total findings: N
-- Critical: N, High: N, Medium: N, Low: N
-- By agent: Codex N, Claude N
-```
+- clean: no verified critical or high findings remain
+- no progress: the same material findings remain for two consecutive rounds
+- verification failure: required tests cannot run or repeatedly fail for an unrelated reason
+- human decision: a fix requires an architectural, product, or destructive choice not already authorized
+- round limit: three rounds complete unless the user explicitly requested a different bound
+- user stop: the user asks to stop
 
-## Output Structure
+Never hide unresolved findings behind a clean result. Report what remains, why it remains, and the next decision needed.
 
-```
-.context/reviews/
-├── R01-brief.md                     # Round 1 review brief
-├── R01-diff.patch                   # Round 1 diff snapshot
-├── R01-changed-files.txt            # Round 1 changed files
-├── R01-security-reviewer.md         # Round 1 persona review
-├── R01-architecture-reviewer.md     # Round 1 persona review
-├── R01-codex.md                     # Round 1 generic agent review
-├── R01-claude.md                    # Round 1 generic agent review
-├── R01-merged.md                    # Round 1 merged findings
-├── R02-security-reviewer.md         # Round 2 re-review after fixes
-├── R02-codex.md
-└── R02-merged.md                    # Round 2 merged
-```
+## Safety
 
-## Best Practices
-
-**DO:**
-- Always include Codex — it has the best native review capabilities
-- Generate diff/file lists before launching agents
-- Let agents review independently for diverse findings
-- Deduplicate when merging (same issue found by multiple agents = higher confidence)
-
-**DON'T:**
-- Skip the review brief (agents need context)
-- Run review on 1000+ line diffs without splitting
-- Ignore findings that multiple agents agree on
-- Auto-fix critical findings without human review
-
-## Severity Guidelines
-
-| Severity | Definition | Action |
-|----------|-----------|--------|
-| **Critical** | Security vulnerability, data loss risk, crash bug | Must fix before merge |
-| **High** | Logic error, missing validation, breaking change | Should fix before merge |
-| **Medium** | Code smell, poor naming, missing error handling | Fix in follow-up |
-| **Low** | Style issue, minor optimization, suggestion | Optional |
+- Do not auto-fix critical findings whose remedy changes architecture, data, or public behavior without user approval.
+- Do not commit, push, open a PR, or trigger remote review unless separately requested.
+- Do not launch unbounded background processes or poll in tight loops.
+- Keep each reviewer read-only and each implementation round narrowly scoped.
+- Preserve unrelated user changes in dirty worktrees.

@@ -1,7 +1,6 @@
 ---
 name: managing-kubernetes
 description: Manages Kubernetes clusters via kubectl. Supports pod/deployment/service management, log viewing, port-forwarding, and debugging. Use for "k8s", "kubectl", "파드", cluster management tasks.
-trigger-keywords: kubernetes, k8s, kubectl, pod, deployment, service, namespace, helm
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 

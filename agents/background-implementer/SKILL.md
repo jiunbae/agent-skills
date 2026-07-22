@@ -1,9 +1,7 @@
 ---
 name: implementing-in-background
-description: Orchestrates multiple AI agents (Claude, Codex) for parallel implementation in the background. Separates independent tasks from planning docs, each agent writes code directly. Context-safe with auto-save. Use for "백그라운드 구현", "bg impl", "병렬 구현", "Codex로 구현", "구현해줘", "코드 작성해줘" requests.
+description: Orchestrates multiple AI agents (Claude, Codex) for isolated parallel implementation. Use only when the user explicitly requests background, parallel, or multi-agent implementation, such as "백그라운드 구현", "bg impl", or "병렬 구현". Do not trigger for ordinary implementation or code-writing requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, TodoWrite, AskUserQuestion
-priority: high
-tags: [implementation, background, parallel-execution, autonomous, codex, multi-llm]
 ---
 
 # Background Implementer
@@ -17,7 +15,7 @@ Multi-LLM background implementation with context-safe parallel execution.
 # 2. Create output dir: .context/impl/
 # 3. Determine round: R01, R02, ...
 # 4. Run agents in background → {round}-{agent}.md
-# 5. Guide user to check results manually
+# 5. Wait, inspect each result, integrate accepted changes, and verify
 ```
 
 ## Output Convention
@@ -146,24 +144,18 @@ nohup codex exec --json --sandbox workspace-write -C "${WORKTREE}" \
 > - Check the worktree for actual file writes; slow or quiet logs do not necessarily mean Codex is stuck.
 > - After completion, inspect `git -C "${WORKTREE}" status --short` and `git -C "${WORKTREE}" diff`, then apply the accepted diff to the main checkout and remove the worktree.
 
-### Step 4: Guide User (NO MONITORING)
+### Step 4: Wait, Inspect, and Integrate
 
-**IMPORTANT:** Don't poll for completion. Output this guide:
+Prefer the host's native agent wait/status mechanism. Do not tight-poll shell
+processes. When workers finish:
 
-```markdown
-## Agents Running (${ROUND})
+1. Inspect every worker's notes and actual worktree diff.
+2. Reject overlapping, out-of-scope, or unverified changes.
+3. Apply accepted diffs to the main checkout in dependency order.
+4. Run the relevant tests and summarize remaining failures.
 
-| Agent  | Output |
-|--------|--------|
-| Claude | .context/impl/${ROUND}-claude.md |
-| Codex  | .context/impl/${ROUND}-codex-*.md |
-
-Check results manually:
-- `ls .context/impl/${ROUND}-*.md`
-- `git status`
-
-When done, ask me to "확인해줘" or "빌드 체크"
-```
+Only use fire-and-forget behavior when the user explicitly asks to launch work
+and return immediately.
 
 ## Token Efficiency
 
@@ -191,12 +183,13 @@ Keep detailed prompts, logs, and implementation summaries in `.context/impl/` so
 **DO:**
 - Use markdown files for task instructions
 - Respect dependency order (migration → models → handlers)
-- Let user check completion manually
+- Wait for bounded workers and verify accepted changes
 
 **DON'T:**
 - Poll TaskOutput repeatedly (token waste)
 - Run 10+ agents simultaneously
 - Have multiple agents edit same file
+- Hand unfinished verification back to the user without being asked
 
 ## Version Notes
 

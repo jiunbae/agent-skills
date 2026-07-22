@@ -1,11 +1,6 @@
 ---
 name: auditing-security
 description: Audits repository security by analyzing current code and commit history for sensitive information leaks. Detects API keys, passwords, and credentials. Use for "보안 점검", "보안 감사", "security audit", "민감 정보 검사" requests.
-trigger_keywords:
-  - 보안 검사
-  - 보안 감사
-  - security audit
-  - 민감 정보 검사
 ---
 
 # Security Auditor

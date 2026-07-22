@@ -1,9 +1,7 @@
 ---
 name: planning-in-background
-description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel planning in the background with auto-save. Agents continue running even when session hits context limits. Use for "백그라운드 기획", "bg plan", "병렬 기획", "멀티 AI 기획", "기획해줘", "N명이 기획", "계획", "플래닝", "plan", "설계" requests.
+description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel planning with saved outputs. Use only when the user explicitly requests background, parallel, or multi-agent planning, such as "백그라운드 기획", "bg plan", "병렬 기획", "멀티 AI 기획", or "N명이 기획". Do not trigger for ordinary planning or design requests.
 allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, TodoWrite, AskUserQuestion
-priority: high
-tags: [planning, background, parallel-execution, autonomous, multi-llm, codex, gemini]
 ---
 
 # Background Planner
@@ -17,7 +15,7 @@ Multi-LLM parallel planning with context-safe auto-save.
 # 2. Create: .context/plans/
 # 3. Determine round: R01, R02, ...
 # 4. Run agents in background → {round}-{agent}.md
-# 5. Guide user to merge when ready
+# 5. Wait for results and synthesize a merged plan
 ```
 
 ## Output Convention
@@ -43,12 +41,12 @@ ROUND=$(printf "R%02d" $(( $(ls .context/plans/R*-*.md 2>/dev/null | sed 's/.*\/
 | Provider | Best For | Command |
 |----------|----------|---------|
 | **Claude** | Complex analysis, architecture, deep codebase reading | `Task({ run_in_background: true })` |
-| **Codex** | Technical specs, code design | `nohup codex exec --full-auto -o {output.md} "prompt" > log 2>&1 &` |
+| **Codex** | Technical specs, code design | `codex exec --sandbox read-only -C {workdir} -o {output.md} - < prompt.md` |
 | **Gemini** | Creative ideas, UX design, long docs | `nohup gemini -p "prompt" -o text > {output.md} 2>/dev/null &` |
 | **Ollama** | Sensitive data, local | `ollama run llama3.2` |
 
-> **Gemini v0.26+**: Use `-p "prompt"` for non-interactive, `-o text` for clean output, `--yolo` for auto-approve file writes. Redirect stdout to file: `> output.md`. Do NOT use `-s` (that's `--sandbox`, not silent).
-> **Codex v0.101+** (model: gpt-5.3-codex): Use `codex exec --full-auto` for non-interactive. Use `-o file.md` to save last message. Use `nohup ... > log 2>&1 &` for background. Sandbox is `workspace-write` by default (reads anywhere, writes only to workspace + /tmp). Use `--add-dir <path>` for additional writable directories. Codex DOES write files in nohup mode — check the workspace for actual file outputs, not just the log.
+> **Gemini CLI**: Use `-p "prompt"` for non-interactive planning and `-o text` for clean output. Redirect stdout to the planned output file. Planning workers should not need automatic write approval.
+> **Codex CLI**: `codex exec` defaults to a read-only sandbox. Keep planning workers read-only, use `-C` to set the repository, and use `-o` to save the final response. Prefer explicit sandbox flags over the deprecated `--full-auto` compatibility flag. If the current orchestrator exposes native subagents, use those instead of launching nested CLI processes.
 
 ## Workflow
 
@@ -74,10 +72,10 @@ Task({
 
 **Codex:**
 ```bash
-nohup codex exec --full-auto \
-  --add-dir .context/plans \
+nohup codex exec --sandbox read-only \
+  -C "$(pwd)" \
   -o .context/plans/${ROUND}-codex.md \
-  "Plan ${topic} from technical perspective. Save to .context/plans/${ROUND}-codex.md" \
+  "Plan ${topic} from a technical perspective. Return a structured Markdown plan." \
   > .context/plans/${ROUND}-codex.log 2>&1 &
 ```
 
@@ -86,26 +84,17 @@ nohup codex exec --full-auto \
 nohup gemini -p "Plan ${topic} creatively. Output a well-structured markdown plan." \
   -o text > .context/plans/${ROUND}-gemini.md 2>/dev/null &
 ```
-> Note: Gemini `-p` runs non-interactively. `-o text` gives clean text output. Redirect stdout `>` to save to file. Use `--yolo` if the prompt requires file system access.
+> Note: Gemini `-p` runs non-interactively. `-o text` gives clean text output. Redirect stdout `>` to save to file.
 
-### Step 3: Guide User (NO POLLING)
+### Step 3: Wait and Synthesize
 
-```markdown
-## Planning Agents Running (${ROUND})
+Use the host's native wait/status mechanism for native agents. For external
+processes, record their process IDs and check them without tight polling. When
+all bounded planners finish, read their outputs and create
+`.context/plans/${ROUND}-merged.md` unless the user explicitly requested a
+fire-and-forget launch.
 
-| Agent  | Output |
-|--------|--------|
-| Claude | .context/plans/${ROUND}-claude.md |
-| Codex  | .context/plans/${ROUND}-codex.md |
-| Gemini | .context/plans/${ROUND}-gemini.md |
-
-Check results:
-- `ls .context/plans/${ROUND}-*.md`
-
-When ready, ask me to "머지해줘" or "결과 확인"
-```
-
-### Step 4: Merge (on request)
+### Step 4: Merge
 
 Read all `${ROUND}-*.md` plan files and create `.context/plans/${ROUND}-merged.md`:
 - Compare perspectives
@@ -117,9 +106,9 @@ Read all `${ROUND}-*.md` plan files and create `.context/plans/${ROUND}-merged.m
 **DO:**
 - Use 2-4 agents for diverse perspectives
 - Let each agent save directly to file
-- Wait for user to request merge
+- Wait for bounded agents and merge their results in the same task
 
 **DON'T:**
 - Poll for completion (token waste)
 - Run 5+ agents (diminishing returns)
-- Merge before all agents complete
+- Merge before all bounded agents complete

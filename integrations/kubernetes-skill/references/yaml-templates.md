@@ -195,8 +195,8 @@ data:
   password: cGFzc3dvcmQ=
   username: YWRtaW4=
 stringData:
-  # Plain text (will be encoded)
-  api-key: "my-api-key-12345"
+  # Inject at deploy time; do not commit a real value.
+  api-key: "${API_KEY}"
 ```
 
 ### Docker Registry Secret

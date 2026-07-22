@@ -1,10 +1,7 @@
 ---
 name: managing-discord
 description: Manages Discord servers/channels via REST API. Supports channel CRUD, permissions, messaging, and webhooks. Use for "Discord", "디스코드", "채널 관리", "discord bot" requests.
-trigger-keywords: discord, 디스코드, discord bot, 채널 관리, webhook
 allowed-tools: Read, Write, Edit, Bash, WebFetch
-priority: medium
-tags: [discord, api, bot, messaging, webhook]
 ---
 
 # Discord Management
