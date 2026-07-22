@@ -13,9 +13,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent -Path $MyInvocation.MyCommand.Path
-$TargetDir = Join-Path $HOME '.claude/skills'
+$UserHome = if ($env:AGT_USER_HOME) { $env:AGT_USER_HOME } else { $HOME }
+$TargetDir = Join-Path $UserHome '.claude/skills'
 $StaticSource = Join-Path $ScriptDir 'static'
-$StaticTarget = Join-Path $HOME '.agents'
+$StaticTarget = Join-Path $UserHome '.agents'
 $Prefix = ''
 $Postfix = ''
 $CopyMode = $false
@@ -27,19 +28,20 @@ $LinkStatic = $false
 $UnlinkStatic = $false
 $InstallCli = $false
 $UninstallCli = $false
-$CliTarget = Join-Path $HOME '.local/bin'
+$CliTarget = Join-Path $UserHome '.local/bin'
 $CliAliases = @()
 $InstallCodex = $false
-$CodexTarget = Join-Path $HOME '.codex'
-$CodexAgentsSource = Join-Path $ScriptDir 'codex-support/AGENTS.md'
+$DefaultClaudeSkillsTarget = Join-Path $UserHome '.claude/skills'
+$CodexSkillsTarget = Join-Path $UserHome '.agents/skills'
+$LegacyCodexSkillsTarget = Join-Path $UserHome '.codex/skills'
 $InstallHooks = $false
 $UninstallHooks = $false
 $HooksSource = Join-Path $ScriptDir 'hooks'
-$HooksTarget = Join-Path $HOME '.claude/hooks'
+$HooksTarget = Join-Path $UserHome '.claude/hooks'
 $HooksRegistry = Join-Path $HooksSource 'hooks.json'
 $InstallPersonas = $false
 $PersonasSource = Join-Path $ScriptDir 'personas'
-$PersonasTarget = Join-Path $HOME '.agents/personas'
+$PersonasTarget = Join-Path $UserHome '.agents/personas'
 $CoreMode = $false
 $CoreSkills = @(
     'development/git-commit-pr',
@@ -85,8 +87,8 @@ Options:
   --core              Install core skills only (workspace common)
 
 Static:
-  --link-static       Link static/ -> ~/.agents
-  --unlink-static     Remove ~/.agents link
+  --link-static       Link each static/* item under ~/.agents
+  --unlink-static     Remove only static links managed by this installer
 
 CLI:
   --cli               Install agt CLI tool (~/.local/bin)
@@ -101,7 +103,8 @@ Personas:
   --personas          Install agent personas (~/.agents/personas)
 
 Codex:
-  --codex             Setup Codex CLI support (AGENTS.md + skills symlink)
+  --codex             Link selected skills individually under ~/.agents/skills
+                      (also links static/* items under ~/.agents)
 
 Examples:
   ./install.ps1
@@ -158,6 +161,41 @@ function New-Link {
         }
         throw
     }
+}
+
+function Get-LinkTargetPath {
+    param([string]$Path)
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (-not $item -or -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        return ''
+    }
+
+    $rawTarget = $null
+    $linkProp = $item.PSObject.Properties['LinkTarget']
+    if ($linkProp) { $rawTarget = $linkProp.Value }
+    if (-not $rawTarget) {
+        $targetProp = $item.PSObject.Properties['Target']
+        if ($targetProp) { $rawTarget = $targetProp.Value }
+    }
+    if ($rawTarget -is [Array]) { $rawTarget = $rawTarget[0] }
+    if ([string]::IsNullOrWhiteSpace([string]$rawTarget)) { return '' }
+
+    $target = [string]$rawTarget
+    if (-not [IO.Path]::IsPathRooted($target)) {
+        $target = Join-Path (Split-Path -Parent $Path) $target
+    }
+    return (Normalize-Path $target)
+}
+
+function Test-ManagedLink {
+    param(
+        [string]$Path,
+        [string]$Target
+    )
+    $resolvedTarget = Get-LinkTargetPath $Path
+    if ([string]::IsNullOrEmpty($resolvedTarget)) { return $false }
+    return ($resolvedTarget -eq (Normalize-Path $Target))
 }
 
 function Get-SkillsInGroup {
@@ -224,9 +262,9 @@ function List-Skills {
             $target = ''
             $linkProp = $item.PSObject.Properties['LinkTarget']
             if ($linkProp) { $target = $linkProp.Value }
-            Write-Host "  Link present: $StaticTarget -> $target" -ForegroundColor Green
+            Write-Host "  Legacy link present: $StaticTarget -> $target" -ForegroundColor Yellow
         } elseif ($item.PSIsContainer) {
-            Write-Host "  Directory exists (not a link): $StaticTarget" -ForegroundColor Yellow
+            Write-Host "  Integrated directory: $StaticTarget" -ForegroundColor Green
         } else {
             Write-Host "  File exists (not a link): $StaticTarget" -ForegroundColor Yellow
         }
@@ -251,12 +289,15 @@ function Install-Skill {
     $targetName = "${Prefix}${Skill}${Postfix}"
     $targetPath = Join-Path $TargetDir $targetName
 
-    if (Test-Path -LiteralPath $targetPath) {
+    $existingTarget = Get-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
+    if ($existingTarget) {
         if ($DryRun) {
             Write-Dry "Overwrite existing: $targetName"
+        } elseif ($existingTarget.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Write-Warn "Updating existing skill link: $targetName"
+            Remove-Item -LiteralPath $targetPath -Force
         } else {
-            Write-Warn "Overwriting existing: $targetName"
-            Remove-Existing $targetPath
+            throw "Refusing to overwrite existing file or directory: $targetPath"
         }
     }
 
@@ -266,6 +307,7 @@ function Install-Skill {
         } else {
             Write-Dry "Link ${Group}/${Skill} -> $targetName"
         }
+        Install-CodexSkillLink -SourcePath $sourcePath -TargetName $targetName
         return
     }
 
@@ -281,6 +323,8 @@ function Install-Skill {
             throw
         }
     }
+
+    Install-CodexSkillLink -SourcePath $sourcePath -TargetName $targetName
 }
 
 function Uninstall-Skill {
@@ -289,19 +333,19 @@ function Uninstall-Skill {
         [string]$Skill
     )
 
+    $sourcePath = Join-Path (Join-Path $ScriptDir $Group) $Skill
     $targetName = "${Prefix}${Skill}${Postfix}"
     $targetPath = Join-Path $TargetDir $targetName
     if (-not (Test-Path -LiteralPath $targetPath)) {
         Write-Warn "Not installed: $targetName"
-        return
-    }
-
-    if ($DryRun) {
+    } elseif ($DryRun) {
         Write-Dry "Remove: $targetName"
     } else {
         Remove-Existing $targetPath
         Write-Success "Removed: $targetName"
     }
+
+    Uninstall-CodexSkillLink -SourcePath $sourcePath -TargetName $targetName
 }
 
 function Install-Group {
@@ -349,88 +393,115 @@ function Install-Core {
     Write-Host "  agt skill install <skill-name>"
 }
 
-function Install-Codex {
-    if (-not (Test-Path -LiteralPath $CodexAgentsSource -PathType Leaf)) {
-        Write-ErrorMsg "Codex AGENTS.md not found: $CodexAgentsSource"
-        exit 1
-    }
-
-    $codexAgentsTarget = Join-Path $CodexTarget 'AGENTS.md'
-    $codexSkillsTarget = Join-Path $CodexTarget 'skills'
-    $claudeSkillsSource = Join-Path $HOME '.claude/skills'
-
-    if ($DryRun) {
-        Write-Dry "Ensure directory: $CodexTarget"
-        if (Test-Path -LiteralPath $codexAgentsTarget) {
-            Write-Dry "Append skill guide to AGENTS.md: $codexAgentsTarget"
-        } else {
-            Write-Dry "Create AGENTS.md: $codexAgentsTarget"
-        }
-        Write-Dry "Link: $codexSkillsTarget -> $claudeSkillsSource"
+function Migrate-LegacyCodexSkillsRoot {
+    $item = Get-Item -LiteralPath $LegacyCodexSkillsTarget -Force -ErrorAction SilentlyContinue
+    if (-not $item -or -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
         return
     }
 
-    # Create ~/.codex directory
-    Ensure-Directory $CodexTarget
+    $currentTarget = Get-LinkTargetPath $LegacyCodexSkillsTarget
+    if ($currentTarget -ne (Normalize-Path $DefaultClaudeSkillsTarget)) {
+        Write-Warn "Preserving unmanaged Codex link: $LegacyCodexSkillsTarget -> $currentTarget"
+        return
+    }
 
-    # Handle AGENTS.md
-    if (Test-Path -LiteralPath $codexAgentsTarget -PathType Leaf) {
-        $existingContent = Get-Content -LiteralPath $codexAgentsTarget -Raw
-        if ($existingContent -match 'Claude Skills \(SKILL\.md\)') {
-            Write-Warn "AGENTS.md already contains skill guide."
-            Write-Warn "Remove the existing skill section manually, then re-run."
+    $backup = "${LegacyCodexSkillsTarget}.backup"
+    $backupItem = Get-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+    $hasRestorableBackup = (
+        $backupItem -and
+        $backupItem.PSIsContainer -and
+        -not ($backupItem.Attributes -band [IO.FileAttributes]::ReparsePoint)
+    )
+    if ($DryRun) {
+        Write-Dry "Remove legacy Codex root link: $LegacyCodexSkillsTarget"
+        if ($hasRestorableBackup) {
+            Write-Dry "Restore Codex skills backup: $backup"
+        }
+        return
+    }
+
+    Remove-Item -LiteralPath $LegacyCodexSkillsTarget -Force
+    Write-Success "Removed legacy Codex root link: $LegacyCodexSkillsTarget"
+    if ($hasRestorableBackup) {
+        Move-Item -LiteralPath $backup -Destination $LegacyCodexSkillsTarget
+        Write-Success "Restored Codex skills backup: $LegacyCodexSkillsTarget"
+    }
+}
+
+function Install-Codex {
+    Migrate-LegacyCodexSkillsRoot
+    Link-Static
+
+    if ($DryRun) {
+        Write-Dry "Prepare Codex user skills directory: $CodexSkillsTarget"
+        Write-Dry "Preserve Codex-managed system skills: $LegacyCodexSkillsTarget/.system"
+        return
+    }
+
+    Ensure-Directory $CodexSkillsTarget
+    Write-Info "Codex user skills directory ready: $CodexSkillsTarget"
+    Write-Info "Selected skills will be linked individually"
+    Write-Info "Codex-managed system skills are unchanged: $LegacyCodexSkillsTarget/.system"
+}
+
+function Install-CodexSkillLink {
+    param(
+        [string]$SourcePath,
+        [string]$TargetName
+    )
+    if (-not $InstallCodex) { return }
+
+    $codexTarget = Join-Path $CodexSkillsTarget $TargetName
+    $legacyTarget = Join-Path $LegacyCodexSkillsTarget $TargetName
+
+    if ($DryRun) {
+        Write-Dry "Codex skill link: $codexTarget -> $SourcePath"
+        return
+    }
+
+    Ensure-Directory $CodexSkillsTarget
+    $existing = Get-Item -LiteralPath $codexTarget -Force -ErrorAction SilentlyContinue
+    if ($existing) {
+        if (-not (Test-ManagedLink -Path $codexTarget -Target $SourcePath)) {
+            throw "Refusing to overwrite existing Codex skill path: $codexTarget"
+        }
+        Write-Info "Codex skill link already correct: $TargetName"
+    } else {
+        $linkType = New-Link -Path $codexTarget -Target $SourcePath
+        Write-Success "Codex linked: $TargetName ($linkType)"
+    }
+
+    $legacyRoot = Get-Item -LiteralPath $LegacyCodexSkillsTarget -Force -ErrorAction SilentlyContinue
+    if ($legacyRoot -and -not ($legacyRoot.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        if (Test-ManagedLink -Path $legacyTarget -Target $SourcePath) {
+            Remove-Item -LiteralPath $legacyTarget -Force
+            Write-Success "Removed legacy Codex skill link: $legacyTarget"
+        }
+    }
+}
+
+function Uninstall-CodexSkillLink {
+    param(
+        [string]$SourcePath,
+        [string]$TargetName
+    )
+    if (-not $InstallCodex) { return }
+
+    $targets = @((Join-Path $CodexSkillsTarget $TargetName))
+    $legacyRoot = Get-Item -LiteralPath $LegacyCodexSkillsTarget -Force -ErrorAction SilentlyContinue
+    if (-not $legacyRoot -or -not ($legacyRoot.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        $targets += (Join-Path $LegacyCodexSkillsTarget $TargetName)
+    }
+
+    foreach ($target in $targets) {
+        if (-not (Test-ManagedLink -Path $target -Target $SourcePath)) { continue }
+        if ($DryRun) {
+            Write-Dry "Remove Codex skill link: $target"
         } else {
-            Write-Info "Appending skill guide to existing AGENTS.md..."
-            $separator = "`n`n# ====================================================`n# agt Integration (auto-generated)`n# ====================================================`n`n"
-            $skillGuide = Get-Content -LiteralPath $CodexAgentsSource -Raw
-            Add-Content -LiteralPath $codexAgentsTarget -Value ($separator + $skillGuide)
-            Write-Success "Skill guide appended to AGENTS.md (existing content preserved)"
-        }
-    } else {
-        Copy-Item -LiteralPath $CodexAgentsSource -Destination $codexAgentsTarget
-        Write-Success "AGENTS.md created: $codexAgentsTarget"
-    }
-
-    # Skills symlink
-    if (-not (Test-Path -LiteralPath $claudeSkillsSource -PathType Container)) {
-        Write-Warn "Claude skills directory not found: $claudeSkillsSource"
-        Write-Info "Install skills first: ./install.ps1"
-    }
-
-    if (Test-Path -LiteralPath $codexSkillsTarget) {
-        $item = Get-Item -LiteralPath $codexSkillsTarget -Force
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            $linkTarget = ''
-            $linkProp = $item.PSObject.Properties['LinkTarget']
-            if ($linkProp) { $linkTarget = $linkProp.Value }
-            if ($linkTarget -eq $claudeSkillsSource) {
-                Write-Info "Skills symlink already correctly set"
-            } else {
-                Write-Warn "Replacing existing symlink: $codexSkillsTarget"
-                Remove-Existing $codexSkillsTarget
-                $linkType = New-Link -Path $codexSkillsTarget -Target $claudeSkillsSource
-                Write-Success "Link created: ~/.codex/skills -> ~/.claude/skills ($linkType)"
-            }
-        } elseif ($item.PSIsContainer) {
-            $backup = "${codexSkillsTarget}.backup"
-            Write-Warn "Backing up existing directory to: $backup"
-            Move-Item -LiteralPath $codexSkillsTarget -Destination $backup -Force
-            $linkType = New-Link -Path $codexSkillsTarget -Target $claudeSkillsSource
-            Write-Success "Link created: ~/.codex/skills -> ~/.claude/skills ($linkType)"
-        }
-    } else {
-        try {
-            $linkType = New-Link -Path $codexSkillsTarget -Target $claudeSkillsSource
-            Write-Success "Link created: ~/.codex/skills -> ~/.claude/skills ($linkType)"
-        } catch {
-            Write-ErrorMsg "Failed to create codex skills link: $_"
+            Remove-Item -LiteralPath $target -Force
+            Write-Success "Removed Codex skill link: $target"
         }
     }
-
-    Write-Host ''
-    Write-Info "Codex CLI can now use skills"
-    Write-Info "AGENTS.md: $codexAgentsTarget"
-    Write-Info "Skills: $codexSkillsTarget -> $claudeSkillsSource"
 }
 
 function Install-Hooks {
@@ -484,7 +555,7 @@ function Install-Hooks {
     }
 
     # Merge hook settings into settings.json
-    $settingsFile = Join-Path $HOME '.claude/settings.json'
+    $settingsFile = Join-Path $UserHome '.claude/settings.json'
 
     if ($DryRun) {
         Write-Dry "Merge hook settings into: $settingsFile"
@@ -589,7 +660,7 @@ function Uninstall-Hooks {
     }
 
     # Remove hook settings from settings.json
-    $settingsFile = Join-Path $HOME '.claude/settings.json'
+    $settingsFile = Join-Path $UserHome '.claude/settings.json'
     if (Test-Path -LiteralPath $settingsFile -PathType Leaf) {
         $settings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
         if ($settings.PSObject.Properties['hooks']) {
@@ -634,62 +705,83 @@ function Link-Static {
         exit 1
     }
 
-    if (Test-Path -LiteralPath $StaticTarget) {
-        $item = Get-Item -LiteralPath $StaticTarget -Force
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            if ($DryRun) {
-                Write-Dry "Remove existing link: $StaticTarget"
-            } else {
-                Write-Warn "Removing existing link: $StaticTarget"
-                Remove-Existing $StaticTarget
-            }
-        } elseif ($item.PSIsContainer) {
-            $backup = "${StaticTarget}.backup"
-            if ($DryRun) {
-                Write-Dry "Backup existing directory to: $backup"
-            } else {
-                Write-Warn "Backing up existing directory to: $backup"
-                Move-Item -LiteralPath $StaticTarget -Destination $backup -Force
-            }
+    $rootItem = Get-Item -LiteralPath $StaticTarget -Force -ErrorAction SilentlyContinue
+    if ($rootItem -and ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        if (-not (Test-ManagedLink -Path $StaticTarget -Target $StaticSource)) {
+            throw "Refusing to replace unmanaged ~/.agents link: $StaticTarget"
+        }
+        if ($DryRun) {
+            Write-Dry "Convert legacy ~/.agents link to a directory: $StaticTarget"
         } else {
-            if ($DryRun) {
-                Write-Dry "Remove file: $StaticTarget"
+            Remove-Item -LiteralPath $StaticTarget -Force
+            Ensure-Directory $StaticTarget
+            Write-Success "Converted legacy ~/.agents link to a directory"
+        }
+    } elseif ($rootItem -and -not $rootItem.PSIsContainer) {
+        throw "Refusing to replace non-directory path: $StaticTarget"
+    } elseif (-not $rootItem -and -not $DryRun) {
+        Ensure-Directory $StaticTarget
+    }
+
+    if (-not $DryRun) { Ensure-Directory $StaticTarget }
+
+    Get-ChildItem -LiteralPath $StaticSource -Force | ForEach-Object {
+        if ($_.Name -ne 'skills') {
+            $targetPath = Join-Path $StaticTarget $_.Name
+            $targetItem = Get-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
+
+            if ($targetItem) {
+                if (-not (Test-ManagedLink -Path $targetPath -Target $_.FullName)) {
+                    Write-Warn "Preserving existing user item: $targetPath"
+                }
+            } elseif ($DryRun) {
+                Write-Dry "Static link: $targetPath -> $($_.FullName)"
             } else {
-                Remove-Existing $StaticTarget
+                try {
+                    $linkType = New-Link -Path $targetPath -Target $_.FullName
+                    Write-Success "Static linked: $($_.Name) ($linkType)"
+                } catch {
+                    throw "Failed to link static item $($_.Name). Enable Windows Developer Mode or run PowerShell as Administrator. $($_.Exception.Message)"
+                }
             }
         }
-    }
-
-    if ($DryRun) {
-        Write-Dry "Link ~/.agents -> $StaticSource"
-        return
-    }
-
-    try {
-        $linkType = New-Link -Path $StaticTarget -Target $StaticSource
-        Write-Success "Linked ~/.agents -> $StaticSource ($linkType)"
-    } catch {
-        Write-ErrorMsg "Failed to create link for static directory: $_"
-        exit 1
     }
 }
 
 function Unlink-Static {
-    if (-not (Test-Path -LiteralPath $StaticTarget)) {
+    $rootItem = Get-Item -LiteralPath $StaticTarget -Force -ErrorAction SilentlyContinue
+    if (-not $rootItem) {
         Write-Warn "~/.agents does not exist"
         return
     }
-    $item = Get-Item -LiteralPath $StaticTarget -Force
-    if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        Write-Warn "~/.agents is not a link; remove manually if needed"
+
+    if ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        if (-not (Test-ManagedLink -Path $StaticTarget -Target $StaticSource)) {
+            Write-Warn "Preserving unmanaged ~/.agents link: $StaticTarget"
+            return
+        }
+        if ($DryRun) {
+            Write-Dry "Remove legacy static root link: $StaticTarget"
+        } else {
+            Remove-Item -LiteralPath $StaticTarget -Force
+            Write-Success "Removed legacy static root link: $StaticTarget"
+        }
         return
     }
 
-    if ($DryRun) {
-        Write-Dry "Remove link: $StaticTarget"
-    } else {
-        Remove-Existing $StaticTarget
-        Write-Success "Removed link: ~/.agents"
+    $separatorChars = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $staticPrefix = (Normalize-Path $StaticSource).TrimEnd($separatorChars) + [IO.Path]::DirectorySeparatorChar
+    Get-ChildItem -LiteralPath $StaticTarget -Force | ForEach-Object {
+        $linkTarget = Get-LinkTargetPath $_.FullName
+        if (-not [string]::IsNullOrEmpty($linkTarget) -and
+            $linkTarget.StartsWith($staticPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            if ($DryRun) {
+                Write-Dry "Remove static link: $($_.FullName)"
+            } else {
+                Remove-Item -LiteralPath $_.FullName -Force
+                Write-Success "Removed static link: $($_.FullName)"
+            }
+        }
     }
 }
 
@@ -870,6 +962,9 @@ $TargetDir = Normalize-Path $TargetDir
 $StaticSource = Normalize-Path $StaticSource
 $StaticTarget = Normalize-Path $StaticTarget
 $CliTarget = Normalize-Path $CliTarget
+$DefaultClaudeSkillsTarget = Normalize-Path $DefaultClaudeSkillsTarget
+$CodexSkillsTarget = Normalize-Path $CodexSkillsTarget
+$LegacyCodexSkillsTarget = Normalize-Path $LegacyCodexSkillsTarget
 
 # Standalone uninstall operations (exit immediately)
 if ($UnlinkStatic) { Unlink-Static; exit 0 }
@@ -880,7 +975,7 @@ if ($ListMode) { List-Skills; exit 0 }
 # Combinable install options (run before skill installation)
 if ($LinkStatic) { Link-Static; Write-Host '' }
 if ($InstallCli) { Install-Cli; Write-Host '' }
-if ($InstallCodex) { Install-Codex; Write-Host '' }
+if ($InstallCodex -and -not $Uninstall) { Install-Codex; Write-Host '' }
 if ($InstallHooks) { Install-Hooks; Write-Host '' }
 if ($InstallPersonas) { Install-Personas; Write-Host '' }
 

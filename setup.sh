@@ -220,13 +220,36 @@ uninstall() {
         fi
     done
 
-    # static 심링크 제거
+    # static 및 Codex 사용자 스킬 링크 제거
     if [[ -L "${HOME}/.agents" ]]; then
         local target
         target=$(readlink "${HOME}/.agents")
         if [[ "$target" == *"agent-skills"* || "$target" == *"agt"* ]]; then
             rm -f "${HOME}/.agents"
             log_success "제거: ~/.agents 심링크"
+        fi
+    elif [[ -d "${HOME}/.agents" ]]; then
+        local link
+        for link in "${HOME}/.agents"/*; do
+            [[ -L "$link" ]] || continue
+            local target
+            target=$(readlink "$link")
+            if [[ "$target" == "${INSTALL_DIR}/static/"* ]]; then
+                rm -f "$link"
+                log_success "제거: ~/.agents/$(basename "$link")"
+            fi
+        done
+
+        if [[ -d "${HOME}/.agents/skills" ]]; then
+            for link in "${HOME}/.agents/skills"/*; do
+                [[ -L "$link" ]] || continue
+                local target
+                target=$(readlink "$link")
+                if [[ "$target" == "${INSTALL_DIR}/"* ]]; then
+                    rm -f "$link"
+                    log_success "제거: ~/.agents/skills/$(basename "$link")"
+                fi
+            done
         fi
     fi
 

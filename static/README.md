@@ -5,10 +5,11 @@
 ## 설정
 
 ```bash
-# 심링크 설정 (한 번만 실행)
+# static 항목 링크 설정 (한 번만 실행)
 ./install.sh --link-static
 
-# 결과: ~/.agents -> agt/static/
+# 결과: ~/.agents/ 아래에 static/* 항목별 심링크 생성
+# ~/.agents/skills는 Codex 사용자 스킬용으로 별도 보존
 ```
 
 ## Sample 파일 사용

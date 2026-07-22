@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # agt — Installer
-# Install skills to ~/.claude/skills directory.
+# Install skills to Claude Code and, with --codex, Codex user skill paths.
 #
 # 사용법:
 #   ./install.sh                     # 전체 설치
@@ -10,7 +10,7 @@
 #   ./install.sh agents/background-planner  # 특정 스킬만 설치
 #   ./install.sh --list              # 사용 가능한 스킬 목록
 #   ./install.sh --uninstall agents  # 삭제
-#   ./install.sh --link-static       # static 디렉토리 심링크
+#   ./install.sh --link-static       # static 항목별 심링크
 #
 
 set -e
@@ -25,8 +25,10 @@ NC='\033[0m' # No Color
 
 # 기본값
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET_DIR="${HOME}/.claude/skills"
-STATIC_TARGET="${HOME}/.agents"
+AGT_USER_HOME="${AGT_USER_HOME:-${HOME}}"
+TARGET_DIR="${AGT_USER_HOME}/.claude/skills"
+DEFAULT_CLAUDE_SKILLS_TARGET="${AGT_USER_HOME}/.claude/skills"
+STATIC_TARGET="${AGT_USER_HOME}/.agents"
 STATIC_SOURCE="${SCRIPT_DIR}/static"
 PREFIX=""
 POSTFIX=""
@@ -39,18 +41,18 @@ LINK_STATIC=false
 UNLINK_STATIC=false
 INSTALL_CLI=false
 UNINSTALL_CLI=false
-CLI_TARGET="${HOME}/.local/bin"
+CLI_TARGET="${AGT_USER_HOME}/.local/bin"
 INSTALL_CODEX=false
-CODEX_TARGET="${HOME}/.codex"
-CODEX_AGENTS_SOURCE="${SCRIPT_DIR}/codex-support/AGENTS.md"
+CODEX_SKILLS_TARGET="${AGT_USER_HOME}/.agents/skills"
+LEGACY_CODEX_SKILLS_TARGET="${AGT_USER_HOME}/.codex/skills"
 INSTALL_HOOKS=false
 UNINSTALL_HOOKS=false
 HOOKS_SOURCE="${SCRIPT_DIR}/hooks"
-HOOKS_TARGET="${HOME}/.claude/hooks"
+HOOKS_TARGET="${AGT_USER_HOME}/.claude/hooks"
 HOOKS_REGISTRY="${HOOKS_SOURCE}/hooks.json"
 INSTALL_PERSONAS=false
 PERSONAS_SOURCE="${SCRIPT_DIR}/personas"
-PERSONAS_TARGET="${HOME}/.agents/personas"
+PERSONAS_TARGET="${AGT_USER_HOME}/.agents/personas"
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
 EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" "personas" ".git" ".github" ".agents" "node_modules" "__pycache__")
@@ -129,8 +131,8 @@ usage() {
   --core           Core 스킬만 전역 설치 (워크스페이스 공통)
 
 Static 관리:
-  --link-static    static/ -> ~/.agents 심링크 생성
-  --unlink-static  ~/.agents 심링크 제거
+  --link-static    static/* 항목을 ~/.agents 아래에 개별 링크
+  --unlink-static  install.sh가 관리하는 static 링크만 제거
 
 CLI 도구:
   --cli            agt CLI 도구 설치 (~/.local/bin)
@@ -149,8 +151,9 @@ Personas:
 
 Codex 지원:
   --codex          Codex CLI 지원 설정
-                   - ~/.codex/AGENTS.md에 스킬 가이드 추가
-                   - ~/.codex/skills -> ~/.claude/skills 심링크 생성
+                   - 선택한 스킬을 ~/.agents/skills에 개별 링크
+                   - static/* 항목도 ~/.agents 아래에 개별 링크
+                   - Codex가 관리하는 ~/.codex/skills/.system 보존
 
 예시:
   $(basename "$0")                          # 전체 설치
@@ -161,8 +164,9 @@ Codex 지원:
   $(basename "$0") --prefix "my-" agents    # 접두사 붙여서 설치
   $(basename "$0") --uninstall agents       # agents 그룹 삭제
   $(basename "$0") --list                   # 스킬 목록 표시
-  $(basename "$0") --link-static            # static 심링크 설정
+  $(basename "$0") --link-static            # static 항목 링크 설정
   $(basename "$0") --core --cli             # Core 스킬 + CLI 도구 설치 (권장)
+  $(basename "$0") --core --codex           # Core 스킬 + Codex 사용자 경로
   $(basename "$0") --hooks                  # Hooks 설치
   $(basename "$0") --core --cli --hooks     # Core + CLI + Hooks (풀 설치)
 
@@ -351,9 +355,9 @@ list_skills() {
   echo "========================================"
   if [[ -L "$STATIC_TARGET" ]]; then
     local link_target=$(readlink "$STATIC_TARGET")
-    echo -e "  ${GREEN}✓${NC} 심링크 활성: ~/.agents -> $link_target"
+    echo -e "  ${YELLOW}!${NC} 레거시 심링크: ~/.agents -> $link_target"
   elif [[ -d "$STATIC_TARGET" ]]; then
-    echo -e "  ${YELLOW}!${NC} 일반 디렉토리: ~/.agents (심링크 아님)"
+    echo -e "  ${GREEN}✓${NC} 통합 디렉터리: ~/.agents (static + skills + personas)"
   else
     echo -e "  ${RED}○${NC} 없음: ~/.agents가 존재하지 않음"
   fi
@@ -363,11 +367,11 @@ list_skills() {
   echo "  ./install.sh all              # 전체 설치"
   echo "  ./install.sh agents           # agents 그룹만"
   echo "  ./install.sh agents/background-planner  # 특정 스킬만"
-  echo "  ./install.sh --link-static    # static 심링크 설정"
+  echo "  ./install.sh --link-static    # static 항목 링크 설정"
   echo ""
 }
 
-# Static 심링크 생성
+# Static 항목별 심링크 생성
 link_static() {
   if [[ ! -d "$STATIC_SOURCE" ]]; then
     log_error "static 디렉토리가 없습니다: $STATIC_SOURCE"
@@ -376,25 +380,57 @@ link_static() {
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    if [[ -e "$STATIC_TARGET" ]]; then
-      log_dry "기존 ~/.agents 제거"
+    if [[ -L "$STATIC_TARGET" && "$(readlink "$STATIC_TARGET")" == "$STATIC_SOURCE" ]]; then
+      log_dry "레거시 ~/.agents 심링크를 실제 디렉터리로 변환"
+    elif [[ -L "$STATIC_TARGET" ]]; then
+      log_dry "다른 대상을 가리키는 ~/.agents 심링크는 보존"
+    elif [[ ! -e "$STATIC_TARGET" ]]; then
+      log_dry "디렉터리 생성: $STATIC_TARGET"
     fi
-    log_dry "심링크 생성: ~/.agents -> $STATIC_SOURCE"
+    log_dry "static 항목을 ~/.agents 아래에 개별 링크"
     return
   fi
 
-  # 기존 경로 처리
+  # 이전 설치 방식(~/.agents 자체가 static/ 심링크)을 안전하게 변환합니다.
   if [[ -L "$STATIC_TARGET" ]]; then
-    log_warn "기존 심링크 제거: $STATIC_TARGET"
+    local current_target
+    current_target=$(readlink "$STATIC_TARGET")
+    if [[ "$current_target" != "$STATIC_SOURCE" ]]; then
+      log_error "다른 대상을 가리키는 심링크를 변경하지 않습니다: $STATIC_TARGET -> $current_target"
+      return 1
+    fi
     rm "$STATIC_TARGET"
-  elif [[ -d "$STATIC_TARGET" ]]; then
-    log_warn "기존 디렉토리를 백업합니다: ${STATIC_TARGET}.backup"
-    mv "$STATIC_TARGET" "${STATIC_TARGET}.backup"
+    mkdir -p "$STATIC_TARGET"
+    log_success "레거시 ~/.agents 심링크를 실제 디렉터리로 변환함"
+  elif [[ -e "$STATIC_TARGET" && ! -d "$STATIC_TARGET" ]]; then
+    log_error "디렉터리가 아닌 경로를 변경하지 않습니다: $STATIC_TARGET"
+    return 1
+  else
+    mkdir -p "$STATIC_TARGET"
   fi
 
-  # 심링크 생성
-  ln -s "$STATIC_SOURCE" "$STATIC_TARGET"
-  log_success "심링크 생성됨: ~/.agents -> $STATIC_SOURCE"
+  local source_path
+  for source_path in "$STATIC_SOURCE"/*; do
+    [[ -e "$source_path" ]] || continue
+    local entry_name
+    local target_path
+    entry_name=$(basename "$source_path")
+    target_path="${STATIC_TARGET}/${entry_name}"
+
+    # Codex 스킬 설치 경로는 static 콘텐츠와 별도로 관리합니다.
+    [[ "$entry_name" == "skills" ]] && continue
+
+    if [[ -L "$target_path" && "$(readlink "$target_path")" == "$source_path" ]]; then
+      continue
+    fi
+    if [[ -e "$target_path" || -L "$target_path" ]]; then
+      log_warn "기존 사용자 항목 보존: $target_path"
+      continue
+    fi
+
+    ln -s "$source_path" "$target_path"
+  done
+  log_success "static 항목 연결됨: $STATIC_TARGET -> $STATIC_SOURCE/*"
 }
 
 # CLI 도구 설치 (agt + legacy tools)
@@ -506,123 +542,83 @@ uninstall_cli() {
   fi
 }
 
-# Static 심링크 제거
+# install.sh가 관리하는 static 심링크 제거
 unlink_static() {
   if [[ "$DRY_RUN" == "true" ]]; then
-    if [[ -L "$STATIC_TARGET" ]]; then
-      log_dry "심링크 제거: $STATIC_TARGET"
-    else
-      log_dry "심링크가 아님: $STATIC_TARGET"
-    fi
+    log_dry "$STATIC_SOURCE 아래를 가리키는 static 링크만 제거"
     return
   fi
 
   if [[ -L "$STATIC_TARGET" ]]; then
-    rm "$STATIC_TARGET"
-    log_success "심링크 제거됨: ~/.agents"
-
-    # 백업이 있으면 복원 제안
-    if [[ -d "${STATIC_TARGET}.backup" ]]; then
-      log_info "백업 디렉토리 발견: ${STATIC_TARGET}.backup"
-      log_info "복원하려면: mv ${STATIC_TARGET}.backup $STATIC_TARGET"
+    if [[ "$(readlink "$STATIC_TARGET")" == "$STATIC_SOURCE" ]]; then
+      rm "$STATIC_TARGET"
+      log_success "레거시 static 심링크 제거됨: $STATIC_TARGET"
+    else
+      log_warn "관리 대상이 아닌 심링크를 보존합니다: $STATIC_TARGET"
     fi
   elif [[ -d "$STATIC_TARGET" ]]; then
-    log_warn "심링크가 아닌 일반 디렉토리입니다: $STATIC_TARGET"
-    log_info "수동으로 제거하세요: rm -rf $STATIC_TARGET"
+    local target_path
+    for target_path in "$STATIC_TARGET"/*; do
+      [[ -L "$target_path" ]] || continue
+      case "$(readlink "$target_path")" in
+        "$STATIC_SOURCE"/*)
+          rm "$target_path"
+          log_success "static 링크 제거됨: $target_path"
+          ;;
+      esac
+    done
   else
     log_warn "~/.agents가 존재하지 않습니다"
   fi
 }
 
-# Codex 지원 설치
-install_codex() {
-  local codex_agents_target="${CODEX_TARGET}/AGENTS.md"
-  local codex_skills_target="${CODEX_TARGET}/skills"
-  local claude_skills_source="${HOME}/.claude/skills"
+# 이전 설치기가 만든 ~/.codex/skills -> ~/.claude/skills 전체 링크를 제거합니다.
+# 백업된 실제 Codex 스킬 디렉터리가 있으면 .system과 사용자 항목을 함께 복원합니다.
+migrate_legacy_codex_skills_root() {
+  [[ -L "$LEGACY_CODEX_SKILLS_TARGET" ]] || return 0
 
-  # codex-support/AGENTS.md 확인
-  if [[ ! -f "$CODEX_AGENTS_SOURCE" ]]; then
-    log_error "Codex AGENTS.md를 찾을 수 없습니다: $CODEX_AGENTS_SOURCE"
-    exit 1
+  local current_target
+  current_target=$(readlink "$LEGACY_CODEX_SKILLS_TARGET")
+  if [[ "$current_target" != "$DEFAULT_CLAUDE_SKILLS_TARGET" ]]; then
+    log_warn "관리 대상이 아닌 레거시 Codex 링크를 보존합니다: $LEGACY_CODEX_SKILLS_TARGET -> $current_target"
+    return 0
   fi
 
-  # DRY RUN 모드
   if [[ "$DRY_RUN" == "true" ]]; then
-    log_dry "디렉토리 생성: $CODEX_TARGET"
-    if [[ -f "$codex_agents_target" ]]; then
-      log_dry "AGENTS.md에 내용 추가: $codex_agents_target"
-    else
-      log_dry "AGENTS.md 생성: $codex_agents_target"
+    log_dry "레거시 Codex 전체 링크 제거: $LEGACY_CODEX_SKILLS_TARGET"
+    if [[ -d "${LEGACY_CODEX_SKILLS_TARGET}.backup" && ! -L "${LEGACY_CODEX_SKILLS_TARGET}.backup" ]]; then
+      log_dry "Codex 스킬 백업 복원: ${LEGACY_CODEX_SKILLS_TARGET}.backup"
     fi
-    log_dry "심링크 생성: $codex_skills_target -> $claude_skills_source"
+    return 0
+  fi
+
+  rm "$LEGACY_CODEX_SKILLS_TARGET"
+  log_success "레거시 Codex 전체 링크 제거됨: $LEGACY_CODEX_SKILLS_TARGET"
+
+  if [[ -d "${LEGACY_CODEX_SKILLS_TARGET}.backup" && ! -L "${LEGACY_CODEX_SKILLS_TARGET}.backup" ]]; then
+    mv "${LEGACY_CODEX_SKILLS_TARGET}.backup" "$LEGACY_CODEX_SKILLS_TARGET"
+    log_success "Codex 스킬 백업 복원됨: $LEGACY_CODEX_SKILLS_TARGET"
+  fi
+}
+
+# Codex 지원 설치
+install_codex() {
+  migrate_legacy_codex_skills_root
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    link_static
+    log_dry "Codex 사용자 스킬 디렉터리 준비: $CODEX_SKILLS_TARGET"
+    log_dry "기존 $LEGACY_CODEX_SKILLS_TARGET/.system 보존"
     return
   fi
 
-  # ~/.codex 디렉토리 생성
-  mkdir -p "$CODEX_TARGET"
-
-  # AGENTS.md에 내용 추가 (기존 내용 유지, 스킬 가이드만 추가)
-  if [[ -f "$codex_agents_target" ]]; then
-    # 이미 스킬 가이드가 있는지 확인
-    if grep -q "## Claude Skills (SKILL.md) 활용" "$codex_agents_target" 2>/dev/null; then
-      log_warn "=========================================="
-      log_warn "AGENTS.md에 이미 스킬 가이드가 있습니다!"
-      log_warn "기존 스킬 설정을 덮어쓰지 않습니다."
-      log_warn ""
-      log_warn "덮어쓰려면 다음 단계를 수행하세요:"
-      log_warn "  1. 기존 스킬 섹션 수동 제거:"
-      log_warn "     vim ~/.codex/AGENTS.md"
-      log_warn "  2. 다시 설치:"
-      log_warn "     ./install.sh --codex"
-      log_warn "=========================================="
-    else
-      # 기존 내용 뒤에 스킬 가이드 추가
-      log_info "기존 AGENTS.md에 스킬 가이드를 추가합니다..."
-      echo "" >>"$codex_agents_target"
-      echo "" >>"$codex_agents_target"
-      echo "# ====================================================" >>"$codex_agents_target"
-      echo "# agt Integration (auto-generated)" >>"$codex_agents_target"
-      echo "# ====================================================" >>"$codex_agents_target"
-      echo "" >>"$codex_agents_target"
-      cat "$CODEX_AGENTS_SOURCE" >>"$codex_agents_target"
-      log_success "AGENTS.md에 스킬 가이드 추가됨 (기존 내용 유지)"
-    fi
-  else
-    # 새 파일 생성
-    cat "$CODEX_AGENTS_SOURCE" >"$codex_agents_target"
-    log_success "AGENTS.md 생성됨: $codex_agents_target"
-  fi
-
-  # skills 심링크 생성
-  if [[ ! -d "$claude_skills_source" ]]; then
-    log_warn "Claude skills 디렉토리가 없습니다: $claude_skills_source"
-    log_info "먼저 스킬을 설치하세요: ./install.sh"
-  fi
-
-  if [[ -L "$codex_skills_target" ]]; then
-    local current_target=$(readlink "$codex_skills_target")
-    if [[ "$current_target" == "$claude_skills_source" ]]; then
-      log_info "skills 심링크가 이미 올바르게 설정됨"
-    else
-      log_warn "기존 심링크 교체: $codex_skills_target"
-      rm "$codex_skills_target"
-      ln -s "$claude_skills_source" "$codex_skills_target"
-      log_success "심링크 생성됨: ~/.codex/skills -> ~/.claude/skills"
-    fi
-  elif [[ -d "$codex_skills_target" ]]; then
-    log_warn "기존 디렉토리를 백업합니다: ${codex_skills_target}.backup"
-    mv "$codex_skills_target" "${codex_skills_target}.backup"
-    ln -s "$claude_skills_source" "$codex_skills_target"
-    log_success "심링크 생성됨: ~/.codex/skills -> ~/.claude/skills"
-  else
-    ln -s "$claude_skills_source" "$codex_skills_target"
-    log_success "심링크 생성됨: ~/.codex/skills -> ~/.claude/skills"
-  fi
+  link_static
+  mkdir -p "$CODEX_SKILLS_TARGET"
 
   echo ""
-  log_info "Codex CLI에서 스킬을 사용할 수 있습니다"
-  log_info "AGENTS.md: $codex_agents_target"
-  log_info "Skills: $codex_skills_target -> $claude_skills_source"
+  log_info "Codex 사용자 스킬 경로 준비됨: $CODEX_SKILLS_TARGET"
+  log_info "선택한 스킬은 이 경로에 개별 링크됩니다"
+  log_info "Codex 시스템 스킬 경로는 변경하지 않습니다: $LEGACY_CODEX_SKILLS_TARGET/.system"
 }
 
 # Personas 설치
@@ -747,7 +743,7 @@ print(hooks['$hook_name'].get('script', ''))
   done <<<"$hook_names"
 
   # settings.json에 hook 설정 병합
-  local settings_file="${HOME}/.claude/settings.json"
+  local settings_file="${AGT_USER_HOME}/.claude/settings.json"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     log_dry "settings.json에 hook 설정 병합: $settings_file"
@@ -890,7 +886,7 @@ print(hooks['$hook_name'].get('script', ''))
   done <<<"$hook_names"
 
   # settings.json에서 hook 설정 제거
-  local settings_file="${HOME}/.claude/settings.json"
+  local settings_file="${AGT_USER_HOME}/.claude/settings.json"
   if [[ -f "$settings_file" ]]; then
     python3 - "$settings_file" "$HOOKS_REGISTRY" "$HOOKS_TARGET" <<'PYEOF'
 import json
@@ -944,6 +940,81 @@ PYEOF
   fi
 }
 
+# 선택한 스킬을 Codex의 공식 사용자 경로에 개별 연결합니다.
+install_codex_skill_link() {
+  local source_path="$1"
+  local target_name="$2"
+
+  [[ "$INSTALL_CODEX" == "true" ]] || return 0
+
+  local codex_target="${CODEX_SKILLS_TARGET}/${target_name}"
+  local legacy_target="${LEGACY_CODEX_SKILLS_TARGET}/${target_name}"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log_dry "Codex 스킬 링크: $codex_target -> $source_path"
+    if [[ ! -L "$LEGACY_CODEX_SKILLS_TARGET" && -L "$legacy_target" ]]; then
+      log_dry "동일 스킬의 레거시 Codex 링크 제거: $legacy_target"
+    fi
+    return 0
+  fi
+
+  mkdir -p "$CODEX_SKILLS_TARGET"
+
+  if [[ -L "$codex_target" ]]; then
+    if [[ "$(readlink "$codex_target")" == "$source_path" ]]; then
+      log_info "Codex 스킬 링크가 이미 올바름: $target_name"
+    else
+      log_error "관리 대상이 아닌 Codex 스킬 링크를 보존합니다: $codex_target"
+      return 1
+    fi
+  elif [[ -e "$codex_target" ]]; then
+    log_error "기존 Codex 스킬 경로를 덮어쓰지 않습니다: $codex_target"
+    return 1
+  else
+    ln -s "$source_path" "$codex_target"
+    log_success "Codex 링크됨: $target_name"
+  fi
+
+  # 같은 remote 스킬을 가리키는 레거시 링크만 제거합니다. .system은 건드리지 않습니다.
+  if [[ ! -L "$LEGACY_CODEX_SKILLS_TARGET" && -L "$legacy_target" ]]; then
+    local resolved_legacy=""
+    resolved_legacy=$(cd "$legacy_target" 2>/dev/null && pwd -P) || true
+    if [[ "$resolved_legacy" == "$source_path" ]]; then
+      rm "$legacy_target"
+      log_success "레거시 Codex 링크 제거됨: $legacy_target"
+    fi
+  fi
+}
+
+uninstall_codex_skill_link() {
+  local source_path="$1"
+  local target_name="$2"
+
+  [[ "$INSTALL_CODEX" == "true" ]] || return 0
+
+  local codex_target="${CODEX_SKILLS_TARGET}/${target_name}"
+  local legacy_target="${LEGACY_CODEX_SKILLS_TARGET}/${target_name}"
+  local target_path
+  local target_paths=("$codex_target")
+  if [[ ! -L "$LEGACY_CODEX_SKILLS_TARGET" ]]; then
+    target_paths+=("$legacy_target")
+  fi
+
+  for target_path in "${target_paths[@]}"; do
+    [[ -L "$target_path" ]] || continue
+    local resolved_target=""
+    resolved_target=$(cd "$target_path" 2>/dev/null && pwd -P) || true
+    [[ "$resolved_target" == "$source_path" ]] || continue
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log_dry "Codex 스킬 링크 제거: $target_path"
+    else
+      rm "$target_path"
+      log_success "Codex 스킬 링크 제거됨: $target_path"
+    fi
+  done
+}
+
 # 스킬 설치
 install_skill() {
   local group="$1"
@@ -964,12 +1035,15 @@ install_skill() {
   fi
 
   # 이미 존재하는 경우
-  if [[ -e "$target_path" ]]; then
+  if [[ -e "$target_path" || -L "$target_path" ]]; then
     if [[ "$DRY_RUN" == "true" ]]; then
       log_dry "기존 스킬 덮어쓰기: $target_name"
+    elif [[ -L "$target_path" ]]; then
+      log_warn "기존 스킬 링크 갱신: $target_name"
+      rm "$target_path"
     else
-      log_warn "기존 스킬 덮어쓰기: $target_name"
-      rm -rf "$target_path"
+      log_error "기존 실제 파일/디렉터리를 덮어쓰지 않습니다: $target_path"
+      return 1
     fi
   fi
 
@@ -989,26 +1063,28 @@ install_skill() {
       log_success "링크됨: ${group}/${skill} -> ${target_name}"
     fi
   fi
+
+  install_codex_skill_link "$source_path" "$target_name"
 }
 
 # 스킬 삭제
 uninstall_skill() {
   local group="$1"
   local skill="$2"
+  local source_path="${SCRIPT_DIR}/${group}/${skill}"
   local target_name="${PREFIX}${skill}${POSTFIX}"
   local target_path="${TARGET_DIR}/${target_name}"
 
-  if [[ ! -e "$target_path" ]]; then
+  if [[ ! -e "$target_path" && ! -L "$target_path" ]]; then
     log_warn "설치되지 않음: $target_name"
-    return 0
-  fi
-
-  if [[ "$DRY_RUN" == "true" ]]; then
+  elif [[ "$DRY_RUN" == "true" ]]; then
     log_dry "삭제: $target_name"
   else
     rm -rf "$target_path"
     log_success "삭제됨: $target_name"
   fi
+
+  uninstall_codex_skill_link "$source_path" "$target_name"
 }
 
 # 그룹 설치
@@ -1192,7 +1268,7 @@ if [[ "$INSTALL_CLI" == "true" ]]; then
   echo ""
 fi
 
-if [[ "$INSTALL_CODEX" == "true" ]]; then
+if [[ "$INSTALL_CODEX" == "true" && "$UNINSTALL" == "false" ]]; then
   install_codex
   echo ""
 fi
