@@ -8,29 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **BREAKING**: Repository rebranded from `jiunbae/agent-skills` to `open330/agt`
-- **BREAKING**: CLI tools unified into single `agt` command
+- Established `jiunbae/agent-skills` as the single source of truth for skills,
+  personas, hooks, profiles, and static context.
+- Updated `setup.sh` to download this repository from `main` and preserve
+  user-managed checkouts and symlinks.
+- `install.sh --cli` now installs the published `@open330/agt` package.
+- CLI tools are provided by the independent `Open330/agt` project:
   - `agent-skill` → `agt skill`
   - `agent-persona` → `agt persona`
   - `claude-skill` → `agt run`
-- Remote install URL: `open330/agt/main/setup.sh`
-- Install directory: `~/.agt` (was `~/.agent-skills`)
+- Skill source remains `jiunbae/agent-skills` and `~/.agent-skills`.
+
+### Removed
+- Removed the stale embedded Rust/npm `agt` source.
+- Removed the duplicate `release-agt` workflow so this repository cannot
+  publish the `@open330/agt` npm package.
 
 ### Deprecated
 - `agent-skill`, `agent-persona`, `claude-skill` commands (still work, use `agt` instead)
 
 ### Added
-- Unified `agt` Rust CLI binary
-- `agt skill`: workspace skill management
-  - `agt skill install <skill>`: local install
-  - `agt skill install -g <skill>`: global install
-  - `agt skill list`: list skills
-  - `agt skill init`: workspace init
-- `agt persona`: persona management and code review
-- `agt run`: skill execution with auto-matching
-- `setup.sh`: remote installer (curl one-liner)
+- Safe remote installer for the `agent-skills` repository.
 - `install.sh --core`: core skills only option
-- GitHub Actions release workflow
 
 ### Core Skills
 - `development/git-commit-pr`

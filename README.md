@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-28-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-29-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#quickstart-for-agents">Quickstart</a> •
@@ -26,6 +26,9 @@
 A collection of **skills**, **personas**, and **hooks** for AI coding agents (Claude Code, Codex CLI, Gemini CLI). Each skill is a self-contained markdown module that gives an agent domain-specific capabilities.
 
 > **CLI tool:** Install and manage skills with **[agt](https://github.com/open330/agt)** — `npm install -g @open330/agt` or just `npx @open330/agt`
+
+This repository is the single source of truth for skill content. The Rust CLI,
+npm packages, and platform releases are maintained only in `Open330/agt`.
 
 ---
 
@@ -53,7 +56,7 @@ Install the agent-skills toolkit into this project:
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
-<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=28+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=29+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
 
 ---
 
@@ -100,6 +103,7 @@ cd ~/.agent-skills
 | Option | Description |
 |--------|-------------|
 | `--core` | Install core skills globally (recommended) |
+| `--cli` | Install the published `@open330/agt` CLI plus legacy compatibility commands |
 | `--link-static` | Link each `static/*` item under `~/.agents` while preserving `~/.agents/skills` |
 | `--codex` | Link selected skills individually into `~/.agents/skills` without replacing Codex system skills (also links `static/*` items under `~/.agents`) |
 | `--hooks` | Install Claude Code hooks |
@@ -191,6 +195,12 @@ Installed by default with `--core`:
 | Skill | Description |
 |-------|-------------|
 | `skill-manager` | Skill ecosystem management |
+
+### ✍️ common/ — Writing
+
+| Skill | Description |
+|-------|-------------|
+| `korean-editor` | Conservative Korean copy editing with fidelity checks |
 
 ---
 
@@ -592,6 +602,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>28</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
+  <sub><strong>29</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
   <sub>CLI tool: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#라이선스"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-28-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-29-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#스킬-카탈로그">스킬</a> •
@@ -25,6 +25,9 @@
 **Claude Code**, **Codex CLI**, **Gemini CLI** 등 AI 코딩 에이전트를 위한 **스킬**, **페르소나**, **훅** 모음입니다. 각 스킬은 에이전트에게 도메인 전문 능력을 부여하는 독립형 마크다운 모듈입니다.
 
 > **CLI 도구:** **[agt](https://github.com/open330/agt)**로 스킬을 설치/관리하세요 — `npm install -g @open330/agt`
+
+이 저장소가 스킬 콘텐츠의 단일 원본입니다. Rust CLI, npm 패키지와
+플랫폼 릴리스는 `Open330/agt`에서만 관리합니다.
 
 ---
 
@@ -82,6 +85,7 @@ cd ~/.agent-skills
 | 옵션 | 설명 |
 |------|------|
 | `--core` | Core 스킬만 전역 설치 (권장) |
+| `--cli` | 정식 `@open330/agt` CLI와 레거시 호환 명령 설치 |
 | `--link-static` | `~/.agents/skills`를 보존하며 `static/*` 항목을 `~/.agents` 아래에 개별 링크 |
 | `--codex` | Codex 시스템 스킬을 보존하며 선택한 스킬을 `~/.agents/skills`에 개별 링크 (`static/*` 항목도 `~/.agents` 아래에 함께 링크) |
 | `--hooks` | Claude Code 훅 설치 |
@@ -173,6 +177,12 @@ cd ~/.agent-skills
 | 스킬 | 설명 |
 |------|------|
 | `skill-manager` | 스킬 생태계 관리 |
+
+### ✍️ common/ — 글쓰기
+
+| 스킬 | 설명 |
+|------|------|
+| `korean-editor` | 의미와 형식을 보존하는 한국어 퇴고 및 충실도 검증 |
 
 ---
 
@@ -303,6 +313,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>28</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
+  <sub><strong>29</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
   <sub>CLI 도구: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

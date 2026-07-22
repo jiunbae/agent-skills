@@ -1,48 +1,51 @@
-# Migration Guide: agent-skills → agt
+# Repository Ownership Migration
 
-## What Changed
+`agent-skills` and `agt` now have separate responsibilities.
 
-| Before | After |
-|--------|-------|
-| Repository: `jiunbae/agent-skills` | `open330/agt` |
-| Install dir: `~/.agent-skills` | `~/.agt` |
-| CLI: `agent-skill install <skill>` | `agt skill install <skill>` |
-| CLI: `agent-persona review <p>` | `agt persona review <p>` |
-| CLI: `claude-skill "prompt"` | `agt run "prompt"` |
-| Remote spec: `--from jiunbae/agent-skills/...` | `--from open330/agt/...` |
+| Repository | Owns |
+|---|---|
+| `jiunbae/agent-skills` | Skills, personas, hooks, profiles, and static context |
+| `Open330/agt` | Rust CLI, npm packages, platform binaries, and release automation |
 
-## What Didn't Change
+The old Rust and npm sources that were embedded in `agent-skills` were removed.
+The `agent-skills` repository must never publish the `@open330/agt` package.
 
-- **`~/.agents/`** — Static context directory path is unchanged
-- **`~/.claude/skills/`** — Skill installation target is unchanged
-- **`.agents/personas/`** — Persona paths are unchanged
-- **Skill format** — SKILL.md files work exactly the same
-- **Persona format** — Persona markdown files are identical
-
-## Re-install
+## Install the CLI
 
 ```bash
-# Remove old installation
-rm -rf ~/.agent-skills
-
-# Install fresh
-curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
+npm install --global @open330/agt
 ```
 
-## Legacy CLI Compatibility
-
-The old CLI names still work but show deprecation warnings:
+## Install the Core Skills
 
 ```bash
-agent-skill list        # works, shows deprecation notice
-agent-persona review    # works, shows deprecation notice
-claude-skill "prompt"   # works, shows deprecation notice
+agt skill install --profile core --from jiunbae/agent-skills --global
+agt skill install --profile core --from jiunbae/agent-skills --global --agent codex
 ```
 
-To update, just use the new `agt` command:
+The remote installer remains available for compatibility and now downloads
+`jiunbae/agent-skills` instead of the CLI repository:
 
 ```bash
-agt skill list
-agt persona review security-reviewer
-agt run "prompt"
+curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh \
+  | bash -s -- --core --cli --codex
 ```
+
+## Local Source Checkout
+
+Keep one canonical checkout and expose the conventional discovery path with a
+symlink:
+
+```bash
+git clone https://github.com/jiunbae/agent-skills ~/workspace/agent-skills
+ln -s ~/workspace/agent-skills ~/.agent-skills
+```
+
+`agt` resolves `~/.agent-skills` before legacy `~/.agt` and `~/agt` fallbacks.
+Remove old duplicate skill checkouts after confirming the canonical checkout.
+
+## Maintainer Rule
+
+- Skill changes are committed only to `jiunbae/agent-skills`.
+- CLI and release changes are committed only to `Open330/agt`.
+- Install examples must use `--from jiunbae/agent-skills`.

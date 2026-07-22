@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 #
-# agt — Remote Installer
+# agent-skills — Remote Installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core
-#   curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --version v1.0.0
+#   curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash -s -- --core --codex
 #
 # Options:
-#   --version VERSION   Install specific version (default: latest)
-#   --dir DIR           Install directory (default: ~/.agt)
+#   --version REF       Install a branch or tag (default: main)
+#   --dir DIR           Install directory (default: ~/.agent-skills)
 #   --core              Install core skills only
 #   --cli               Install CLI tools
 #   --all               Enable all options
@@ -17,7 +16,7 @@
 #   -h, --help          Help
 #
 
-set -e
+set -euo pipefail
 
 # 색상
 RED='\033[0;31m'
@@ -28,12 +27,13 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # 기본값
-REPO="open330/agt"
-INSTALL_DIR="${HOME}/.agt"
-VERSION="latest"
+REPO="jiunbae/agent-skills"
+INSTALL_DIR="${HOME}/.agent-skills"
+VERSION="main"
 INSTALL_CORE=false
 INSTALL_CLI=false
 INSTALL_ALL=false
+INSTALL_CODEX=false
 LINK_STATIC=false
 UNINSTALL=false
 
@@ -46,17 +46,18 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 # 사용법
 usage() {
     cat << 'EOF'
-agt — Remote Installer
+agent-skills — Remote Installer
 
 Usage:
-  curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash
   curl -fsSL ... | bash -s -- [options]
 
 Options:
-  --version VERSION   Install specific version (default: latest)
-  --dir DIR           Install directory (default: ~/.agt)
+  --version REF       Install a branch or tag (default: main)
+  --dir DIR           Install directory (default: ~/.agent-skills)
   --core              Install core skills only (recommended)
-  --cli               Install CLI tools
+  --cli               Install @open330/agt and legacy compatibility tools
+  --codex             Also install selected skills for Codex
   --static            Symlink static directory
   --all               Install all skills
   --uninstall         Uninstall
@@ -64,7 +65,7 @@ Options:
 
 Examples:
   # Recommended: Core skills + CLI tools
-  curl -fsSL https://raw.githubusercontent.com/open330/agt/main/setup.sh | bash -s -- --core --cli
+  curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash -s -- --core --cli --codex
 
   # Full install
   curl -fsSL ... | bash -s -- --all --cli --static
@@ -79,18 +80,9 @@ EOF
     exit 0
 }
 
-# 최신 버전 가져오기
+# agent-skills는 main을 배포 기준으로 사용합니다.
 get_latest_version() {
-    local latest
-    latest=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | \
-        grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-
-    if [[ -z "$latest" ]]; then
-        # 릴리즈가 없으면 main 브랜치 사용
-        echo "main"
-    else
-        echo "$latest"
-    fi
+    echo "main"
 }
 
 # 다운로드 및 설치
@@ -98,7 +90,7 @@ download_and_install() {
     local version="$1"
     local url
 
-    log_info "agt 설치 중..."
+    log_info "agent-skills 설치 중..."
     echo ""
 
     # 버전 확인
@@ -107,10 +99,27 @@ download_and_install() {
         log_info "최신 버전: $version"
     fi
 
-    # 기존 설치 제거
+    # 사용자 관리 checkout/symlink는 덮어쓰지 않고 현재 소스에서 설치합니다.
+    if [[ -L "$INSTALL_DIR" ]]; then
+        log_info "사용자 관리 소스 링크 사용: $INSTALL_DIR -> $(readlink "$INSTALL_DIR")"
+        run_installer
+        return
+    fi
+    if [[ -d "$INSTALL_DIR/.git" ]]; then
+        log_info "기존 Git checkout 업데이트: $INSTALL_DIR"
+        git -C "$INSTALL_DIR" pull --ff-only
+        run_installer
+        return
+    fi
     if [[ -d "$INSTALL_DIR" ]]; then
-        log_warn "기존 설치 발견: $INSTALL_DIR"
-        rm -rf "$INSTALL_DIR"
+        if [[ -f "$INSTALL_DIR/.agt-setup-managed" ]]; then
+            log_warn "기존 setup 관리 설치 교체: $INSTALL_DIR"
+            rm -rf "$INSTALL_DIR"
+        else
+            log_error "사용자 관리 디렉터리를 덮어쓰지 않습니다: $INSTALL_DIR"
+            log_info "--dir로 다른 설치 경로를 지정하세요"
+            exit 1
+        fi
     fi
 
     # 다운로드 URL 결정
@@ -125,7 +134,7 @@ download_and_install() {
     # 임시 디렉토리
     local tmp_dir
     tmp_dir=$(mktemp -d)
-    trap "rm -rf $tmp_dir" EXIT
+    trap 'rm -rf "$tmp_dir"' RETURN
 
     # 다운로드 및 압축 해제
     if command -v curl &> /dev/null; then
@@ -139,7 +148,7 @@ download_and_install() {
 
     # 압축 해제된 디렉토리 찾기
     local extracted_dir
-    extracted_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name "agt-*" | head -1)
+    extracted_dir=$(find "$tmp_dir" -maxdepth 1 -type d -name "agent-skills-*" -print -quit)
 
     if [[ -z "$extracted_dir" ]]; then
         log_error "압축 해제 실패"
@@ -148,6 +157,7 @@ download_and_install() {
 
     # 설치 디렉토리로 이동
     mv "$extracted_dir" "$INSTALL_DIR"
+    touch "$INSTALL_DIR/.agt-setup-managed"
     log_success "설치됨: $INSTALL_DIR"
 
     # install.sh 실행
@@ -180,6 +190,10 @@ run_installer() {
         args+=("--cli")
     fi
 
+    if [[ "$INSTALL_CODEX" == "true" ]]; then
+        args+=("--codex")
+    fi
+
     if [[ "$LINK_STATIC" == "true" ]]; then
         args+=("--link-static")
     fi
@@ -194,29 +208,41 @@ run_installer() {
 
 # 제거
 uninstall() {
-    log_info "agt 제거 중..."
+    log_info "agent-skills 제거 중..."
+
+    local source_dir="$INSTALL_DIR"
+    if [[ -d "$INSTALL_DIR" ]]; then
+        source_dir=$(cd "$INSTALL_DIR" && pwd -P)
+    fi
 
     # 스킬 제거
     if [[ -d "${HOME}/.claude/skills" ]]; then
         log_info "스킬 심링크 제거..."
         # agent-skills에서 설치한 심링크만 제거
-        for link in "${HOME}/.claude/skills"/*; do
-            if [[ -L "$link" ]]; then
-                local target
-                target=$(readlink "$link")
-                if [[ "$target" == *"agent-skills"* || "$target" == *"agt"* || "$target" == *"${INSTALL_DIR}"* ]]; then
+        while IFS= read -r -d '' link; do
+            local target
+            target=$(readlink "$link")
+            case "$target" in
+                "$INSTALL_DIR"/*|"$source_dir"/*)
                     rm -f "$link"
-                    log_success "제거: $(basename "$link")"
-                fi
-            fi
-        done
+                    log_success "제거: $link"
+                    ;;
+            esac
+        done < <(find "${HOME}/.claude/skills" -maxdepth 3 -type l -print0 2>/dev/null)
     fi
 
     # CLI 도구 제거
-    for tool in agt claude-skill agent-skill agent-persona; do
-        if [[ -L "${HOME}/.local/bin/${tool}" ]]; then
-            rm -f "${HOME}/.local/bin/${tool}"
-            log_success "제거: ${tool}"
+    for tool in claude-skill agent-skill agent-persona; do
+        local tool_path="${HOME}/.local/bin/${tool}"
+        if [[ -L "$tool_path" ]]; then
+            local target
+            target=$(readlink "$tool_path")
+            case "$target" in
+                "$INSTALL_DIR"/*|"$source_dir"/*)
+                    rm -f "$tool_path"
+                    log_success "제거: ${tool}"
+                    ;;
+            esac
         fi
     done
 
@@ -224,7 +250,7 @@ uninstall() {
     if [[ -L "${HOME}/.agents" ]]; then
         local target
         target=$(readlink "${HOME}/.agents")
-        if [[ "$target" == *"agent-skills"* || "$target" == *"agt"* ]]; then
+        if [[ "$target" == "$INSTALL_DIR/static" || "$target" == "$source_dir/static" ]]; then
             rm -f "${HOME}/.agents"
             log_success "제거: ~/.agents 심링크"
         fi
@@ -234,7 +260,7 @@ uninstall() {
             [[ -L "$link" ]] || continue
             local target
             target=$(readlink "$link")
-            if [[ "$target" == "${INSTALL_DIR}/static/"* ]]; then
+            if [[ "$target" == "${INSTALL_DIR}/static/"* || "$target" == "${source_dir}/static/"* ]]; then
                 rm -f "$link"
                 log_success "제거: ~/.agents/$(basename "$link")"
             fi
@@ -245,7 +271,7 @@ uninstall() {
                 [[ -L "$link" ]] || continue
                 local target
                 target=$(readlink "$link")
-                if [[ "$target" == "${INSTALL_DIR}/"* ]]; then
+                if [[ "$target" == "${INSTALL_DIR}/"* || "$target" == "${source_dir}/"* ]]; then
                     rm -f "$link"
                     log_success "제거: ~/.agents/skills/$(basename "$link")"
                 fi
@@ -254,13 +280,15 @@ uninstall() {
     fi
 
     # 설치 디렉토리 제거
-    if [[ -d "$INSTALL_DIR" ]]; then
+    if [[ -d "$INSTALL_DIR" && -f "$INSTALL_DIR/.agt-setup-managed" && ! -L "$INSTALL_DIR" ]]; then
         rm -rf "$INSTALL_DIR"
         log_success "제거: $INSTALL_DIR"
+    elif [[ -e "$INSTALL_DIR" || -L "$INSTALL_DIR" ]]; then
+        log_info "사용자 관리 소스는 보존합니다: $INSTALL_DIR"
     fi
 
     echo ""
-    log_success "agt 제거 완료"
+    log_success "agent-skills 제거 완료"
 }
 
 # 인자 파싱
@@ -280,6 +308,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --cli)
             INSTALL_CLI=true
+            shift
+            ;;
+        --codex)
+            INSTALL_CODEX=true
             shift
             ;;
         --static)
@@ -307,7 +339,7 @@ done
 # 메인
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║     ▄▀█ █▀▀ ▀█▀  Installer            ║${NC}"
+echo -e "${CYAN}║       agent-skills Installer           ║${NC}"
 echo -e "${CYAN}║     █▀█ █▄█  █                         ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 echo ""

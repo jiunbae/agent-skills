@@ -433,12 +433,13 @@ link_static() {
   log_success "static 항목 연결됨: $STATIC_TARGET -> $STATIC_SOURCE/*"
 }
 
-# CLI 도구 설치 (agt + legacy tools)
+# CLI 도구 설치 (npm agt + legacy compatibility tools)
 install_cli() {
-  local cli_tools=("claude-skill" "agent-skill" "agent-persona" "agt")
+  local cli_tools=("claude-skill" "agent-skill" "agent-persona")
 
   # 대상 디렉토리 생성
   if [[ "$DRY_RUN" == "true" ]]; then
+    log_dry "npm 전역 패키지 설치: @open330/agt@latest"
     log_dry "디렉토리 생성: $CLI_TARGET"
     for tool in "${cli_tools[@]}"; do
       log_dry "심링크 생성: ${CLI_TARGET}/${tool} -> ${SCRIPT_DIR}/cli/${tool}"
@@ -448,6 +449,16 @@ install_cli() {
     done
     return
   fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    log_error "agt CLI 설치에는 npm이 필요합니다"
+    log_info "Node.js 설치 후 다시 실행하거나 npx @open330/agt를 사용하세요"
+    return 1
+  fi
+
+  log_info "정식 agt CLI 설치 중: @open330/agt@latest"
+  npm install --global @open330/agt@latest
+  log_success "agt CLI 설치됨: $(command -v agt 2>/dev/null || echo '@open330/agt')"
 
   mkdir -p "$CLI_TARGET"
 
@@ -500,9 +511,10 @@ install_cli() {
 
 # CLI 도구 제거
 uninstall_cli() {
-  local cli_tools=("claude-skill" "agent-skill" "agent-persona" "agt")
+  local cli_tools=("claude-skill" "agent-skill" "agent-persona")
 
   if [[ "$DRY_RUN" == "true" ]]; then
+    log_dry "npm 전역 패키지 제거: @open330/agt"
     for tool in "${cli_tools[@]}"; do
       local cli_target="${CLI_TARGET}/${tool}"
       if [[ -e "$cli_target" ]]; then
@@ -513,6 +525,12 @@ uninstall_cli() {
   fi
 
   local removed=false
+
+  if command -v npm >/dev/null 2>&1; then
+    npm uninstall --global @open330/agt >/dev/null 2>&1 || true
+    log_success "agt CLI 제거됨: @open330/agt"
+    removed=true
+  fi
 
   # CLI 도구들 제거
   for tool in "${cli_tools[@]}"; do
