@@ -102,9 +102,9 @@ cd ~/.agent-skills
 - `context/context-manager` — 프로젝트 컨텍스트 자동 로드
 - `context/static-index` — 글로벌 정적 컨텍스트 인덱스
 - `security/security-auditor` — 레포지토리 보안 감사
-- `agents/background-implementer` — 백그라운드 병렬 구현
-- `agents/background-planner` — 백그라운드 병렬 기획
-- `agents/background-reviewer` — 다중 LLM 병렬 코드 리뷰
+- `agents/background-implementer` — 격리된 병렬 구현 + 통합 전 검증
+- `agents/background-planner` — 페르소나 병렬 기획 + stance 기반 종합
+- `agents/background-reviewer` — 페르소나 병렬 리뷰 + 적대적 검증
 - `agents/rpf` — Pointer 기반 반복 리뷰·계획·작업·피드백
 
 ---
@@ -115,9 +115,9 @@ cd ~/.agent-skills
 
 | 스킬 | 설명 |
 |------|------|
-| `background-implementer` | 백그라운드 병렬 구현 (멀티 LLM, 컨텍스트 안전) |
-| `background-planner` | 백그라운드 병렬 기획 (멀티 LLM, 자동 저장) |
-| `background-reviewer` | 다중 LLM 병렬 코드 리뷰 (보안/아키텍처/코드 품질) |
+| `background-implementer` | 격리된(worktree) 병렬 구현 + 통합 전 검증 게이트 |
+| `background-planner` | 페르소나 기반 병렬 기획 + stance 기반 종합(충돌·오픈 이슈 명시) |
+| `background-reviewer` | 페르소나 병렬 리뷰 + 적대적 검증 + root-cause 병합 |
 | `incident-writer` | 구조화된 장애 및 상태 페이지 보고서 작성 |
 | `rpf` | 하나의 동적 pointer 문서를 따르는 다중 에이전트 리뷰·계획·작업·피드백 루프 |
 
@@ -201,6 +201,8 @@ cd ~/.agent-skills
 | `database-reviewer` | Senior DBA | 쿼리 최적화, 스키마, 인덱싱 |
 | `frontend-reviewer` | Senior Frontend Engineer | React, 접근성, 성능 |
 | `devops-reviewer` | Senior DevOps/SRE | K8s, IaC, CI/CD |
+
+> 위는 대표 일부입니다. **Planning 페르소나**(`type: planning`) — `technical-planner`, `product-planner`, `delivery-risk-planner` — 는 `background-planner`에서 사용합니다. 전체 목록: [`personas/README.md`](personas/README.md).
 
 ### agt CLI로 사용
 

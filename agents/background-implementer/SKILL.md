@@ -1,198 +1,132 @@
 ---
-name: implementing-in-background
-description: Orchestrates multiple AI agents (Claude, Codex) for isolated parallel implementation. Use only when the user explicitly requests background, parallel, or multi-agent implementation, such as "백그라운드 구현", "bg impl", or "병렬 구현". Do not trigger for ordinary implementation or code-writing requests.
-allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, TodoWrite, AskUserQuestion
+name: background-implementer
+description: Run bounded parallel implementation with isolated workers (native worktrees or Codex), respect a dependency DAG, and verify each worker's diff before integrating. Use only when the user explicitly requests background, parallel, or multi-agent implementation, such as "백그라운드 구현", "bg impl", or "병렬 구현". Do not trigger for ordinary implementation or code-writing requests.
+trigger-keywords: [bg impl, 백그라운드 구현, 병렬 구현, parallel implementation, multi-agent implementation]
+tags: [implementation, parallel, multi-agent, worktree]
 ---
 
 # Background Implementer
 
-Multi-LLM background implementation with context-safe parallel execution.
+Implement independent tasks with isolated parallel workers, then integrate only the
+diffs that pass verification — in dependency order.
 
-## Quick Start
+Mechanics (worker invocation, provider recipes, worktree isolation, `.context/` layout,
+token discipline) live in `references/orchestration.md`. This file owns the workflow,
+the schema, and the integration gate.
+
+## 1. Decompose into a task DAG
+
+From the plan (or the request), extract independent units and their dependencies:
+
+```yaml
+- id: T1
+  feature: db-migration
+  files: [migrations/…]
+  depends_on: []
+  provider: codex          # who implements it (see §3)
+  verify: how to check it (test cmd, build, manual assertion)
+- id: T2
+  feature: models
+  depends_on: [T1]
+```
+
+Typical ordering: migrations → models → handlers/services → frontend. Independent leaves
+(migrations, types, frontend scaffolding) parallelize; dependents wait.
+
+## 2. Wave execution
+
+Run tasks in dependency waves; parallelize within a wave, barrier between waves.
+
+```
+Wave 1 (parallel): migration + types + frontend scaffold
+Wave 2 (needs migration): models
+Wave 3 (needs models): handlers
+```
+
+Only start a wave once its dependencies are integrated and verified (§4).
+
+## 3. Assign and isolate workers
+
+Choose the provider per task, then give each writer its **own git worktree** — never let
+two workers edit the same files (see orchestration reference for the isolation recipe).
+
+| Provider | Best for | Isolation |
+|----------|----------|-----------|
+| host-native sub-agent (Claude) | complex logic, multi-file changes, deep codebase reading | `isolation: worktree` frontmatter / `EnterWorktree` |
+| Codex `exec` | focused code gen, migrations, models | manual `git worktree add` per worker |
+
+Prefer the host's **native** worker + native worktree isolation. Use Codex only as a
+cross-tool fallback or when the user explicitly asks for it.
+
+Pass each worker its task **by file path** (not inline), scoped to one `id`, with its
+`verify` command. Tell every worker: **do not commit** — leave the worktree dirty for the
+orchestrator to inspect and apply.
+
+Codex worker recipe (note the global `-a`/`-C` placement — the common breakage):
 
 ```bash
-# 1. Analyze planning doc → extract tasks
-# 2. Create output dir: .context/impl/
-# 3. Determine round: R01, R02, ...
-# 4. Run agents in background → {round}-{agent}.md
-# 5. Wait, inspect each result, integrate accepted changes, and verify
+codex -C "$WT" -a never exec -s workspace-write \
+  -o "$PROJ/.context/impl/${ROUND}-codex-${FEATURE}.md" \
+  - < "$PROJ/.context/impl/${ROUND}-codex-${FEATURE}.prompt.md"
 ```
 
-## Output Convention
+`workspace-write` has no network by default and protects `.git`; install deps up front
+and do not rely on the worker committing. Use `--output-schema` if you need the worker's
+summary in a fixed JSON shape.
 
-```
-.context/impl/
-├── R01-tasks.md               # Round 1: task decomposition
-├── R01-claude.md              # Round 1: Claude's implementation notes
-├── R01-codex-{feature}.md     # Round 1: Codex implementation notes per task
-├── R01-summary.md             # Round 1: merged summary
-├── R02-claude.md              # Round 2: fixes/iterations
-└── R02-summary.md
-```
+## 4. Integration gate
 
-**Round number** increments each implementation iteration:
-```bash
-mkdir -p .context/impl
-ROUND=$(printf "R%02d" $(( $(ls .context/impl/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-```
+Prefer the host's native wait/notification. When a worker finishes, do **not** apply its
+work blindly:
 
-## Provider Selection
+1. Inspect the worker's notes **and** its actual worktree diff (`git -C "$WT" diff`).
+2. Run the task's `verify` command against the worktree. A worker's claim of success is
+   not evidence — the passing check is.
+3. Reject overlapping, out-of-scope, or unverified changes.
+4. Apply accepted diffs to the main checkout **in dependency order**, then remove the
+   worktree.
+5. Run the relevant tests after each integration; summarize remaining failures honestly.
 
-| Provider | Best For | Command |
-|----------|----------|---------|
-| **Claude** | Complex logic, APIs, multi-file changes | `Task({ run_in_background: true })` |
-| **Codex** | DB migrations, models, focused code gen | `nohup codex exec --sandbox workspace-write -C {workdir} - < prompt.md > log 2>&1 &` |
+Only fire-and-forget (launch and return immediately) when the user explicitly asks for it.
 
-> **Codex CLI v0.142+**: Use `codex exec` for non-interactive runs. New scripts should not use deprecated `--full-auto`; set permissions explicitly with `--sandbox workspace-write` for normal code edits. Use `-C dir`/`--cd dir` to set the working directory, `-o file.md`/`--output-last-message file.md` to save the final message, and `nohup ... > log 2>&1 &` for background execution. `codex exec` defaults to read-only, so code-writing background workers need `--sandbox workspace-write`. Use **git worktrees** for parallel write-heavy Codex workers. Use `--add-dir <path>` only for extra writable output directories such as `.context/impl`.
-> **Claude subagents** are the most reliable for complex implementation. Always prefer Claude for tasks touching 3+ files or requiring deep codebase understanding.
+## 5. Iterate (optional)
 
-## Workflow
+If verification fails or the user requests fixes, run `R02` on the affected tasks only.
+Stop when all tasks integrate cleanly and their verifications pass, when a fix needs a
+decision not yet authorized, or at the user's round/token bound.
 
-### Step 1: Analyze & Decompose
+## Token efficiency
 
-Extract from planning docs:
-- DB migrations (independent)
-- Models (depends on migration)
-- Handlers (depends on models)
-- Frontend (often independent)
+- Write task instructions to a `.md` file; pass the path, not the body.
+- Workers return compact structured summaries; the orchestrator reads summaries, not full
+  transcripts (open a worker's output only when the summary is insufficient).
+- Keep prompts, logs, and summaries in `.context/impl/` so the main conversation stays lean.
 
-### Step 2: Wave Execution
+## Best practices
 
-```
-Wave 1 (parallel): Migration + Frontend + Types
-Wave 2 (after migration): Models
-Wave 3 (after models): Handlers
-```
+**Do**
+- Respect dependency order (migration → models → handlers).
+- One worktree per writer; verify before integrating.
+- Wait for bounded workers via notification, not polling.
 
-### Step 3: Run Agents
+**Don't**
+- Tight-poll worker processes or run 10+ workers at once.
+- Let multiple workers edit the same file.
+- Hand unverified diffs to the main checkout, or hand unfinished verification back to the
+  user unasked.
 
-```bash
-mkdir -p .context/impl
-ROUND=$(printf "R%02d" $(( $(ls .context/impl/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-```
+## Safety
 
-**Claude (complex logic):**
-```typescript
-Task({
-  subagent_type: "general-purpose",
-  prompt: `Read task file: .context/impl/${ROUND}-tasks.md
-Implement the assigned tasks and save implementation notes to .context/impl/${ROUND}-claude.md`,
-  run_in_background: true
-})
-```
-
-**Codex (code generation):**
-
-Use Codex in one of two ways:
-- If the current orchestrator is Codex itself and the user explicitly asks for parallel Codex agents, prefer native Codex subagents from the interactive session. Ask Codex to spawn bounded `worker` or `explorer` agents, wait for them, and return distilled summaries.
-- If this skill is launching external background workers, run one `codex exec` process per independent implementation task.
-
-For parallel file-writing Codex workers, create an isolated git worktree per worker:
-```bash
-PROJ_DIR="$(pwd)"
-BASE_BRANCH="$(git branch --show-current)"
-FEATURE="{feature}"
-WORKTREE="${PROJ_DIR}/../$(basename "${PROJ_DIR}")-${ROUND}-${FEATURE}"
-
-git worktree add -b "impl/${ROUND}-${FEATURE}" "${WORKTREE}" "${BASE_BRANCH}"
-```
-
-Run project setup in the worktree before launching Codex if dependencies are not already present. `workspace-write` mode does not grant network access by default, so install dependencies up front or use a controlled environment with the network access you intend.
-
-Create a prompt file so shell quoting does not become part of the task:
-```markdown
-# .context/impl/${ROUND}-codex-{feature}.prompt.md
-
-Read the task file at ABSOLUTE_PROJECT_PATH/.context/impl/${ROUND}-tasks.md.
-Implement only the assigned {feature} task in this worktree.
-Write a concise implementation summary to ABSOLUTE_PROJECT_PATH/.context/impl/${ROUND}-codex-{feature}.md.
-Run the relevant tests or checks if they are available without network access.
-Do not commit changes. Leave the worktree dirty for the orchestrator to inspect.
-```
-Replace `ABSOLUTE_PROJECT_PATH` with the absolute value of `PROJ_DIR` before launching Codex.
-
-Then run Codex in the worktree:
-```bash
-PROMPT="${PROJ_DIR}/.context/impl/${ROUND}-codex-${FEATURE}.prompt.md"
-OUT="${PROJ_DIR}/.context/impl/${ROUND}-codex-${FEATURE}.md"
-LOG="${PROJ_DIR}/.context/impl/${ROUND}-codex-${FEATURE}.log"
-
-nohup codex exec \
-  --sandbox workspace-write \
-  -C "${WORKTREE}" \
-  --add-dir "${PROJ_DIR}/.context/impl" \
-  -o "${OUT}" \
-  - < "${PROMPT}" > "${LOG}" 2>&1 &
-```
-
-Use `--json` only when another script will consume event streams:
-```bash
-nohup codex exec --json --sandbox workspace-write -C "${WORKTREE}" \
-  --add-dir "${PROJ_DIR}/.context/impl" \
-  -o "${OUT}" \
-  - < "${PROMPT}" > "${LOG%.log}.jsonl" 2> "${LOG}" &
-```
-
-> **Key Codex notes:**
-> - `codex exec` defaults to read-only in current releases; pass `--sandbox workspace-write` for code edits.
-> - Avoid `--full-auto` in new scripts. It is a deprecated compatibility flag.
-> - `--dangerously-bypass-approvals-and-sandbox` is only for externally isolated runners or disposable worktrees where full host access is acceptable.
-> - Non-interactive runs cannot stop for new approval prompts; actions outside the sandbox fail instead.
-> - In `workspace-write`, `.git` is protected. Tell Codex not to commit; merge or apply its diff from the orchestrator after review.
-> - Use absolute paths for task, output, and log files when they live outside the worktree.
-> - Use `--add-dir <path>` for additional writable output directories. Do not use it as a broad substitute for worktree isolation.
-> - Check the worktree for actual file writes; slow or quiet logs do not necessarily mean Codex is stuck.
-> - After completion, inspect `git -C "${WORKTREE}" status --short` and `git -C "${WORKTREE}" diff`, then apply the accepted diff to the main checkout and remove the worktree.
-
-### Step 4: Wait, Inspect, and Integrate
-
-Prefer the host's native agent wait/status mechanism. Do not tight-poll shell
-processes. When workers finish:
-
-1. Inspect every worker's notes and actual worktree diff.
-2. Reject overlapping, out-of-scope, or unverified changes.
-3. Apply accepted diffs to the main checkout in dependency order.
-4. Run the relevant tests and summarize remaining failures.
-
-Only use fire-and-forget behavior when the user explicitly asks to launch work
-and return immediately.
-
-## Token Efficiency
-
-1. **Input**: Write task instructions to `.md` file, pass path only
-2. **Output**: Agents save structured markdown summaries
-3. **Verify**: Read summaries only, not full output
-
-Keep detailed prompts, logs, and implementation summaries in `.context/impl/` so the main conversation only needs to read compact summaries.
-
-## Output Structure
-
-```
-.context/impl/
-├── R01-tasks.md              # Round 1: task decomposition
-├── R01-claude.md             # Round 1: Claude implementation notes
-├── R01-codex-{feature}.md    # Round 1: Codex implementation notes
-├── R01-summary.md            # Round 1: merged summary
-├── R02-tasks.md              # Round 2: follow-up tasks
-├── R02-claude.md
-└── R02-summary.md
-```
-
-## Best Practices
-
-**DO:**
-- Use markdown files for task instructions
-- Respect dependency order (migration → models → handlers)
-- Wait for bounded workers and verify accepted changes
-
-**DON'T:**
-- Poll TaskOutput repeatedly (token waste)
-- Run 10+ agents simultaneously
-- Have multiple agents edit same file
-- Hand unfinished verification back to the user without being asked
+- Workers must not commit, push, or open PRs; the orchestrator integrates after review.
+- `-s danger-full-access` / `--dangerously-bypass-approvals-and-sandbox` only inside an
+  externally isolated or disposable worktree runner.
+- Non-interactive workers cannot pause for approval — out-of-sandbox actions fail rather
+  than prompt. Scope sandboxes deliberately.
+- Preserve unrelated user changes; never discard a dirty worktree without inspecting it.
 
 ## Version Notes
 
-- Codex guidance was refreshed against `codex-cli 0.142.5` and the current Codex manual on 2026-07-09.
-- Re-check `codex exec --help` before changing command recipes; Codex CLI flags can move faster than this skill.
-- If a future Codex release exposes a safer non-interactive approval flag for `exec`, prefer that over full sandbox bypass.
+- Worker/provider recipes verified against current Claude Code sub-agents (native
+  worktree isolation), `codex-cli`, and `gemini-cli` on 2026-07-23. Re-check
+  `codex exec --help` before changing recipes; Codex flags move fast. See
+  `references/orchestration.md`.

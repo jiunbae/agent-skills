@@ -1,7 +1,7 @@
 interface:
   display_name: "Background Planner"
-  short_description: "Parallel multi-agent planning workflow"
-  default_prompt: "Use $planning-in-background to produce and merge independent planning perspectives."
+  short_description: "Bounded parallel planning with stance-steered synthesis"
+  default_prompt: "Use $background-planner to produce independent bounded planning perspectives and synthesize one plan with explicit conflicts and open questions."
 
 policy:
   allow_implicit_invocation: false
