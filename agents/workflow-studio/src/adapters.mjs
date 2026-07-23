@@ -33,6 +33,10 @@ const DEFAULT_LIMITS = Object.freeze({
   cancellationGraceMs: 500,
   versionTimeoutMs: 2_000,
 });
+const MAX_TRACE_ARTIFACT_BYTES = 6 * 1024 * 1024;
+const TRACE_ENVELOPE_RESERVE_BYTES = 512 * 1024;
+const TRACE_RETENTION_BYTES =
+  MAX_TRACE_ARTIFACT_BYTES - TRACE_ENVELOPE_RESERVE_BYTES;
 
 function adapterError(code, message, details) {
   const error = new Error(message);
@@ -479,7 +483,20 @@ export function validateNativePlan(plan, { checkCwd = true } = {}) {
     );
   }
   validatePlan(plan);
-  if (checkCwd) canonicalCwd(plan.cwd);
+  if (checkCwd) {
+    const canonicalDirectory = canonicalCwd(plan.cwd);
+    if (canonicalDirectory !== plan.cwd) {
+      throw adapterError(
+        "INVALID_CWD",
+        "Plan cwd must use its canonical real path before native approval or execution.",
+        {
+          cwd: plan.cwd,
+          canonical_cwd: canonicalDirectory,
+          reason: "not-canonical",
+        },
+      );
+    }
+  }
   return true;
 }
 
@@ -940,8 +957,16 @@ export function buildRunEnvelope({
 }
 
 export function approvePlan(plan) {
-  validateNativePlan(plan);
+  validatePlan(plan);
   const approved = withoutApproval(plan);
+  const canonicalDirectory = canonicalCwd(approved.cwd);
+  approved.cwd = canonicalDirectory;
+  approved.command = commandFor(
+    approved.agent,
+    canonicalDirectory,
+    approved.safety,
+  );
+  validateNativePlan(approved);
   approved.approval = {
     ...APPROVAL_SEMANTICS,
     digest: approvalDigest(approved),
@@ -1076,7 +1101,7 @@ function traceSkeleton(plan, prepared, adapterVersion) {
     plan_hash: plan.approval.digest,
     workflow_revision: plan.workflow_revision,
     agent: plan.agent,
-    cwd: plan.cwd,
+    cwd: prepared.cwd,
     safety: cloneJson(plan.safety),
     adapter: {
       executable: prepared.executable,
@@ -1104,13 +1129,45 @@ function traceSkeleton(plan, prepared, adapterVersion) {
 
 function appendSequenceEdges(trace) {
   for (let index = 1; index < trace.events.length; index += 1) {
-    trace.inferred_edges.push({
-      from_sequence: trace.events[index - 1].sequence,
-      to_sequence: trace.events[index].sequence,
-      kind: "sequence",
-      provenance: "inferred",
-      confidence: 0.5,
-    });
+    trace.inferred_edges.push(
+      sequenceEdge(trace.events[index - 1], trace.events[index]),
+    );
+  }
+}
+
+function sequenceEdge(fromEvent, toEvent) {
+  return {
+    from_sequence: fromEvent.sequence,
+    to_sequence: toEvent.sequence,
+    kind: "sequence",
+    provenance: "inferred",
+    confidence: 0.5,
+  };
+}
+
+function encodedJsonBytes(value) {
+  return Buffer.byteLength(canonicalJson(value), "utf8");
+}
+
+function enforceFinalTraceBudget(trace) {
+  if (encodedJsonBytes(trace) <= MAX_TRACE_ARTIFACT_BYTES) return;
+
+  trace.status = "truncated";
+  trace.completeness = "partial";
+  trace.failure = {
+    kind: "output_truncated",
+    provider_terminal_observed: false,
+  };
+  trace.events = [];
+  trace.inferred_edges = [];
+  trace.diagnostics = [];
+  trace.process.stderr = "";
+
+  if (encodedJsonBytes(trace) > MAX_TRACE_ARTIFACT_BYTES) {
+    throw adapterError(
+      "TRACE_SIZE_LIMIT",
+      `Trace envelope exceeds the ${MAX_TRACE_ARTIFACT_BYTES}-byte artifact limit.`,
+    );
   }
 }
 
@@ -1135,7 +1192,8 @@ export async function runApprovedPlan(
   plan,
   { env, signal, limits: providedLimits } = {},
 ) {
-  if (!verifyPlanApproval(plan)) {
+  validateNativePlan(plan);
+  if (plan.approval === undefined) {
     throw adapterError(
       "APPROVAL_REQUIRED",
       "The plan is unapproved or changed since approval.",
@@ -1146,6 +1204,18 @@ export async function runApprovedPlan(
   }
   const limits = normalizeLimits(providedLimits);
   const prepared = prepareAdapter(plan);
+
+  if (signal?.aborted) {
+    const trace = traceSkeleton(plan, prepared, null);
+    trace.status = "cancelled";
+    trace.failure = {
+      kind: "cancelled_by_wrapper",
+      message: "Run was cancelled before executable resolution or CLI probing.",
+      provider_terminal_observed: false,
+    };
+    return trace;
+  }
+
   const effectiveEnv = mergeEnvironment(env);
   const resolvedExecutable = resolveExecutable(plan.agent, effectiveEnv);
   const runtimePrepared = {
@@ -1194,6 +1264,21 @@ export async function runApprovedPlan(
     return trace;
   }
 
+  const runtimeCwd = canonicalCwd(runtimePrepared.cwd);
+  if (runtimeCwd !== plan.cwd) {
+    throw adapterError(
+      "INVALID_CWD",
+      "Approved canonical cwd changed before native execution.",
+      {
+        cwd: plan.cwd,
+        canonical_cwd: runtimeCwd,
+        reason: "canonical-cwd-changed",
+      },
+    );
+  }
+  runtimePrepared.cwd = runtimeCwd;
+  trace.cwd = runtimeCwd;
+
   return await new Promise((resolve, reject) => {
     let child;
     try {
@@ -1222,13 +1307,36 @@ export async function runApprovedPlan(
     let settled = false;
     let cancellationTimer = null;
     let stderrRetained = Buffer.alloc(0);
+    let retainedBytes = 0;
+    let retentionExhausted = false;
+
+    const reserveRetention = (value, extraBytes = 0) => {
+      const bytes = encodedJsonBytes(value) + extraBytes;
+      if (retainedBytes + bytes > TRACE_RETENTION_BYTES) {
+        truncated = true;
+        retentionExhausted = true;
+        return false;
+      }
+      retainedBytes += bytes;
+      return true;
+    };
 
     const retainEvent = (normalized) => {
       if (trace.events.length >= limits.maxEvents) {
         truncated = true;
         return;
       }
+      const previous = trace.events.at(-1);
+      const edgeBytes = previous
+        ? encodedJsonBytes(sequenceEdge(previous, normalized)) + 1
+        : 0;
+      if (!reserveRetention(normalized, edgeBytes + 1)) return;
       trace.events.push(normalized);
+    };
+
+    const retainDiagnostic = (diagnostic) => {
+      if (!reserveRetention(diagnostic, 1)) return;
+      trace.diagnostics.push(diagnostic);
     };
 
     const handleLine = (
@@ -1243,6 +1351,10 @@ export async function runApprovedPlan(
         return;
       }
       parsedLineCount += 1;
+      if (retentionExhausted) {
+        truncated = true;
+        return;
+      }
       if (line.length > 0 && line.at(-1) === 0x0d) {
         line = line.subarray(0, line.length - 1);
       }
@@ -1261,7 +1373,7 @@ export async function runApprovedPlan(
         malformed.source.raw_type = malformedKind;
         malformed.summary = malformedSummary;
         retainEvent(malformed);
-        trace.diagnostics.push({
+        retainDiagnostic({
           kind: malformedKind,
           sequence: malformed.sequence,
           evidence: line.toString("utf8").slice(0, 2048),
@@ -1285,7 +1397,7 @@ export async function runApprovedPlan(
         );
         sequence += 1;
         retainEvent(normalized);
-        trace.diagnostics.push({
+        retainDiagnostic({
           kind: "event-normalization-rejected",
           sequence: normalized.sequence,
           code: normalized.diagnostic.code,
@@ -1312,7 +1424,7 @@ export async function runApprovedPlan(
       evidence.source.truncated = true;
       evidence.summary = "oversized provider line truncated";
       retainEvent(evidence);
-      trace.diagnostics.push({
+      retainDiagnostic({
         kind: "line-limit",
         limit_bytes: limits.maxLineBytes,
       });
@@ -1357,14 +1469,32 @@ export async function runApprovedPlan(
     child.stderr.on("data", (chunkValue) => {
       const chunk = Buffer.from(chunkValue);
       trace.process.stderr_bytes += chunk.length;
-      if (stderrRetained.length < limits.maxStderrBytes) {
-        const remaining = limits.maxStderrBytes - stderrRetained.length;
+      const remainingByLimit = Math.max(
+        0,
+        limits.maxStderrBytes - stderrRetained.length,
+      );
+      const remainingByTraceBudget = Math.max(
+        0,
+        Math.floor((TRACE_RETENTION_BYTES - retainedBytes) / 6),
+      );
+      const remaining = Math.min(remainingByLimit, remainingByTraceBudget);
+      if (remaining > 0) {
+        const retained = chunk.subarray(0, remaining);
         stderrRetained = Buffer.concat([
           stderrRetained,
-          chunk.subarray(0, remaining),
+          retained,
         ]);
+        retainedBytes += retained.length * 6;
       }
-      if (trace.process.stderr_bytes > limits.maxStderrBytes) truncated = true;
+      if (
+        chunk.length > remaining ||
+        trace.process.stderr_bytes > limits.maxStderrBytes
+      ) {
+        truncated = true;
+        if (remainingByTraceBudget <= remainingByLimit) {
+          retentionExhausted = true;
+        }
+      }
     });
 
     const cancel = () => {
@@ -1419,7 +1549,7 @@ export async function runApprovedPlan(
       }
 
       if (stdinError) {
-        trace.diagnostics.push({
+        retainDiagnostic({
           kind: "stdin-error",
           code:
             typeof stdinError.code === "string"
@@ -1476,6 +1606,7 @@ export async function runApprovedPlan(
         return;
       }
       appendSequenceEdges(trace);
+      enforceFinalTraceBudget(trace);
       resolve(trace);
     });
 

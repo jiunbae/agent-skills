@@ -122,15 +122,18 @@
       "properties": {
         "entry_node_ids": {
           "type": "array",
+          "maxItems": 30000,
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
         "nodes": {
           "type": "array",
+          "maxItems": 30000,
           "items": { "$ref": "#/$defs/node" }
         },
         "edges": {
           "type": "array",
+          "maxItems": 30000,
           "items": { "$ref": "#/$defs/edge" }
         }
       },

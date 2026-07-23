@@ -505,6 +505,12 @@ test("run exits nonzero for missing and non-complete CLIs while preserving trace
       expectedCode: "RUN_TRUNCATED",
       expectedStatus: "truncated",
     },
+    {
+      scenario: "aggregate-overflow",
+      expectedCode: "RUN_TRUNCATED",
+      expectedStatus: "truncated",
+      maxTraceBytes: 6 * 1024 * 1024,
+    },
   ]) {
     const item = await fixture(t);
     const approvedPath = await approvedPlan(item);
@@ -520,8 +526,12 @@ test("run exits nonzero for missing and non-complete CLIs while preserving trace
       itemCase.expectedCode,
     );
     assert.equal(diagnostic.details.artifact, tracePath);
-    const trace = JSON.parse(await readFile(tracePath, "utf8"));
+    const traceBytes = await readFile(tracePath);
+    const trace = JSON.parse(traceBytes);
     assert.equal(trace.status, itemCase.expectedStatus);
+    if (itemCase.maxTraceBytes) {
+      assert.ok(traceBytes.length <= itemCase.maxTraceBytes);
+    }
     success(await invoke(["validate", tracePath]));
     if (itemCase.expectedFailure) {
       assert.equal(trace.failure.kind, itemCase.expectedFailure);

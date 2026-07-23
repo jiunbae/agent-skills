@@ -29,6 +29,74 @@ import {
 
 const ROOT = resolve(import.meta.dirname, "../../..");
 
+function largeWorkflowBytes(count, name = "large-graph") {
+  const steps = Array.from(
+    { length: count },
+    (_, index) => `### Step ${index + 1}: Item ${index + 1}\nBody ${index + 1}.\n`,
+  ).join("");
+  return Buffer.from(`---
+name: ${name}
+description: managed graph boundary
+---
+
+## Workflow
+${steps}`);
+}
+
+function completedTrace(agent = "codex") {
+  return {
+    ir_version: "1.0",
+    kind: "trace",
+    run_id: "run-core-trace",
+    plan_hash: "1".repeat(64),
+    workflow_revision: "2".repeat(64),
+    agent,
+    cwd: ROOT,
+    safety:
+      agent === "codex"
+        ? {
+            intent: "read-only",
+            provider: "codex",
+            sandbox: "read-only",
+            boundary: "os-sandbox",
+          }
+        : {
+            intent: "read-only",
+            provider: "claude",
+            permission_mode: "plan",
+            boundary: "tool-permission-policy-not-os-sandbox",
+          },
+    adapter: { executable: agent, version: "test" },
+    events: [
+      {
+        sequence: 0,
+        provider: agent,
+        kind: agent === "codex" ? "turn.completed" : "run.completed",
+        status: "completed",
+        provenance: "observed",
+        source: { raw_type: "test" },
+        summary: "provider completed",
+      },
+    ],
+    inferred_edges: [],
+    diagnostics: [],
+    process: {
+      exit_code: 0,
+      signal: null,
+      stderr: "",
+      stderr_bytes: 0,
+      stdout_bytes: 1,
+    },
+    status: "completed",
+    completeness: "complete",
+    provenance: {
+      events: "observed",
+      sequence_edges: "inferred",
+      hidden_reasoning_recovered: false,
+    },
+  };
+}
+
 test("imports representative workflow skills deterministically and ignores fenced headings", async () => {
   const security = await importSkillFile(
     join(ROOT, "security/security-auditor/SKILL.md"),
@@ -717,58 +785,6 @@ Body.
 });
 
 test("completed traces require coherent process and provider terminal evidence", () => {
-  const completedTrace = (agent = "codex") => ({
-    ir_version: "1.0",
-    kind: "trace",
-    run_id: "run-core-trace",
-    plan_hash: "1".repeat(64),
-    workflow_revision: "2".repeat(64),
-    agent,
-    cwd: ROOT,
-    safety:
-      agent === "codex"
-        ? {
-            intent: "read-only",
-            provider: "codex",
-            sandbox: "read-only",
-            boundary: "os-sandbox",
-          }
-        : {
-            intent: "read-only",
-            provider: "claude",
-            permission_mode: "plan",
-            boundary: "tool-permission-policy-not-os-sandbox",
-          },
-    adapter: { executable: agent, version: "test" },
-    events: [
-      {
-        sequence: 0,
-        provider: agent,
-        kind: agent === "codex" ? "turn.completed" : "run.completed",
-        status: "completed",
-        provenance: "observed",
-        source: { raw_type: "test" },
-        summary: "provider completed",
-      },
-    ],
-    inferred_edges: [],
-    diagnostics: [],
-    process: {
-      exit_code: 0,
-      signal: null,
-      stderr: "",
-      stderr_bytes: 0,
-      stdout_bytes: 1,
-    },
-    status: "completed",
-    completeness: "complete",
-    provenance: {
-      events: "observed",
-      sequence_edges: "inferred",
-      hidden_reasoning_recovered: false,
-    },
-  });
-
   assert.equal(validateArtifact(completedTrace("codex")), true);
   assert.equal(validateArtifact(completedTrace("claude")), true);
 
@@ -970,24 +986,103 @@ Second.
   assert.deepEqual(renderWorkflow(unchanged), renderWorkflow(workflow));
 });
 
-test("valid 30,000-step workflows use iterative typed graph validation", () => {
-  const steps = Array.from(
-    { length: 30_000 },
-    (_, index) => `### Step ${index + 1}: Item ${index + 1}\nBody ${index + 1}.\n`,
-  ).join("");
-  const workflow = importSkillBytes(
-    Buffer.from(`---
-name: large-graph
-description: iterative graph validation
----
+test("managed graph edits round-trip on both sides of the former 1,000-item boundary", () => {
+  for (const count of [1_000, 1_001]) {
+    const workflow = importSkillBytes(
+      largeWorkflowBytes(count, `managed-${count}`),
+      { sourcePath: `managed-${count}/SKILL.md` },
+    );
+    const edited = applyOperation(workflow, {
+      type: "edit-node",
+      node_id: workflow.graph.nodes[0].id,
+      title: `Renamed ${count}`,
+    });
+    const reimported = importSkillBytes(renderWorkflow(edited), {
+      sourcePath: `managed-${count}/SKILL.md`,
+    });
+    assert.equal(reimported.graph.nodes.length, count);
+    assert.equal(reimported.graph.nodes[0].title, `Renamed ${count}`);
+    assert.deepEqual(
+      reimported.graph.nodes.map((node) => node.id),
+      edited.graph.nodes.map((node) => node.id),
+    );
+  }
+});
 
-## Workflow
-${steps}`),
+test("schema publishes the same 30,000-item graph ceilings as core", async () => {
+  const schema = JSON.parse(
+    await readFile(
+      join(import.meta.dirname, "../schemas/workflow-ir.schema.json"),
+      "utf8",
+    ),
+  );
+  const properties = schema.$defs.graph.properties;
+  assert.equal(properties.entry_node_ids.maxItems, 30_000);
+  assert.equal(properties.nodes.maxItems, 30_000);
+  assert.equal(properties.edges.maxItems, 30_000);
+});
+
+test("30,000-node and edge graph ceilings remain writable and reject overflow", () => {
+  const workflow = importSkillBytes(
+    largeWorkflowBytes(30_000),
     { sourcePath: "large-graph/SKILL.md" },
   );
   assert.equal(workflow.graph.nodes.length, 30_000);
   assert.equal(workflow.graph.edges.length, 29_999);
   assert.equal(validateArtifact(workflow), true);
+
+  const writable = applyOperation(workflow, {
+    type: "add-edge",
+    from: workflow.graph.nodes[0].id,
+    to: workflow.graph.nodes[2].id,
+    kind: "parallel",
+  });
+  assert.equal(writable.graph.nodes.length, 30_000);
+  assert.equal(writable.graph.edges.length, 30_000);
+  assert.equal(validateArtifact(writable), true);
+
+  workflow.graph.nodes.push({
+    ...workflow.graph.nodes.at(-1),
+    id: "step-over-node-limit",
+    order: 30_000,
+    source_map: null,
+  });
+  assert.throws(() => validateArtifact(workflow), {
+    code: "GRAPH_LIMIT_EXCEEDED",
+  });
+
+  writable.graph.edges.push({
+    ...writable.graph.edges.at(-1),
+    id: "edge-over-limit",
+  });
+  assert.throws(() => validateArtifact(writable), {
+    code: "GRAPH_LIMIT_EXCEEDED",
+  });
+});
+
+test("deep and over-budget JSON artifacts fail with typed structure errors", () => {
+  let nested = "leaf";
+  for (let depth = 0; depth < 12_000; depth += 1) nested = [nested];
+  const deepArtifact = completedTrace();
+  deepArtifact.events[0].source.raw = nested;
+  for (const operation of [
+    () => validateArtifact(deepArtifact),
+    () => stableStringify(deepArtifact),
+  ]) {
+    const error = assert.throws(operation, {
+      code: "ARTIFACT_STRUCTURE_LIMIT",
+    });
+    assert.equal(error instanceof RangeError, false);
+  }
+
+  const wideArtifact = {
+    ir_version: "1.0",
+    kind: "trace",
+    payload: new Array(2_000_001).fill(null),
+  };
+  assert.throws(() => validateArtifact(wideArtifact), {
+    code: "ARTIFACT_STRUCTURE_LIMIT",
+  });
 });
 
 test("managed footer ownership is stable and unique across repeated edits", () => {

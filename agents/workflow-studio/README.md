@@ -173,6 +173,9 @@ are absent. Browser exports are local client downloads.
   sequence edges. They do not expose hidden model reasoning or causal truth.
 - Provider event formats and safety behavior differ and can change. Raw unknown
   events are retained rather than silently normalized away.
+- To keep browser rendering bounded, per-edge endpoint controls are available
+  only while `steps × (edges + 1) ≤ 4096`. Above that budget, Studio keeps the
+  complete semantic edge list visible but read-only.
 - Only Codex CLI and Claude Code CLI adapters exist in V1.
 - No global install, remote execution, shared server, or managed orchestration.
 - V1 was tested on macOS with Node 26.5.0, Codex CLI 0.144.6, and Claude Code

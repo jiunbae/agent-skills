@@ -160,6 +160,7 @@
               </div>
               <button id="addEdge" type="submit">Add or update edge</button>
             </form>
+            <p id="edgeControlNotice" class="notice warning" hidden></p>
             <ul id="edgeList" class="edge-list" aria-label="Workflow edges"></ul>
           </section>
         </div>
@@ -207,7 +208,7 @@
           </div>
           <span id="approvalBadge" class="kind-badge">Not approved</span>
         </div>
-        <p class="notice">
+        <p id="planNotice" class="notice">
           Workflow Studio prepares and hashes this plan, but this browser does
           not run an agent. Any plan or graph edit clears approval.
         </p>
@@ -246,7 +247,7 @@
             </button>
           </div>
         </form>
-        <div>
+        <div id="planPayloadPanel">
           <h3>Hash-approvable payload</h3>
           <pre id="planPreview" class="code-panel compact" tabindex="0"></pre>
         </div>

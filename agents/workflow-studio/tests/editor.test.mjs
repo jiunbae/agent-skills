@@ -19,7 +19,10 @@ import {
   deleteNode,
   editNode,
   editPlan,
+  edgeControlPolicy,
   graphSemantics,
+  markApprovedPlanDownloaded,
+  markPromotedDraftDownloaded,
   moveNode,
   promoteToSkillDraft,
   removeEdge,
@@ -574,6 +577,11 @@ test("approving hashes exact plan and every subsequent edit clears approval", as
   state = editPlan(state, "prompt", "Review this exact plan.");
   state = await approvePlan(state);
   assert.match(state.plan.approval.digest, /^[a-f0-9]{64}$/);
+  assert.equal(state.planDirty, true);
+  const reopened = createEditorState(approvedPlanArtifact(state));
+  assert.equal(reopened.planDirty, false);
+  const reapproved = await approvePlan(reopened);
+  assert.equal(reapproved.planDirty, true);
   assert.equal(buildPlanArtifact(state).agent, "claude");
   assert.equal(verifyPlanApproval({
     ...buildPlanArtifact(state),
@@ -585,6 +593,23 @@ test("approving hashes exact plan and every subsequent edit clears approval", as
   state = await approvePlan(state);
   state = editNode(state, "step-1", "title", "Changed graph");
   assert.equal(state.plan.approval, null);
+});
+
+test("approved-plan and promoted-draft downloads persist truthful saved status", async () => {
+  let state = createEditorState(workflowArtifact());
+  state = editPlan(state, "cwd", process.cwd());
+  state = editPlan(state, "prompt", "Review this exact plan.");
+  state = await approvePlan(state);
+  assert.equal(state.planDirty, true);
+  state = markApprovedPlanDownloaded(state);
+  assert.equal(state.planDirty, false);
+  assert.equal(state.status, "Downloaded the approved plan; no agent was run.");
+
+  state.promotedDraft = promoteToSkillDraft(state);
+  state.draftDirty = true;
+  state = markPromotedDraftDownloaded(state);
+  assert.equal(state.draftDirty, false);
+  assert.equal(state.status, "Downloaded the promoted skill draft.");
 });
 
 test("a delayed approval result cannot overwrite intervening plan and graph edits", async () => {
@@ -795,6 +820,54 @@ test("production trace events become read-only graph evidence and promote topolo
   );
   assert.ok(
     reimported.graph.edges.every((edge) => edge.provenance === "inferred"),
+  );
+});
+
+test("trace plan inputs cannot create plan state or clear a promoted draft", () => {
+  const initial = createEditorState(productionTraceArtifact());
+  const promoted = structuredClone(initial);
+  promoted.promotedDraft = promoteToSkillDraft(promoted);
+  promoted.draftDirty = true;
+  for (const [field, value] of [
+    ["adapter", "claude"],
+    ["cwd", "/tmp"],
+    ["safety", "workspace-write"],
+    ["prompt", "Fabricated plan input"],
+  ]) {
+    assert.strictEqual(editPlan(promoted, field, value), promoted);
+  }
+  assert.equal(promoted.planDirty, false);
+  assert.ok(promoted.promotedDraft);
+  assert.equal(promoted.draftDirty, true);
+});
+
+test("large graph edge controls are explicitly bounded while the semantic list remains linear", () => {
+  const initial = createEditorState(workflowArtifact());
+  const state = structuredClone(initial);
+  state.nodes = Array.from({ length: 1_000 }, (_, index) => ({
+    ...structuredClone(initial.nodes[index % initial.nodes.length]),
+    id: `large-step-${index}`,
+    title: `Large step ${index}`,
+  }));
+  state.edges = Array.from({ length: 999 }, (_, index) => ({
+    id: `large-edge-${index}`,
+    from: `large-step-${index}`,
+    to: `large-step-${index + 1}`,
+    kind: "sequence",
+    provenance: "declared",
+    readOnly: false,
+  }));
+  const policy = edgeControlPolicy(state);
+  assert.equal(policy.editable, false);
+  assert.equal(policy.endpointOptionCount, 0);
+  assert.match(policy.reason, /read-only.*4096.*budget/i);
+  assert.equal(state.edges.length, 999, "all semantic edge rows remain available");
+
+  const representative = edgeControlPolicy(initial);
+  assert.equal(representative.editable, true);
+  assert.equal(
+    representative.endpointOptionCount,
+    initial.nodes.length * 2 * (initial.edges.length + 1),
   );
 });
 
@@ -1051,6 +1124,19 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   assert.match(editor, /`\$\{name\} \$\{unit\}`/);
   assert.match(editor, /"Inferred order"/);
   assert.match(editor, /not causality/);
+  assert.match(editor, /const controls = edgeControlPolicy\(state\)/);
+  assert.match(editor, /if \(!controls\.editable\)/);
+  assert.match(editor, /element\("edgeFrom"\)\.replaceChildren\(\)/);
+  assert.match(editor, /const nodesById = new Map\(state\.nodes\.map/);
+  assert.doesNotMatch(
+    editor,
+    /state\.edges\.map\([\s\S]{0,500}state\.nodes\.find/,
+    "read-only semantic edge rows must remain O(nodes + edges)",
+  );
+  assert.match(editor, /Trace Markdown is unavailable/);
+  assert.match(editor, /element\("planForm"\)\.hidden = !canPreparePlan/);
+  assert.match(editor, /markApprovedPlanDownloaded\(state\)/);
+  assert.match(editor, /markPromotedDraftDownloaded\(state\)/);
   assert.match(
     editor,
     /mutate\(selectNode\(state, node\.id\), `outline-\$\{node\.id\}`\)/,
@@ -1075,12 +1161,15 @@ test("static editor exposes semantic views, live status, and labeled controls", 
     "edgeFrom",
     "edgeTo",
     "edgeKind",
+    "edgeControlNotice",
     "viewGraph",
     "viewSource",
     "viewDiff",
     "viewPlan",
     "viewTrace",
     "statusMessage",
+    "planNotice",
+    "planPayloadPanel",
   ];
   for (const id of expectedIds) {
     assert.match(html, new RegExp(`id="${id}"`), `missing #${id}`);
@@ -1100,6 +1189,12 @@ test("static editor exposes semantic views, live status, and labeled controls", 
   assert.match(html, />Add first step</);
   assert.doesNotMatch(html, /structural browser edits remain in the/);
   assert.doesNotMatch(html, /<script(?! type="module" src="\/editor\.mjs")/);
+});
+
+test("component documentation states the finite browser edge-control budget", async () => {
+  const readme = await readFile(new URL("../README.md", ASSET_ROOT), "utf8");
+  assert.match(readme, /steps × \(edges \+ 1\) ≤ 4096/);
+  assert.match(readme, /complete semantic edge list visible but read-only/);
 });
 
 test("custom focus color exceeds 3:1 against adjacent editor surfaces", async () => {

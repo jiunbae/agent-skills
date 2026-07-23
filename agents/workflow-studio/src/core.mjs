@@ -24,7 +24,10 @@ const CONFIDENCE_LEVELS = new Set([
   "heuristic",
   "unknown",
 ]);
-const MAX_MANAGED_ITEMS = 1_000;
+const MAX_GRAPH_NODES = 30_000;
+const MAX_GRAPH_EDGES = 30_000;
+const MAX_ARTIFACT_DEPTH = 128;
+const MAX_ARTIFACT_ITEMS = 2_000_000;
 const APPROVAL_SEMANTICS = Object.freeze({
   algorithm: "sha256",
   scope: "exact-native-run-envelope",
@@ -46,35 +49,91 @@ function clone(value) {
   return JSON.parse(stableStringify(value));
 }
 
-function assertJson(value, path = "$", seen = new Set()) {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean"
-  ) {
-    return;
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) {
-      throw workflowError("INVALID_ARTIFACT", `${path} must be finite.`);
+function assertJson(value) {
+  const active = new Set();
+  const stack = [{
+    value,
+    path: "$",
+    depth: 0,
+    entered: false,
+    index: 0,
+    keys: null,
+  }];
+  let items = 0;
+  while (stack.length > 0) {
+    const frame = stack.at(-1);
+    if (!frame.entered) {
+      items += 1;
+      if (items > MAX_ARTIFACT_ITEMS) {
+        throw workflowError(
+          "ARTIFACT_STRUCTURE_LIMIT",
+          `Artifact exceeds the ${MAX_ARTIFACT_ITEMS}-item JSON structure limit.`,
+        );
+      }
+      if (frame.depth > MAX_ARTIFACT_DEPTH) {
+        throw workflowError(
+          "ARTIFACT_STRUCTURE_LIMIT",
+          `Artifact exceeds the depth-${MAX_ARTIFACT_DEPTH} JSON structure limit at ${frame.path}.`,
+        );
+      }
+      const item = frame.value;
+      if (
+        item === null ||
+        typeof item === "string" ||
+        typeof item === "boolean"
+      ) {
+        stack.pop();
+        continue;
+      }
+      if (typeof item === "number") {
+        if (!Number.isFinite(item)) {
+          throw workflowError(
+            "INVALID_ARTIFACT",
+            `${frame.path} must be finite.`,
+          );
+        }
+        stack.pop();
+        continue;
+      }
+      if (typeof item !== "object") {
+        throw workflowError(
+          "INVALID_ARTIFACT",
+          `${frame.path} is not JSON data.`,
+        );
+      }
+      if (active.has(item)) {
+        throw workflowError(
+          "INVALID_ARTIFACT",
+          `${frame.path} contains a cycle.`,
+        );
+      }
+      active.add(item);
+      frame.entered = true;
+      frame.keys = Array.isArray(item) ? null : Object.keys(item);
+      continue;
     }
-    return;
-  }
-  if (typeof value !== "object") {
-    throw workflowError("INVALID_ARTIFACT", `${path} is not JSON data.`);
-  }
-  if (seen.has(value)) {
-    throw workflowError("INVALID_ARTIFACT", `${path} contains a cycle.`);
-  }
-  seen.add(value);
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => assertJson(item, `${path}[${index}]`, seen));
-  } else {
-    for (const key of Object.keys(value)) {
-      assertJson(value[key], `${path}.${key}`, seen);
+    const childCount = frame.keys?.length ?? frame.value.length;
+    if (frame.index >= childCount) {
+      active.delete(frame.value);
+      stack.pop();
+      continue;
     }
+    const childIndex = frame.index;
+    frame.index += 1;
+    const key = frame.keys?.[childIndex];
+    stack.push({
+      value:
+        key === undefined ? frame.value[childIndex] : frame.value[key],
+      path:
+        key === undefined
+          ? `${frame.path}[${childIndex}]`
+          : `${frame.path}.${key}`,
+      depth: frame.depth + 1,
+      entered: false,
+      index: 0,
+      keys: null,
+    });
   }
-  seen.delete(value);
 }
 
 export function stableStringify(value) {
@@ -510,8 +569,8 @@ function managedPayloadGraph(payload) {
   if (
     !nodes ||
     !edges ||
-    nodes.length > MAX_MANAGED_ITEMS ||
-    edges.length > MAX_MANAGED_ITEMS
+    nodes.length > MAX_GRAPH_NODES ||
+    edges.length > MAX_GRAPH_EDGES
   ) {
     return null;
   }
@@ -1199,6 +1258,16 @@ function validateWorkflow(artifact) {
   const entries = artifact.graph?.entry_node_ids;
   if (!Array.isArray(nodes) || !Array.isArray(edges) || !Array.isArray(entries)) {
     throw workflowError("INVALID_GRAPH", "graph nodes and edges are required.");
+  }
+  if (
+    nodes.length > MAX_GRAPH_NODES ||
+    edges.length > MAX_GRAPH_EDGES ||
+    entries.length > MAX_GRAPH_NODES
+  ) {
+    throw workflowError(
+      "GRAPH_LIMIT_EXCEEDED",
+      `Workflow graph exceeds the ${MAX_GRAPH_NODES}-node or ${MAX_GRAPH_EDGES}-edge limit.`,
+    );
   }
   const ids = new Set();
   for (let index = 0; index < nodes.length; index += 1) {

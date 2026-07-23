@@ -7,6 +7,13 @@ import { fileURLToPath } from "node:url";
 const fixtureDirectory = dirname(fileURLToPath(import.meta.url));
 
 if (process.argv.includes("--version")) {
+  if (process.env.FAKE_AGENT_VERSION_AUDIT) {
+    writeFileSync(
+      process.env.FAKE_AGENT_VERSION_AUDIT,
+      JSON.stringify({ version_probe: true }),
+      { mode: 0o600 },
+    );
+  }
   process.stdout.write("fake-agent 1.2.3\n");
   process.exit(0);
 }
@@ -64,6 +71,19 @@ if (scenario === "cancel") {
   process.stdout.write(
     `{"type":"future.provider.event","deep":${"[".repeat(12_000)}0${"]".repeat(12_000)}}\n`,
   );
+  process.stdout.write('{"type":"turn.completed"}\n');
+} else if (scenario === "aggregate-overflow") {
+  const payload = "x".repeat(220 * 1024);
+  for (let index = 0; index < 40; index += 1) {
+    process.stdout.write(
+      `${JSON.stringify({
+        type: "future.provider.event",
+        index,
+        payload,
+      })}\n`,
+    );
+  }
+  process.stderr.write("e".repeat(256 * 1024));
   process.stdout.write('{"type":"turn.completed"}\n');
 } else if (scenario === "codex-unknown-secret") {
   process.stdout.write(

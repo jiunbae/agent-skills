@@ -477,6 +477,17 @@ fieldset {
   overflow-wrap: anywhere;
 }
 
+.edge-row-readonly {
+  grid-template-columns: minmax(12rem, 1fr) auto auto;
+}
+
+.edge-kind {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
 .text-view,
 .plan-view,
 .trace-view {

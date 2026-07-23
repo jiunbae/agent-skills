@@ -10,6 +10,7 @@ const CONFIDENCE_VALUES = new Set([
 const EDGE_KINDS = new Set(["sequence", "parallel"]);
 const AGENT_VALUES = new Set(["codex", "claude"]);
 const SAFETY_VALUES = new Set(["read-only", "workspace-write"]);
+export const EDGE_CONTROL_COMBINATION_BUDGET = 4096;
 const APPROVAL_SEMANTICS = {
   algorithm: "sha256",
   scope: "exact-native-run-envelope",
@@ -684,6 +685,23 @@ export function structuralEditBlockReason(state) {
   return "";
 }
 
+export function edgeControlPolicy(state) {
+  const structuralReason = structuralEditBlockReason(state);
+  const combinations = state.nodes.length * (state.edges.length + 1);
+  const overBudget = combinations > EDGE_CONTROL_COMBINATION_BUDGET;
+  const editable = !structuralReason && !overBudget;
+  return {
+    editable,
+    combinations,
+    endpointOptionCount: editable
+      ? state.nodes.length * 2 * (state.edges.length + 1)
+      : 0,
+    reason: structuralReason || (overBudget
+      ? `Edge controls are read-only because ${state.nodes.length} steps × ${state.edges.length + 1} edge-control rows exceeds the ${EDGE_CONTROL_COMBINATION_BUDGET} endpoint-combination budget. The complete edge list remains available below.`
+      : ""),
+  };
+}
+
 function uniqueNodeId(nodes) {
   const used = new Set(nodes.map((node) => node.id));
   let number = nodes.length + 1;
@@ -883,6 +901,7 @@ export function removeEdge(state, edgeId) {
 
 export function editPlan(state, field, value) {
   if (!["adapter", "cwd", "safety", "prompt"].includes(field)) return state;
+  if (state.kind === "trace") return state;
   const next = clone(state);
   next.plan[field] = String(value);
   if (field === "prompt") {
@@ -1970,6 +1989,7 @@ export async function approvePlan(state) {
     digest,
   };
   next.plan.preparedAt = new Date().toISOString();
+  next.planDirty = true;
   next.status = `Approved plan ${digest.slice(0, 12)}.`;
   return next;
 }
@@ -1987,6 +2007,22 @@ export function approvedPlanArtifact(state) {
   const artifact = buildPlanArtifact(state);
   artifact.approval = clone(state.plan.approval);
   return artifact;
+}
+
+export function markApprovedPlanDownloaded(state) {
+  if (!state.plan.approval) return state;
+  const next = clone(state);
+  next.planDirty = false;
+  next.status = "Downloaded the approved plan; no agent was run.";
+  return next;
+}
+
+export function markPromotedDraftDownloaded(state) {
+  if (!state.promotedDraft) return state;
+  const next = clone(state);
+  next.draftDirty = false;
+  next.status = "Downloaded the promoted skill draft.";
+  return next;
 }
 
 function safeSkillName(value) {

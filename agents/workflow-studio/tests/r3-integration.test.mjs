@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -173,7 +174,7 @@ test("browser grammar blocks padded and heading-like edits before export or prom
   }
 });
 
-test("browser-approved cwd aliases run unchanged while missing cwd is a runtime error", async (t) => {
+test("native approval canonicalizes browser cwd aliases and runtime rejects stale spellings", async (t) => {
   const harness = await fakeAgentHarness(t);
   const alias = join(harness.root, "workspace-alias");
   await symlink(harness.cwd, alias, "dir");
@@ -188,9 +189,20 @@ test("browser-approved cwd aliases run unchanged while missing cwd is a runtime 
   assert.equal(plan.command.argv.at(-2), alias);
   assert.equal(verifyPlanApproval(plan), true);
   assert.equal(validateArtifact(plan), true);
-  const trace = await runApprovedPlan(plan, { env: harness.env });
+  await assert.rejects(
+    runApprovedPlan(plan, { env: harness.env }),
+    (error) =>
+      error.code === "INVALID_CWD" &&
+      error.details?.reason === "not-canonical",
+  );
+
+  const canonicalPlan = approveNativePlan(plan);
+  const canonicalCwd = await realpath(harness.cwd);
+  assert.equal(canonicalPlan.cwd, canonicalCwd);
+  assert.equal(canonicalPlan.command.argv.at(-2), canonicalCwd);
+  const trace = await runApprovedPlan(canonicalPlan, { env: harness.env });
   assert.equal(trace.status, "completed");
-  assert.equal(trace.cwd, alias);
+  assert.equal(trace.cwd, canonicalCwd);
 
   const missing = join(harness.root, "missing-workspace");
   let missingState = editPlan(state, "cwd", missing);

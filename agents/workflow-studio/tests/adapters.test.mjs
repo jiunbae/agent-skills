@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -30,6 +31,10 @@ import {
   renderWorkflow,
   validateArtifact,
 } from "../src/core.mjs";
+import {
+  createStudioServer,
+  studioServerLimits,
+} from "../src/server.mjs";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const fakeAgent = join(testDirectory, "fixtures", "fake-agent.mjs");
@@ -94,6 +99,36 @@ function fakeEnv(plan, overrides = {}) {
     PATH: `${plan.cwd}${delimiter}${process.env.PATH ?? ""}`,
     ...overrides,
   };
+}
+
+function manuallyApprovePlan(plan) {
+  const semantics = {
+    algorithm: "sha256",
+    scope: "exact-native-run-envelope",
+    statement: "plan approved for native execution; graph not enforced",
+  };
+  const canonical = (value) => {
+    if (value === null || typeof value !== "object") {
+      return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map(canonical).join(",")}]`;
+    }
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .join(",")}}`;
+  };
+  const approved = structuredClone(plan);
+  delete approved.approval;
+  const digest = createHash("sha256")
+    .update(canonical({
+      run_envelope: approved,
+      approval: semantics,
+    }))
+    .digest("hex");
+  approved.approval = { ...semantics, digest };
+  return approved;
 }
 
 test("Codex uses fixed argv and sends prompt and Skill only through stdin", async (t) => {
@@ -280,8 +315,9 @@ test("approval rejects mismatched Skill bytes and stale digests precisely", (t) 
   );
 });
 
-test("an approved existing cwd alias runs unchanged while missing cwd is INVALID_CWD", async (t) => {
+test("approval freezes a cwd alias to its canonical target before execution", async (t) => {
   const canonical = makeTemporaryWorkspace(t);
+  const retargeted = makeTemporaryWorkspace(t);
   symlinkSync(fakeAgent, join(canonical, "codex"));
   const alias = makeCwdAlias(t, canonical);
   const plan = buildRunEnvelope({
@@ -292,12 +328,36 @@ test("an approved existing cwd alias runs unchanged while missing cwd is INVALID
   });
   plan.cwd = alias;
   plan.command.argv[plan.command.argv.indexOf(canonical)] = alias;
+
+  assert.throws(
+    () => validateNativePlan(plan),
+    (error) =>
+      error.code === "INVALID_CWD" &&
+      error.details?.reason === "not-canonical" &&
+      error.details?.canonical_cwd === canonical,
+  );
+  const manuallyApprovedAlias = manuallyApprovePlan(plan);
+  assert.equal(verifyPlanApproval(manuallyApprovedAlias), true);
+  await assert.rejects(
+    runApprovedPlan(manuallyApprovedAlias, {
+      env: {
+        PATH: `${canonical}${delimiter}${process.env.PATH ?? ""}`,
+      },
+    }),
+    (error) =>
+      error.code === "INVALID_CWD" &&
+      error.details?.reason === "not-canonical",
+  );
+
   const approved = approvePlan(plan);
 
-  assert.equal(approved.cwd, alias);
+  assert.equal(approved.cwd, canonical);
   assert.equal(verifyPlanApproval(approved), true);
-  assert.equal(prepareAdapter(approved).cwd, alias);
-  assert.ok(prepareAdapter(approved).argv.includes(alias));
+  assert.equal(prepareAdapter(approved).cwd, canonical);
+  assert.ok(prepareAdapter(approved).argv.includes(canonical));
+
+  rmSync(alias);
+  symlinkSync(retargeted, alias, "dir");
 
   const auditPath = join(canonical, "alias-audit.json");
   const trace = await runApprovedPlan(approved, {
@@ -309,7 +369,9 @@ test("an approved existing cwd alias runs unchanged while missing cwd is INVALID
   });
   const audit = JSON.parse(readFileSync(auditPath, "utf8"));
   assert.equal(trace.status, "completed");
-  assert.ok(audit.argv.includes(alias));
+  assert.equal(trace.cwd, canonical);
+  assert.ok(audit.argv.includes(canonical));
+  assert.ok(!audit.argv.includes(alias));
   assert.equal(audit.cwd, canonical);
 
   const missing = approvedFakePlan(t);
@@ -543,6 +605,40 @@ test("stdout lines, event count, and stderr retention are bounded", async (t) =>
   assert.equal(events.events.length, 2);
 });
 
+test("aggregate event retention produces a Studio-openable trace below 8 MiB", async (t) => {
+  const plan = approvedFakePlan(t);
+  const trace = await runApprovedPlan(plan, {
+    env: fakeEnv(plan, { FAKE_AGENT_SCENARIO: "aggregate-overflow" }),
+  });
+  const encodedBytes = Buffer.byteLength(JSON.stringify(trace), "utf8");
+
+  assert.equal(trace.status, "truncated");
+  assert.equal(trace.failure.kind, "output_truncated");
+  assert.equal(validateArtifact(trace), true);
+  assert.ok(trace.events.length > 0);
+  assert.ok(trace.events.length < 40);
+  assert.equal(trace.process.stderr_bytes, 256 * 1024);
+  assert.ok(encodedBytes <= 6 * 1024 * 1024);
+  assert.ok(encodedBytes < studioServerLimits.maxArtifactBytes);
+
+  const studio = createStudioServer({
+    artifact: trace,
+    assetsDir: join(testDirectory, "..", "assets"),
+  });
+  const address = await studio.listen();
+  try {
+    const response = await fetch(
+      `http://${address.address}:${address.port}/api/artifact?token=${encodeURIComponent(studio.token)}`,
+    );
+    assert.equal(response.status, 200);
+    const opened = await response.json();
+    assert.equal(opened.status, "truncated");
+    assert.equal(validateArtifact(opened), true);
+  } finally {
+    await studio.close();
+  }
+});
+
 test("deep valid JSON events become bounded protocol diagnostics", async (t) => {
   const plan = approvedFakePlan(t);
   const trace = await runApprovedPlan(plan, {
@@ -592,9 +688,13 @@ test("deep valid JSON events become bounded protocol diagnostics", async (t) => 
 test("pre-aborted cancellation deterministically records absent provider terminal evidence", async (t) => {
   const controller = new AbortController();
   const plan = approvedFakePlan(t);
+  const versionAudit = join(plan.cwd, "version-audit.json");
   controller.abort();
   const trace = await runApprovedPlan(plan, {
-    env: fakeEnv(plan, { FAKE_AGENT_SCENARIO: "cancel" }),
+    env: fakeEnv(plan, {
+      FAKE_AGENT_SCENARIO: "cancel",
+      FAKE_AGENT_VERSION_AUDIT: versionAudit,
+    }),
     signal: controller.signal,
     limits: { cancellationGraceMs: 100 },
   });
@@ -602,6 +702,9 @@ test("pre-aborted cancellation deterministically records absent provider termina
   assert.equal(trace.status, "cancelled");
   assert.equal(trace.failure.kind, "cancelled_by_wrapper");
   assert.equal(trace.failure.provider_terminal_observed, false);
+  assert.equal(trace.adapter.executable, "codex");
+  assert.equal(trace.adapter.version, null);
+  assert.equal(existsSync(versionAudit), false);
 });
 
 test("normalization exposes observed provenance and never asserts causal edges", () => {

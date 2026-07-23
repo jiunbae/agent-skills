@@ -16,7 +16,10 @@ import {
   deleteNode,
   editNode,
   editPlan,
+  edgeControlPolicy,
   graphSemantics,
+  markApprovedPlanDownloaded,
+  markPromotedDraftDownloaded,
   moveNode,
   promoteToSkillDraft,
   removeEdge,
@@ -305,17 +308,25 @@ function renderInspector() {
 function renderEdges() {
   const semantics = graphSemantics(state);
   const isTrace = state.kind === "trace";
+  const controls = edgeControlPolicy(state);
   element("edgeEyebrow").textContent = semantics.edgeEyebrow;
   element("edgeHeading").textContent = semantics.edgeHeading;
-  element("newEdgeForm").hidden = isTrace;
-  const structuralReason = structuralEditBlockReason(state);
-  replaceOptions(element("edgeFrom"), element("edgeFrom").value || state.nodes[0]?.id);
-  replaceOptions(
-    element("edgeTo"),
-    element("edgeTo").value || state.nodes[1]?.id || state.nodes[0]?.id,
-  );
+  element("newEdgeForm").hidden = !controls.editable;
+  const controlNotice = element("edgeControlNotice");
+  controlNotice.hidden = controls.editable;
+  controlNotice.textContent = controls.reason;
+  if (controls.editable) {
+    replaceOptions(element("edgeFrom"), element("edgeFrom").value || state.nodes[0]?.id);
+    replaceOptions(
+      element("edgeTo"),
+      element("edgeTo").value || state.nodes[1]?.id || state.nodes[0]?.id,
+    );
+  } else {
+    element("edgeFrom").replaceChildren();
+    element("edgeTo").replaceChildren();
+  }
   for (const id of ["edgeFrom", "edgeTo", "edgeKind", "addEdge"]) {
-    element(id).disabled = Boolean(structuralReason) || state.nodes.length === 0;
+    element(id).disabled = !controls.editable || state.nodes.length === 0;
   }
   const list = element("edgeList");
   list.setAttribute("aria-label", semantics.edgeAriaLabel);
@@ -323,8 +334,32 @@ function renderEdges() {
     list.replaceChildren(create("li", "empty-state", semantics.emptyEdges));
     return;
   }
+  const nodesById = new Map(state.nodes.map((node) => [node.id, node]));
   const rows = state.edges.map((edge, index) => {
     const item = create("li", "edge-row");
+    if (!controls.editable) {
+      const from = nodesById.get(edge.from);
+      const to = nodesById.get(edge.to);
+      item.classList.add("edge-row-readonly");
+      item.append(
+        create(
+          "span",
+          "edge-route",
+          `${from ? nodeLabel(from) : edge.from} → ${to ? nodeLabel(to) : edge.to}`,
+        ),
+        create("span", "edge-kind", edge.kind),
+      );
+      if (isTrace) {
+        item.append(
+          create(
+            "span",
+            "edge-provenance",
+            `${edge.provenance === "inferred" ? "Inferred order" : edge.provenance} · not causality`,
+          ),
+        );
+      }
+      return item;
+    }
     const fromSelect = create("select");
     fromSelect.id = `edge-${index}-from`;
     fromSelect.setAttribute(
@@ -352,7 +387,7 @@ function renderEdges() {
       option("sequence", "Sequence", edge.kind),
       option("parallel", "Parallel", edge.kind),
     );
-    const edgeReadOnly = Boolean(structuralReason || edge.readOnly);
+    const edgeReadOnly = Boolean(edge.readOnly);
     fromSelect.disabled = edgeReadOnly;
     toSelect.disabled = edgeReadOnly;
     kindSelect.disabled = edgeReadOnly;
@@ -394,6 +429,14 @@ function renderEdges() {
 }
 
 function renderSourceAndDiff() {
+  if (state.kind === "trace") {
+    element("sourceMode").textContent = "Unavailable";
+    element("sourcePreview").textContent =
+      "Trace Markdown is unavailable. A trace contains observed event evidence, not source Skill Markdown. Promote the trace to create a separate reviewable skill draft.";
+    element("diffPreview").textContent =
+      "Trace Markdown diff is unavailable because no source Skill candidate exists. A promoted trace draft remains available from the Plan view.";
+    return;
+  }
   element("sourceMode").textContent = state.dirty ? "Candidate" : "Original";
   try {
     element("sourcePreview").textContent = buildCandidateMarkdown(state);
@@ -407,6 +450,11 @@ function renderSourceAndDiff() {
 
 function renderPlan() {
   const canPreparePlan = Boolean(state.workflowArtifact) && state.kind !== "trace";
+  element("planForm").hidden = !canPreparePlan;
+  element("planPayloadPanel").hidden = !canPreparePlan;
+  element("planNotice").textContent = canPreparePlan
+    ? "Workflow Studio prepares and hashes this plan, but this browser does not run an agent. Any plan or graph edit clears approval."
+    : "Plan inputs are unavailable for trace evidence. Promote the trace to create a separate reviewable skill draft.";
   element("planAgent").value = state.plan.adapter;
   element("planCwd").value = state.plan.cwd;
   element("planSafety").value = state.plan.safety;
@@ -419,7 +467,9 @@ function renderPlan() {
   const approval = state.plan.approval;
   element("approvalBadge").textContent = approval
     ? `Approved ${approval.digest.slice(0, 12)}`
-    : "Not approved";
+    : canPreparePlan
+      ? "Not approved"
+      : "Not applicable";
   element("downloadPlan").disabled = !canPreparePlan || !approval;
   element("approvePlan").disabled =
     !canPreparePlan ||
@@ -721,9 +771,7 @@ function installHandlers() {
       return;
     }
     downloadJson(artifact, "approved-plan.json");
-    state.planDirty = false;
-    setStatus("Downloaded the approved plan; no agent was run.");
-    render();
+    mutate(markApprovedPlanDownloaded(state), "downloadPlan");
   });
   element("downloadDraft").addEventListener("click", () => {
     if (!state.promotedDraft) return;
@@ -732,9 +780,7 @@ function installHandlers() {
       "text/markdown;charset=utf-8",
       "promoted-skill-draft.md",
     );
-    state.draftDirty = false;
-    setStatus("Downloaded the promoted skill draft.");
-    render();
+    mutate(markPromotedDraftDownloaded(state), "downloadDraft");
   });
 
   window.addEventListener("beforeunload", (event) => {
