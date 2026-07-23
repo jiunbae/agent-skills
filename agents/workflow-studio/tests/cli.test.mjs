@@ -78,8 +78,9 @@ async function fakeAgentEnv(item, agent, scenario) {
   };
 }
 
-async function fixture() {
+async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "workflow-studio-cli-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
   const skill = join(directory, "SKILL.md");
   const bytes = Buffer.from(`---
 name: cli-fixture
@@ -122,8 +123,8 @@ function failure(run, code) {
   return diagnostic;
 }
 
-test("real import, edit, diff, and export preserve a no-op byte-for-byte", async () => {
-  const item = await fixture();
+test("real import, edit, diff, and export preserve a no-op byte-for-byte", async (t) => {
+  const item = await fixture(t);
   const importedPath = join(item.directory, "workflow.json");
   success(await invoke(["import", item.skill, "--out", importedPath]));
 
@@ -176,8 +177,8 @@ test("real import, edit, diff, and export preserve a no-op byte-for-byte", async
   assert.match(editedMarkdown, /Opaque text must survive\./u);
 });
 
-test("plan approval is explicit and both approval and run reject mutation", async () => {
-  const item = await fixture();
+test("plan approval is explicit and both approval and run reject mutation", async (t) => {
+  const item = await fixture(t);
   const workflowPath = join(item.directory, "workflow.json");
   const planPath = join(item.directory, "plan.json");
   success(await invoke(["import", item.skill, "--out", workflowPath]));
@@ -225,12 +226,12 @@ test("plan approval is explicit and both approval and run reject mutation", asyn
       "--trace",
       join(item.directory, "must-not-run.json"),
     ]),
-    "INVALID_PLAN",
+    "GRAPH_SOURCE_MISMATCH",
   );
 });
 
-test("validate, approve, and run agree on Skill, approval, and cwd errors", async () => {
-  const item = await fixture();
+test("validate, approve, and run agree on Skill, approval, and cwd errors", async (t) => {
+  const item = await fixture(t);
   const workflowPath = join(item.directory, "workflow.json");
   const planPath = join(item.directory, "plan.json");
   const approvedPath = join(item.directory, "approved.json");
@@ -316,8 +317,8 @@ test("validate, approve, and run agree on Skill, approval, and cwd errors", asyn
   );
 });
 
-test("CLI plans canonicalize cwd aliases and report a disappeared cwd as INVALID_CWD", async () => {
-  const item = await fixture();
+test("CLI plans canonicalize cwd aliases and report a disappeared cwd as INVALID_CWD", async (t) => {
+  const item = await fixture(t);
   const runtimeCwd = join(item.directory, "runtime-cwd");
   const cwdAlias = join(item.directory, "runtime-cwd-alias");
   await mkdir(runtimeCwd);
@@ -376,8 +377,8 @@ test("CLI plans canonicalize cwd aliases and report a disappeared cwd as INVALID
   );
 });
 
-test("promote writes a new standalone skill directory and refuses overwrite", async () => {
-  const item = await fixture();
+test("promote writes a new standalone skill directory and refuses overwrite", async (t) => {
+  const item = await fixture(t);
   const workflowPath = join(item.directory, "workflow.json");
   const planPath = join(item.directory, "plan.json");
   success(await invoke(["import", item.skill, "--out", workflowPath]));
@@ -427,7 +428,55 @@ test("promote writes a new standalone skill directory and refuses overwrite", as
   );
 });
 
-test("run exits nonzero for missing and non-complete CLIs while preserving traces", async () => {
+test("CLI trace promotion retains unknown topology and normalizes hostile display text", async (t) => {
+  const item = await fixture(t);
+  const approvedPath = await approvedPlan(item);
+  const tracePath = join(item.directory, "unknown-trace.json");
+  const env = await fakeAgentEnv(item, "codex", "codex-unknown");
+  success(
+    await invoke(["run", approvedPath, "--trace", tracePath], { env }),
+  );
+  success(await invoke(["validate", tracePath]));
+
+  const promoted = join(item.directory, "promoted-unknown");
+  success(await invoke([
+    "promote",
+    tracePath,
+    "--name",
+    "promoted-unknown-trace",
+    "--description",
+    "## Workflow\n\n### Step 77: Injected description",
+    "--out",
+    promoted,
+  ]));
+  const promotedSkill = join(promoted, "SKILL.md");
+  const promotedWorkflowPath = join(item.directory, "promoted-unknown.json");
+  success(await invoke([
+    "import",
+    promotedSkill,
+    "--out",
+    promotedWorkflowPath,
+  ]));
+  success(await invoke(["validate", promotedWorkflowPath]));
+
+  const trace = JSON.parse(await readFile(tracePath, "utf8"));
+  const workflow = JSON.parse(await readFile(promotedWorkflowPath, "utf8"));
+  const markdown = await readFile(promotedSkill, "utf8");
+  assert.equal(workflow.graph.nodes.length, trace.events.length);
+  assert.equal(workflow.graph.edges.length, trace.inferred_edges.length);
+  assert.ok(
+    workflow.graph.nodes.some((node) => node.title === "provider.unknown"),
+  );
+  assert.equal(
+    workflow.diagnostics.some(
+      (diagnostic) => diagnostic.code === "managed.source-conflict",
+    ),
+    false,
+  );
+  assert.doesNotMatch(markdown, /^## Workflow\n\n### Step 77/mu);
+});
+
+test("run exits nonzero for missing and non-complete CLIs while preserving traces", async (t) => {
   for (const itemCase of [
     {
       scenario: null,
@@ -441,6 +490,12 @@ test("run exits nonzero for missing and non-complete CLIs while preserving trace
       expectedStatus: "failed",
     },
     {
+      scenario: "codex-contradictory",
+      expectedCode: "RUN_FAILED",
+      expectedStatus: "failed",
+      expectedFailure: "agent_failed",
+    },
+    {
       scenario: "partial",
       expectedCode: "RUN_PROTOCOL_ERROR",
       expectedStatus: "protocol-error",
@@ -451,7 +506,7 @@ test("run exits nonzero for missing and non-complete CLIs while preserving trace
       expectedStatus: "truncated",
     },
   ]) {
-    const item = await fixture();
+    const item = await fixture(t);
     const approvedPath = await approvedPlan(item);
     const tracePath = join(item.directory, `${itemCase.expectedStatus}-trace.json`);
     const env = itemCase.scenario
@@ -474,8 +529,70 @@ test("run exits nonzero for missing and non-complete CLIs while preserving trace
   }
 });
 
-test("validate rejects bare plan, bare trace, and invalid workflow entries", async () => {
-  const item = await fixture();
+test("CLI accepts complete EOF JSON and saves stdin delivery failures canonically", async (t) => {
+  const completeItem = await fixture(t);
+  const completeApproved = await approvedPlan(completeItem);
+  const completeTracePath = join(completeItem.directory, "complete-eof-trace.json");
+  const completeEnv = await fakeAgentEnv(
+    completeItem,
+    "codex",
+    "codex-complete-no-final-lf",
+  );
+  success(
+    await invoke(
+      ["run", completeApproved, "--trace", completeTracePath],
+      { env: completeEnv },
+    ),
+  );
+  success(await invoke(["validate", completeTracePath]));
+  const completeTrace = JSON.parse(await readFile(completeTracePath, "utf8"));
+  assert.equal(completeTrace.status, "completed");
+  assert.equal(completeTrace.events.at(-1).kind, "turn.completed");
+
+  const failedItem = await fixture(t);
+  const workflowPath = join(failedItem.directory, "workflow.json");
+  const promptPath = join(failedItem.directory, "large-prompt.txt");
+  const planPath = join(failedItem.directory, "large-plan.json");
+  const approvedPath = join(failedItem.directory, "large-approved.json");
+  const failedTracePath = join(failedItem.directory, "stdin-failed-trace.json");
+  await writeFile(promptPath, "x".repeat(8 * 1024 * 1024));
+  success(await invoke(["import", failedItem.skill, "--out", workflowPath]));
+  success(await invoke([
+    "plan",
+    workflowPath,
+    "--prompt-file",
+    promptPath,
+    "--agent",
+    "codex",
+    "--cwd",
+    failedItem.directory,
+    "--safety",
+    "read-only",
+    "--out",
+    planPath,
+  ]));
+  success(await invoke(["approve", planPath, "--out", approvedPath]));
+  const failedEnv = await fakeAgentEnv(
+    failedItem,
+    "codex",
+    "early-stdin-close",
+  );
+  const diagnostic = failure(
+    await invoke(
+      ["run", approvedPath, "--trace", failedTracePath],
+      { env: failedEnv },
+    ),
+    "RUN_FAILED",
+  );
+  assert.equal(diagnostic.details.artifact, failedTracePath);
+  success(await invoke(["validate", failedTracePath]));
+  const failedTrace = JSON.parse(await readFile(failedTracePath, "utf8"));
+  assert.equal(failedTrace.status, "failed");
+  assert.equal(failedTrace.failure.kind, "input_delivery_failed");
+});
+
+test("validate rejects bare plan, bare trace, and invalid workflow entries", async (t) => {
+  const item = await fixture(t);
   for (const [name, artifact, expectedCode] of [
     ["bare-plan.json", { ir_version: "1.0", kind: "plan" }, "INVALID_PLAN"],
     ["bare-trace.json", { ir_version: "1.0", kind: "trace" }, "INVALID_TRACE"],
@@ -494,8 +611,8 @@ test("validate rejects bare plan, bare trace, and invalid workflow entries", asy
   failure(await invoke(["validate", invalidEntryPath]), "INVALID_ENTRY_NODES");
 });
 
-test("run reserves the trace output before invoking the native agent", async () => {
-  const item = await fixture();
+test("run reserves the trace output before invoking the native agent", async (t) => {
+  const item = await fixture(t);
   const approvedPath = await approvedPlan(item);
   const tracePath = join(item.directory, "existing-trace.json");
   const auditPath = join(item.directory, "agent-audit.json");
@@ -513,9 +630,9 @@ test("run reserves the trace output before invoking the native agent", async () 
   await assert.rejects(readFile(auditPath, "utf8"), { code: "ENOENT" });
 });
 
-test("run maps SIGINT and SIGTERM to AbortSignal cancellation and saves traces", async () => {
+test("run maps SIGINT and SIGTERM to AbortSignal cancellation and saves traces", async (t) => {
   for (const signal of ["SIGINT", "SIGTERM"]) {
-    const item = await fixture();
+    const item = await fixture(t);
     const approvedPath = await approvedPlan(item);
     const tracePath = join(item.directory, `${signal}-cancelled-trace.json`);
     const env = await fakeAgentEnv(item, "codex", "cancel");
@@ -588,7 +705,7 @@ function get(url) {
 }
 
 test("studio starts without a model, serves its token URL, and stops on SIGINT", async (t) => {
-  const item = await fixture();
+  const item = await fixture(t);
   const child = spawn(
     process.execPath,
     [CLI, "studio", item.skill, "--host", "loopback", "--port", "0"],

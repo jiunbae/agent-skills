@@ -30,8 +30,6 @@ const SHA256_CONSTANTS = new Uint32Array([
   0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
   0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ]);
-const LEGACY_MANAGED_START = "<!-- workflow-studio:managed:start";
-const LEGACY_MANAGED_END = "workflow-studio:managed:end -->";
 const MANAGED_INLINE_PREFIX = "<!-- workflow-studio:v1 ";
 
 function clone(value) {
@@ -313,6 +311,27 @@ function normalizeEdge(edge, index) {
   };
 }
 
+function inferredEdgeMetadata(edge) {
+  if (
+    edge.source_provenance !== "inferred" &&
+    edge.provenance !== "inferred"
+  ) {
+    return {};
+  }
+  const candidates = [
+    edge.source_confidence,
+    typeof edge.confidence === "number" ? edge.confidence : undefined,
+    edge.confidence?.score,
+  ];
+  const sourceConfidence = candidates.find(
+    (value) => typeof value === "number" && value >= 0 && value <= 1,
+  );
+  return {
+    source_provenance: "inferred",
+    source_confidence: sourceConfidence ?? 0.5,
+  };
+}
+
 function traceEventNode(event, index) {
   const sequence = Number.isInteger(event?.sequence) ? event.sequence : index;
   const reference = {
@@ -432,6 +451,7 @@ export function normalizeArtifact(payload) {
     throw new TypeError("Artifact must be a JSON object.");
   }
   const graph = artifactGraph(artifact);
+  const workflow = workflowArtifact(artifact);
   const rawNodes = firstDefined(graph.nodes, artifact.nodes, []);
   const rawEdges = firstDefined(graph.edges, artifact.edges, []);
   const bytes = sourceBytes(artifact);
@@ -454,13 +474,14 @@ export function normalizeArtifact(payload) {
       node.original.body,
     );
   }
+  const edges = asArray(rawEdges).map(normalizeEdge);
   return {
     artifact: clone(artifact),
-    workflowArtifact: clone(workflowArtifact(artifact)),
+    workflowArtifact: clone(workflow),
     kind: String(firstDefined(artifact.kind, "workflow")),
     irVersion: String(firstDefined(artifact.ir_version, artifact.version, "1.0")),
     nodes,
-    edges: asArray(rawEdges).map(normalizeEdge),
+    edges,
     sourceBytes: bytes,
     sourcePath: String(
       firstDefined(
@@ -491,6 +512,18 @@ export function normalizeArtifact(payload) {
       firstDefined(artifact.opaque_spans, artifact.source?.opaque_spans, []),
     ),
     diagnostics: asArray(artifact.diagnostics),
+    managedMetadata: analyzeManagedMetadata(
+      UTF8_DECODER.decode(bytes),
+      nodes,
+      edges,
+      Boolean(
+        firstDefined(
+          workflow?.revision?.dirty,
+          workflow?.editor?.dirty,
+          false,
+        ),
+      ),
+    ),
   };
 }
 
@@ -679,6 +712,47 @@ export function setActiveView(state, view) {
   const next = clone(state);
   next.activeView = view;
   return next;
+}
+
+export function graphSemantics(state) {
+  if (state.kind === "trace") {
+    return {
+      graphEyebrow: "Observed execution evidence",
+      graphHeading: "Trace event graph",
+      graphLegend: "Nodes = observed events · Arrows = inferred order, not causality",
+      graphAriaLabel: "Observed trace events with inferred ordering",
+      graphTitle: "Observed trace event graph",
+      graphDescription:
+        "Observed provider events connected by inferred order without asserting causal relationships.",
+      outlineEyebrow: "Keyboard evidence path",
+      outlineHeading: "Observed event outline",
+      outlineAriaLabel: "Observed trace events",
+      inspectorEyebrow: "Event selection",
+      inspectorHeading: "Event inspector",
+      edgeEyebrow: "Inferred order",
+      edgeHeading: "Inferred event order",
+      edgeAriaLabel: "Inferred event ordering, not causality",
+      emptyEdges: "No inferred event-order edges.",
+    };
+  }
+  return {
+    graphEyebrow: "Declared flow",
+    graphHeading: "Workflow graph",
+    graphLegend: "Solid = sequence · Dashed = parallel",
+    graphAriaLabel: "Visual workflow graph",
+    graphTitle: "Visual workflow graph",
+    graphDescription:
+      "A visual companion to the keyboard-operable ordered workflow outline.",
+    outlineEyebrow: "Keyboard editing path",
+    outlineHeading: "Ordered outline",
+    outlineAriaLabel: "Workflow steps",
+    inspectorEyebrow: "Selection",
+    inspectorHeading: "Step inspector",
+    edgeEyebrow: "Dependencies",
+    edgeHeading: "Edges",
+    edgeAriaLabel: "Workflow edges",
+    emptyEdges: "No dependency edges.",
+  };
 }
 
 export function editNode(state, nodeId, field, value) {
@@ -889,6 +963,233 @@ function advanceMarkdownFence(fence, text) {
   };
 }
 
+function markdownLines(text) {
+  const lines = [];
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== "\n") continue;
+    const contentEnd =
+      index > start && text[index - 1] === "\r" ? index - 1 : index;
+    lines.push({
+      start,
+      contentEnd,
+      end: index + 1,
+      text: text.slice(start, contentEnd),
+    });
+    start = index + 1;
+  }
+  if (start < text.length || text.length === 0) {
+    lines.push({
+      start,
+      contentEnd: text.length,
+      end: text.length,
+      text: text.slice(start),
+    });
+  }
+  return lines;
+}
+
+function fencedRanges(text) {
+  const ranges = [];
+  let fence = null;
+  let rangeStart = null;
+  for (const line of markdownLines(text)) {
+    const transition = advanceMarkdownFence(fence, line.text);
+    if (transition.boundary === "open") {
+      fence = transition.fence;
+      rangeStart = line.start;
+    } else if (transition.boundary === "close") {
+      ranges.push({ start: rangeStart, end: line.end });
+      fence = transition.fence;
+      rangeStart = null;
+    }
+  }
+  if (fence && rangeStart !== null) {
+    ranges.push({ start: rangeStart, end: text.length });
+  }
+  return ranges;
+}
+
+function managedMatches(text, expression) {
+  const ranges = fencedRanges(text);
+  return [...text.matchAll(expression)]
+    .map((match) => ({
+      match,
+      start: match.index,
+      end: match.index + match[0].length,
+    }))
+    .filter(
+      (candidate) =>
+        !ranges.some(
+          (range) =>
+            candidate.start < range.end && candidate.end > range.start,
+        ),
+    );
+}
+
+function managedDeclarations(text) {
+  const blocks = managedMatches(
+    text,
+    /^<!-- workflow-studio:managed:start[^\r\n]*\r?\n([\s\S]*?)\r?\nworkflow-studio:managed:end -->[ \t]*\r?$/gmu,
+  ).map((candidate) => ({ ...candidate, format: "block" }));
+  const inline = managedMatches(
+    text,
+    /^<!-- workflow-studio:v1 ([A-Za-z0-9_-]+) -->[ \t]*\r?$/gmu,
+  )
+    .filter(
+      (candidate) =>
+        !blocks.some(
+          (block) =>
+            candidate.start < block.end && candidate.end > block.start,
+        ),
+    )
+    .map((candidate) => ({ ...candidate, format: "inline" }));
+  return [...blocks, ...inline].sort((left, right) => left.start - right.start);
+}
+
+function decodeBase64Url(value) {
+  const normalized = String(value)
+    .replaceAll("-", "+")
+    .replaceAll("_", "/");
+  const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
+  return UTF8_FATAL_DECODER.decode(decodeBase64(`${normalized}${padding}`));
+}
+
+function parseManagedDeclaration(declaration) {
+  try {
+    const json =
+      declaration.format === "inline"
+        ? decodeBase64Url(declaration.match[1])
+        : declaration.match[1];
+    const payload = JSON.parse(json);
+    return payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function managedPayloadMatchesGraph(payload, nodes, edges) {
+  if (
+    payload?.ir_version !== "1.0" ||
+    !Array.isArray(payload.nodes) ||
+    !Array.isArray(payload.edges) ||
+    payload.nodes.length !== nodes.length ||
+    payload.edges.length !== edges.length
+  ) {
+    return false;
+  }
+  if (
+    payload.nodes.some(
+      (node, index) =>
+        node?.id !== nodes[index].id ||
+        node.order !== index ||
+        node.title_sha256 !== sha256HexBytes(UTF8.encode(nodes[index].title)),
+    )
+  ) {
+    return false;
+  }
+  const currentEdges = new Map(edges.map((edge) => [edge.id, edge]));
+  return payload.edges.every((edge) => {
+    const current = currentEdges.get(edge?.id);
+    if (
+      !current ||
+      edge.from !== current.from ||
+      edge.to !== current.to ||
+      edge.kind !== current.kind
+    ) {
+      return false;
+    }
+    return (
+      edge.source_provenance !== "inferred" ||
+      current.provenance === "inferred"
+    );
+  });
+}
+
+function managedPayloadHasValidShape(payload) {
+  if (
+    payload?.ir_version !== "1.0" ||
+    !Array.isArray(payload.nodes) ||
+    !Array.isArray(payload.edges)
+  ) {
+    return false;
+  }
+  const nodeIds = new Set();
+  for (const [index, node] of payload.nodes.entries()) {
+    if (
+      !node ||
+      typeof node.id !== "string" ||
+      !node.id ||
+      nodeIds.has(node.id) ||
+      node.order !== index ||
+      !/^[a-f0-9]{64}$/u.test(node.title_sha256)
+    ) {
+      return false;
+    }
+    nodeIds.add(node.id);
+  }
+  const edgeIds = new Set();
+  return payload.edges.every((edge) => {
+    if (
+      !edge ||
+      typeof edge.id !== "string" ||
+      !edge.id ||
+      edgeIds.has(edge.id) ||
+      !nodeIds.has(edge.from) ||
+      !nodeIds.has(edge.to) ||
+      edge.from === edge.to ||
+      !EDGE_KINDS.has(edge.kind)
+    ) {
+      return false;
+    }
+    edgeIds.add(edge.id);
+    return (
+      edge.source_provenance === undefined ||
+      (edge.source_provenance === "inferred" &&
+        typeof edge.source_confidence === "number" &&
+        edge.source_confidence >= 0 &&
+        edge.source_confidence <= 1)
+    );
+  });
+}
+
+function analyzeManagedMetadata(
+  text,
+  nodes,
+  edges,
+  allowGraphDivergence = false,
+) {
+  const declarations = managedDeclarations(text);
+  if (declarations.length === 0) return { status: "none" };
+  if (declarations.length > 1) {
+    return {
+      status: "conflict",
+      message:
+        "Multiple Workflow Studio managed declarations conflict; remove the stale or duplicate declaration before editing.",
+    };
+  }
+  const declaration = declarations[0];
+  const payload = parseManagedDeclaration(declaration);
+  if (
+    !managedPayloadHasValidShape(payload) ||
+    (!allowGraphDivergence &&
+      !managedPayloadMatchesGraph(payload, nodes, edges))
+  ) {
+    return {
+      status: "conflict",
+      message:
+        "Workflow Studio managed metadata is invalid or no longer matches the source graph; fix it before editing.",
+    };
+  }
+  return {
+    status: "trusted",
+    format: declaration.format,
+    text: declaration.match[0],
+  };
+}
+
 function nodeHeadingLevel(state, node) {
   const heading = spanFrom(asObject(node.source_map).heading);
   if (
@@ -932,6 +1233,9 @@ function bodyStructuralIssue(body, headingLevel) {
 export function validateState(state) {
   const errors = [];
   const warnings = [];
+  if (state.managedMetadata?.status === "conflict") {
+    errors.push(state.managedMetadata.message);
+  }
   const ids = new Set();
   const structuralLevel = defaultHeadingLevel(state);
   for (const node of state.nodes) {
@@ -1144,6 +1448,7 @@ function managedPayload(state) {
       from: edge.from,
       to: edge.to,
       kind: edge.kind,
+      ...inferredEdgeMetadata(edge),
     })),
   };
 }
@@ -1210,8 +1515,9 @@ function canonicalStructuralBytes(state) {
   const newline = state.sourceNewline === "crlf" ? "\r\n" : "\n";
   const generated = state.nodes.map(
     (node, index) =>
-      `### Step ${index + 1}: ${node.title}${newline}` +
-      `${node.body.replace(/\r?\n$/u, "")}${newline}`,
+      `### Step ${index + 1}: ${node.title}${newline}${node.body}${
+        node.body.length > 0 && !/\r?\n$/u.test(node.body) ? newline : ""
+      }`,
   );
 
   if (!spans.length) {
@@ -1225,7 +1531,7 @@ function canonicalStructuralBytes(state) {
     return concatBytes([
       original,
       UTF8.encode(
-        `${separator}${newline}## Workflow${newline}${newline}${generated.join(newline)}`,
+        `${separator}${newline}## Workflow${newline}${newline}${generated.join("")}`,
       ),
     ]);
   }
@@ -1242,43 +1548,49 @@ function canonicalStructuralBytes(state) {
   const headingLevel = firstLine.match(/^(#{2,6})/u)?.[1] ?? "###";
   const sections = state.nodes.map(
     (node, index) =>
-      `${headingLevel} Step ${index + 1}: ${node.title}${newline}` +
-      `${node.body.replace(/\r?\n$/u, "")}${newline}`,
+      `${headingLevel} Step ${index + 1}: ${node.title}${newline}${node.body}${
+        node.body.length > 0 && !/\r?\n$/u.test(node.body) ? newline : ""
+      }`,
   );
   return concatBytes([
     original.subarray(0, regionStart),
-    UTF8.encode(sections.join(newline)),
+    UTF8.encode(sections.join("")),
     original.subarray(regionEnd),
   ]);
 }
 
-function removeManagedBlock(text) {
-  const insideFence = (offset) => {
-    let fence = null;
-    for (const line of text.slice(0, offset).split(/\r?\n/u)) {
-      fence = advanceMarkdownFence(fence, line).fence;
+function removeTrustedManagedDeclaration(text, state) {
+  const declarations = managedDeclarations(text);
+  if (state.managedMetadata?.status === "conflict") {
+    throw new Error(state.managedMetadata.message);
+  }
+  if (state.managedMetadata?.status !== "trusted") {
+    if (declarations.length > 0) {
+      throw new Error(
+        "Unexpected Workflow Studio managed metadata appeared while rendering.",
+      );
     }
-    return Boolean(fence);
-  };
-  const removeEndMatch = (value, expression) => {
-    const match = value.match(expression);
-    if (!match || insideFence(match.index)) return value;
-    return value.slice(0, match.index);
-  };
-  const inline = removeEndMatch(
-    text,
-    /<!-- workflow-studio:v1 [A-Za-z0-9_-]+ -->[ \t]*(?:\r?\n)?$/u,
-  );
-  return removeEndMatch(
-    inline,
-    new RegExp(
-      `${LEGACY_MANAGED_START.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}` +
-        `[^\r\n]*\r?\n[\\s\\S]*?\r?\n` +
-        `${LEGACY_MANAGED_END.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}` +
-        `[ \t]*(?:\r?\n)?$`,
-      "u",
-    ),
-  );
+    return text;
+  }
+  if (declarations.length > 1) {
+    throw new Error(
+      "The trusted Workflow Studio managed declaration changed while rendering.",
+    );
+  }
+  if (declarations.length === 0) return text;
+  const declaration = declarations[0];
+  let start = declaration.start;
+  let end = declaration.end;
+  if (text.slice(end, end + 2) === "\r\n") {
+    end += 2;
+  } else if (text[end] === "\n") {
+    end += 1;
+  }
+  const newline = state.sourceNewline === "crlf" ? "\r\n" : "\n";
+  if (text.slice(0, start).endsWith(`${newline}${newline}`)) {
+    start -= newline.length;
+  }
+  return `${text.slice(0, start)}${text.slice(end)}`;
 }
 
 export function buildCandidateBytes(state) {
@@ -1313,7 +1625,7 @@ export function buildCandidateBytes(state) {
   let candidate = UTF8_DECODER.decode(candidateBytes);
   const needsManaged = state.dirty;
   if (needsManaged) {
-    candidate = removeManagedBlock(candidate);
+    candidate = removeTrustedManagedDeclaration(candidate, state);
     const json = canonicalJson(managedPayload(state));
     const encoded = bytesToBase64(UTF8.encode(json))
       .replaceAll("+", "-")
@@ -1426,6 +1738,7 @@ function graphSnapshot(state) {
         },
       ),
       provenance: edge.provenance ?? "managed",
+      ...inferredEdgeMetadata(edge),
       editable: true,
     })),
   };
@@ -1661,6 +1974,14 @@ export async function approvePlan(state) {
   return next;
 }
 
+export function acceptApprovalResult(
+  currentState,
+  approvalSource,
+  approvedState,
+) {
+  return currentState === approvalSource ? approvedState : currentState;
+}
+
 export function approvedPlanArtifact(state) {
   if (!state.plan.approval) return null;
   const artifact = buildPlanArtifact(state);
@@ -1684,6 +2005,23 @@ function yamlScalar(value) {
 function singleLineTitle(value, fallback) {
   const title = String(value).replace(/[\r\n]+/gu, " ").trim();
   return title || fallback;
+}
+
+function normalizedPromotionBody(value, fallback) {
+  const body = String(value).trim() || fallback;
+  let fence = null;
+  return body
+    .split(/\r?\n/u)
+    .map((line) => {
+      const before = fence;
+      const transition = advanceMarkdownFence(fence, line);
+      fence = transition.fence;
+      if (before || transition.boundary === "open") return line;
+      const heading = line.match(/^( {0,3})(#{1,3})([ \t]+)(.*)$/u);
+      if (!heading) return line;
+      return `${heading[1]}####${heading[3]}${heading[4]}`;
+    })
+    .join("\n");
 }
 
 export function promoteToSkillDraft(input) {
@@ -1765,7 +2103,13 @@ export function promoteToSkillDraft(input) {
     if (node.provenance) {
       lines.push(`Provenance: \`${node.provenance}\``, "");
     }
-    lines.push(node.body || "Review and complete this step.", "");
+    lines.push(
+      normalizedPromotionBody(
+        node.body,
+        "Review and complete this step.",
+      ),
+      "",
+    );
   });
   lines.push(
     "## Promotion warnings",
@@ -1826,4 +2170,18 @@ export function traceProvenanceSummary(state) {
     summary[key] += 1;
   }
   return summary;
+}
+
+export function traceSummaryMetrics(state) {
+  const metrics = Object.entries(traceProvenanceSummary(state)).map(
+    ([name, count]) => ({ name, count, unit: "nodes" }),
+  );
+  if (state.kind === "trace") {
+    metrics.push({
+      name: "inferred order",
+      count: state.edges.filter((edge) => edge.provenance === "inferred").length,
+      unit: "edges",
+    });
+  }
+  return metrics;
 }

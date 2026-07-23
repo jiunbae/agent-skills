@@ -57,8 +57,6 @@ function workflowFixture() {
     sourcePath: "/virtual/adapter-fixture/SKILL.md",
   });
   workflow.artifact_id = "workflow-adapter-fixture";
-  workflow.graph.nodes[0].id = "step-inspect";
-  workflow.graph.entry_node_ids = ["step-inspect"];
   return workflow;
 }
 
@@ -140,9 +138,10 @@ test("Codex uses fixed argv and sends prompt and Skill only through stdin", asyn
 });
 
 test("edited workflow plans record and deliver exact rendered Skill bytes", (t) => {
-  const workflow = applyOperation(workflowFixture(), {
+  const original = workflowFixture();
+  const workflow = applyOperation(original, {
     type: "edit-node",
-    node_id: "step-inspect",
+    node_id: original.graph.nodes[0].id,
     title: "Reviewed candidate",
   });
   const cwd = makeTemporaryWorkspace(t);
@@ -226,9 +225,7 @@ test("approval binds every mutable plan envelope field", (t) => {
   delete staleRevision.approval;
   assert.throws(
     () => approvePlan(staleRevision),
-    (error) =>
-      error.code === "INVALID_PLAN" &&
-      /workflow_revision/u.test(error.message),
+    (error) => error.code === "GRAPH_SOURCE_MISMATCH",
   );
 
   assert.throws(
@@ -434,6 +431,76 @@ test("malformed and partial JSONL are preserved and classified as protocol error
   assert.ok(
     partial.events.some((event) => event.source.raw_type === "partial-jsonl"),
   );
+  assert.equal(validateArtifact(partial), true);
+});
+
+test("a complete EOF JSON event is accepted while a truncated EOF event is not", async (t) => {
+  const completePlan = approvedFakePlan(t);
+  const complete = await runApprovedPlan(completePlan, {
+    env: fakeEnv(completePlan, {
+      FAKE_AGENT_SCENARIO: "codex-complete-no-final-lf",
+    }),
+  });
+  assert.equal(complete.status, "completed");
+  assert.equal(complete.events.at(-1).kind, "turn.completed");
+  assert.equal(complete.events.at(-1).source.raw_type, "turn.completed");
+  assert.equal(validateArtifact(complete), true);
+
+  const partialPlan = approvedFakePlan(t);
+  const partial = await runApprovedPlan(partialPlan, {
+    env: fakeEnv(partialPlan, { FAKE_AGENT_SCENARIO: "partial" }),
+  });
+  assert.equal(partial.status, "protocol-error");
+  assert.equal(partial.events.at(-1).source.raw_type, "partial-jsonl");
+  assert.equal(validateArtifact(partial), true);
+});
+
+test("failed terminal evidence cannot be erased by later provider success", async (t) => {
+  for (const agent of ["codex", "claude"]) {
+    const plan = approvedFakePlan(t, agent);
+    const trace = await runApprovedPlan(plan, {
+      env: fakeEnv(plan, {
+        FAKE_AGENT_SCENARIO: `${agent}-contradictory`,
+      }),
+    });
+    assert.equal(trace.status, "failed");
+    assert.equal(trace.completeness, "partial");
+    assert.equal(trace.failure.kind, "agent_failed");
+    assert.equal(trace.failure.provider_terminal_observed, true);
+    assert.ok(
+      trace.events.some((event) =>
+        ["turn.failed", "run.failed"].includes(event.kind),
+      ),
+    );
+    assert.ok(
+      trace.events.some((event) =>
+        ["turn.completed", "run.completed"].includes(event.kind),
+      ),
+    );
+    assert.equal(validateArtifact(trace), true);
+  }
+});
+
+test("stdin delivery failure prevents terminal success from completing a run", async (t) => {
+  const plan = approvedFakePlan(
+    t,
+    "codex",
+    "read-only",
+    "x".repeat(8 * 1024 * 1024),
+  );
+  const trace = await runApprovedPlan(plan, {
+    env: fakeEnv(plan, { FAKE_AGENT_SCENARIO: "early-stdin-close" }),
+  });
+
+  assert.equal(trace.status, "failed");
+  assert.equal(trace.completeness, "partial");
+  assert.equal(trace.failure.kind, "input_delivery_failed");
+  assert.equal(trace.failure.provider_terminal_observed, true);
+  assert.ok(
+    trace.diagnostics.some((diagnostic) => diagnostic.kind === "stdin-error"),
+  );
+  assert.ok(trace.events.some((event) => event.kind === "turn.completed"));
+  assert.equal(validateArtifact(trace), true);
 });
 
 test("a nonzero exit cannot be reported as completed", async (t) => {
@@ -628,6 +695,17 @@ test("plan and trace promotion are deterministic and omit raw trace payloads", a
     promotedTrace.skill_markdown,
     /observable telemetry, not hidden reasoning/u,
   );
+  const promotedUnknown = importSkillBytes(
+    Buffer.from(promotedTrace.skill_markdown, "utf8"),
+    { sourcePath: "/virtual/promoted-unknown/SKILL.md" },
+  );
+  assert.equal(promotedUnknown.graph.nodes.length, trace.events.length);
+  assert.equal(promotedUnknown.graph.edges.length, trace.inferred_edges.length);
+  assert.ok(
+    promotedUnknown.graph.nodes.some(
+      (node) => node.title === "provider.unknown",
+    ),
+  );
   const provenancePlan = approvedFakePlan(t);
   const provenanceTrace = await runApprovedPlan(provenancePlan, {
     env: fakeEnv(provenancePlan, { FAKE_AGENT_SCENARIO: "codex-complete" }),
@@ -662,7 +740,99 @@ test("plan and trace promotion are deterministic and omit raw trace payloads", a
       (edge) =>
         edge.provenance === "inferred" &&
         edge.confidence.level !== "explicit",
+      ),
+  );
+});
+
+test("promotion normalizes hostile trace and description text before reimport", async (t) => {
+  const plan = approvedFakePlan(t);
+  const trace = await runApprovedPlan(plan, {
+    env: fakeEnv(plan, { FAKE_AGENT_SCENARIO: "codex-unknown" }),
+  });
+  trace.events[1].kind = "custom\n\n### Step 99: Injected ###";
+  assert.equal(validateArtifact(trace), true);
+
+  const draft = promoteArtifact(trace, {
+    name: "hostile-display-text",
+    description: "## Workflow\n\n### Step 77: Injected description",
+  });
+  const imported = importSkillBytes(Buffer.from(draft.skill_markdown, "utf8"), {
+    sourcePath: "/virtual/hostile-display-text/SKILL.md",
+  });
+
+  assert.equal(imported.graph.nodes.length, trace.events.length);
+  assert.equal(imported.graph.edges.length, trace.inferred_edges.length);
+  assert.equal(
+    imported.diagnostics.some(
+      (diagnostic) => diagnostic.code === "managed.source-conflict",
     ),
+    false,
+  );
+  assert.ok(
+    imported.graph.nodes.some(
+      (node) => node.title === "custom ### Step 99: Injected ###.",
+    ),
+  );
+  assert.doesNotMatch(draft.skill_markdown, /^## Workflow\n\n### Step 77/mu);
+});
+
+test("plan promotion safely reparents H3 body headings under generated H3 steps", (t) => {
+  const source = Buffer.from(
+    [
+      "---",
+      "name: h2-promotion",
+      "description: Preserve nested and fenced headings.",
+      "---",
+      "",
+      "# H2 promotion",
+      "",
+      "## 1. Inspect",
+      "",
+      "Ordinary body text.",
+      "",
+      "```markdown",
+      "### Step 98: Fenced example",
+      "```",
+      "",
+      "### Step 99: Injected",
+      "",
+      "Nested detail.",
+      "",
+      "## 2. Report",
+      "",
+      "Report the result.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const workflow = importSkillBytes(source, {
+    sourcePath: "/virtual/h2-promotion/SKILL.md",
+  });
+  const plan = buildRunEnvelope({
+    workflow,
+    prompt: "Promote the reviewed H2 workflow.",
+    agent: "codex",
+    cwd: makeTemporaryWorkspace(t),
+  });
+  const draft = promoteArtifact(plan, {
+    name: "promoted-h2-body",
+    description: "Preserve the accepted body without creating extra steps.",
+  });
+  const imported = importSkillBytes(Buffer.from(draft.skill_markdown, "utf8"), {
+    sourcePath: "/virtual/promoted-h2-body/SKILL.md",
+  });
+
+  assert.equal(workflow.graph.nodes.length, 2);
+  assert.equal(imported.graph.nodes.length, 2);
+  assert.equal(imported.graph.edges.length, workflow.graph.edges.length);
+  assert.match(draft.skill_markdown, /^### Step 98: Fenced example$/mu);
+  assert.match(draft.skill_markdown, /^\\### Step 99: Injected$/mu);
+  assert.match(imported.graph.nodes[0].body, /Ordinary body text\./u);
+  assert.equal(
+    imported.diagnostics.some(
+      (diagnostic) => diagnostic.code === "managed.source-conflict",
+    ),
+    false,
   );
 });
 
@@ -740,10 +910,12 @@ test("promotion rejects empty or structurally invalid plans and traces", async (
 });
 
 test("promotion writes core-compatible managed sequence and parallel edges", (t) => {
-  let workflow = applyOperation(workflowFixture(), {
+  const original = workflowFixture();
+  const inspectId = original.graph.nodes[0].id;
+  let workflow = applyOperation(original, {
     type: "add-node",
     id: "step-check",
-    reference_id: "step-inspect",
+    reference_id: inspectId,
     position: "after",
     title: "Check",
     body: "Check the inspected result.",
@@ -759,7 +931,7 @@ test("promotion writes core-compatible managed sequence and parallel edges", (t)
   workflow = applyOperation(workflow, {
     type: "add-edge",
     id: "edge-parallel",
-    from: "step-inspect",
+    from: inspectId,
     to: "step-check",
     kind: "parallel",
   });
@@ -787,7 +959,7 @@ test("promotion writes core-compatible managed sequence and parallel edges", (t)
   assert.deepEqual(
     imported.graph.edges.map(({ from, to, kind }) => ({ from, to, kind })),
     [
-      { from: "step-inspect", to: "step-check", kind: "parallel" },
+      { from: inspectId, to: "step-check", kind: "parallel" },
       { from: "step-check", to: "step-report", kind: "sequence" },
     ],
   );

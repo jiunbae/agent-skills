@@ -477,6 +477,7 @@ async function runCommand(parsed) {
   let trace;
   try {
     trace = await runApprovedPlan(plan, { signal: controller.signal });
+    validateArtifact(trace);
   } catch (error) {
     await discardReservation(reservation);
     throw error;

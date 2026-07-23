@@ -31,6 +31,8 @@ import {
 import {
   approvePlan as approveBrowserPlan,
   approvedPlanArtifact,
+  buildCandidateMarkdown,
+  buildWorkflowArtifact,
   canDownloadArtifact,
   createEditorState,
   editNode,
@@ -253,6 +255,48 @@ test("production trace ignores forged graph and both promotions retain inferred 
   );
   assert.equal(browserImported.graph.edges.length, trace.inferred_edges.length);
   assert.equal(nativeImported.graph.edges.length, trace.inferred_edges.length);
+});
+
+test("trace promotion keeps inferred provenance through browser edit and both downloads", async (t) => {
+  const { trace } = await nativePlanAndTrace(t);
+  const promoted = promoteToSkillDraft(createEditorState(trace));
+  const imported = importSkillBytes(Buffer.from(promoted.markdown), {
+    sourcePath: "/virtual/trace-browser-roundtrip/SKILL.md",
+  });
+  let state = createEditorState(imported);
+  state = editNode(
+    state,
+    state.nodes[0].id,
+    "title",
+    "Observed event reviewed in browser",
+  );
+  const browserIr = buildWorkflowArtifact(state);
+  assert.equal(validateArtifact(browserIr), true);
+  assert.ok(
+    browserIr.graph.edges.every(
+      (edge) =>
+        edge.provenance === "inferred" &&
+        edge.source_provenance === "inferred" &&
+        typeof edge.source_confidence === "number",
+    ),
+  );
+
+  for (const markdown of [
+    buildCandidateMarkdown(state),
+    renderWorkflow(browserIr).toString("utf8"),
+  ]) {
+    const reimported = assertInferredReimport(
+      markdown,
+      "/virtual/trace-browser-roundtrip/SKILL.md",
+    );
+    assert.ok(
+      reimported.graph.edges.every(
+        (edge) =>
+          edge.source_provenance === "inferred" &&
+          typeof edge.source_confidence === "number",
+      ),
+    );
+  }
 });
 
 test("canonical and CLI validation reject contradictory traces and stale approvals", async (t) => {

@@ -352,6 +352,12 @@ button.danger {
   font-size: 0.72rem;
 }
 
+.edge-provenance {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
 .form-stack,
 .plan-grid {
   display: grid;

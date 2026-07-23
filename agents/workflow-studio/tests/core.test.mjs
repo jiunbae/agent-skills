@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   mkdtemp,
   readFile,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -233,12 +234,12 @@ Second.
   });
   const finalNode = reimported.graph.nodes.at(-1);
   assert.doesNotMatch(finalNode.body, /workflow-studio:v1/u);
-  assert.equal(finalNode.source_map.body.end_byte, markerStart);
-  assert.equal(finalNode.source_map.span.end_byte, markerStart);
+  assert.equal(finalNode.source_map.body.end_byte, markerStart - 1);
+  assert.equal(finalNode.source_map.span.end_byte, markerStart - 1);
   assert.ok(
     reimported.opaque_spans.some(
       (span) =>
-        span.start_byte === markerStart &&
+        span.start_byte === markerStart - 1 &&
         span.end_byte === rendered.length,
     ),
   );
@@ -831,6 +832,7 @@ Second.
     rule_id: "trace.inferred-order",
     reason: "Observed sequence is not asserted as causality.",
   };
+  edited.revision.structural_dirty = true;
   delete edited.revision.current_sha256;
   edited.revision.current_sha256 = artifactHash(edited);
 
@@ -841,6 +843,293 @@ Second.
   assert.equal(reimported.graph.edges[0].source_provenance, "inferred");
   assert.equal(reimported.graph.edges[0].source_confidence, 0.5);
   assert.notEqual(reimported.graph.edges[0].confidence.level, "explicit");
+});
+
+test("clean, nonstructural, and rendered graphs remain canonically source-bound", () => {
+  const workflow = importSkillBytes(
+    Buffer.from(`---
+name: canonical-graph
+description: canonical graph agreement
+---
+
+## Workflow
+### Step 1: One
+First.
+### Step 2: Two
+Second.
+`),
+    { sourcePath: "canonical-graph/SKILL.md" },
+  );
+
+  const forgedClean = structuredClone(workflow);
+  forgedClean.graph.nodes[0].title = "Forged";
+  assert.throws(() => validateArtifact(forgedClean), {
+    code: "GRAPH_SOURCE_MISMATCH",
+  });
+  const forgedCleanBody = structuredClone(workflow);
+  forgedCleanBody.graph.nodes[0].body = "Forged body.";
+  assert.throws(() => validateArtifact(forgedCleanBody), {
+    code: "GRAPH_SOURCE_MISMATCH",
+  });
+
+  const forgedAdd = structuredClone(workflow);
+  forgedAdd.graph.nodes.push({
+    ...structuredClone(forgedAdd.graph.nodes[1]),
+    id: "forged-added",
+    order: 2,
+    title: "Silently added",
+    source_map: null,
+    provenance: "managed",
+    added: true,
+  });
+  forgedAdd.graph.entry_node_ids.push("forged-added");
+  forgedAdd.revision.dirty = true;
+  delete forgedAdd.revision.current_sha256;
+  forgedAdd.revision.current_sha256 = artifactHash(forgedAdd);
+  assert.throws(() => validateArtifact(forgedAdd), {
+    code: "STRUCTURAL_DIRTY_REQUIRED",
+  });
+
+  const forgedOrder = structuredClone(workflow);
+  forgedOrder.graph.nodes.reverse();
+  forgedOrder.graph.nodes.forEach((node, order) => {
+    node.order = order;
+  });
+  forgedOrder.revision.dirty = true;
+  delete forgedOrder.revision.current_sha256;
+  forgedOrder.revision.current_sha256 = artifactHash(forgedOrder);
+  assert.throws(() => validateArtifact(forgedOrder), {
+    code: "STRUCTURAL_DIRTY_REQUIRED",
+  });
+
+  const edited = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: workflow.graph.nodes[0].id,
+    title: "Renamed",
+  });
+  assert.equal(validateArtifact(edited), true);
+  const reimported = importSkillBytes(renderWorkflow(edited), {
+    sourcePath: workflow.source.path,
+  });
+  assert.deepEqual(
+    reimported.graph.nodes.map((node) => node.title),
+    ["Renamed", "Two"],
+  );
+});
+
+test("operation validation rejects ambiguous values and leaves semantic no-ops clean", () => {
+  const workflow = importSkillBytes(
+    Buffer.from(`---
+name: operation-shapes
+description: strict operations
+---
+
+## Workflow
+### Step 1: One
+First.
+### Step 2: Two
+Second.
+`),
+  );
+  const [first] = workflow.graph.nodes;
+  const [edge] = workflow.graph.edges;
+  for (const operation of [
+    null,
+    {},
+    { type: "edit-node", node_id: first.id },
+    { type: "edit-node", node_id: first.id, titel: "Typo" },
+    {
+      type: "add-node",
+      reference_id: first.id,
+      position: "sideways",
+    },
+    { type: "move-node", node_id: first.id, direction: "sideways" },
+    {
+      type: "add-edge",
+      from: workflow.graph.nodes[1].id,
+      to: first.id,
+      kind: "conditional",
+    },
+    {
+      type: "change-edge",
+      edge_id: edge.id,
+    },
+  ]) {
+    assert.throws(() => applyOperation(workflow, operation), {
+      code: "INVALID_OPERATION",
+    });
+    assert.deepEqual(renderWorkflow(workflow), Buffer.from(workflow.source.raw_base64, "base64"));
+  }
+
+  const unchanged = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: first.id,
+    title: first.title,
+  });
+  assert.equal(unchanged.revision.dirty, false);
+  assert.deepEqual(renderWorkflow(unchanged), renderWorkflow(workflow));
+});
+
+test("valid 30,000-step workflows use iterative typed graph validation", () => {
+  const steps = Array.from(
+    { length: 30_000 },
+    (_, index) => `### Step ${index + 1}: Item ${index + 1}\nBody ${index + 1}.\n`,
+  ).join("");
+  const workflow = importSkillBytes(
+    Buffer.from(`---
+name: large-graph
+description: iterative graph validation
+---
+
+## Workflow
+${steps}`),
+    { sourcePath: "large-graph/SKILL.md" },
+  );
+  assert.equal(workflow.graph.nodes.length, 30_000);
+  assert.equal(workflow.graph.edges.length, 29_999);
+  assert.equal(validateArtifact(workflow), true);
+});
+
+test("managed footer ownership is stable and unique across repeated edits", () => {
+  let bytes = Buffer.from(`---
+name: stable-footer
+description: stable managed footer
+---
+
+## Workflow
+### Step 1: One
+Body.
+`);
+  for (let generation = 1; generation <= 4; generation += 1) {
+    const imported = importSkillBytes(bytes, {
+      sourcePath: "stable-footer/SKILL.md",
+    });
+    assert.equal(imported.graph.nodes[0].body, "Body.\n");
+    const edited = applyOperation(imported, {
+      type: "edit-node",
+      node_id: imported.graph.nodes[0].id,
+      title: `Generation ${generation}`,
+    });
+    bytes = renderWorkflow(edited);
+    const text = bytes.toString("utf8");
+    assert.equal(text.match(/<!-- workflow-studio:v1 /gu)?.length, 1);
+    assert.match(text, /Body\.\n\n<!-- workflow-studio:v1 /u);
+    assert.doesNotMatch(text, /Body\.\n\n\n<!-- workflow-studio:v1 /u);
+  }
+});
+
+test("malformed and duplicate managed declarations fail edits without silent selection", () => {
+  const source = `---
+name: managed-conflicts
+description: preserve conflicting metadata
+---
+
+## Workflow
+### Step 1: One
+Body.
+`;
+  const malformedBytes = Buffer.from(
+    `${source}\n<!-- workflow-studio:v1 e30 -->\n`,
+  );
+  const malformed = importSkillBytes(malformedBytes);
+  assert.ok(
+    malformed.diagnostics.some(
+      (diagnostic) => diagnostic.code === "managed.invalid",
+    ),
+  );
+  assert.deepEqual(renderWorkflow(malformed), malformedBytes);
+  assert.throws(
+    () =>
+      applyOperation(malformed, {
+        type: "edit-node",
+        node_id: malformed.graph.nodes[0].id,
+        title: "Blocked",
+      }),
+    { code: "MANAGED_METADATA_CONFLICT" },
+  );
+
+  const clean = importSkillBytes(Buffer.from(source));
+  const rendered = renderWorkflow(
+    applyOperation(clean, {
+      type: "edit-node",
+      node_id: clean.graph.nodes[0].id,
+      title: "Managed",
+    }),
+  ).toString("utf8");
+  const marker = rendered.match(/<!-- workflow-studio:v1 [A-Za-z0-9_-]+ -->\n/u)[0];
+  const duplicateBytes = Buffer.from(`${rendered}${marker}`);
+  const duplicate = importSkillBytes(duplicateBytes);
+  assert.ok(
+    duplicate.diagnostics.some(
+      (diagnostic) => diagnostic.code === "managed.duplicate",
+    ),
+  );
+  assert.ok(
+    duplicate.graph.nodes.every((node) => node.provenance === "imported"),
+  );
+  assert.throws(
+    () =>
+      applyOperation(duplicate, {
+        type: "edit-node",
+        node_id: duplicate.graph.nodes[0].id,
+        title: "Blocked",
+      }),
+    { code: "MANAGED_METADATA_CONFLICT" },
+  );
+});
+
+test("a unique non-EOF managed declaration is replaced rather than shadowed", () => {
+  const source = Buffer.from(`---
+name: non-eof-managed
+description: non eof managed declaration
+---
+
+## Workflow
+### Step 1: One
+First.
+### Step 2: Two
+Second.
+
+## Appendix
+Keep appendix.
+`);
+  const imported = importSkillBytes(source, {
+    sourcePath: "non-eof-managed/SKILL.md",
+  });
+  const parallel = applyOperation(imported, {
+    type: "change-edge",
+    edge_id: imported.graph.edges[0].id,
+    kind: "parallel",
+  });
+  const initiallyRendered = renderWorkflow(parallel).toString("utf8");
+  const marker = initiallyRendered.match(
+    /<!-- workflow-studio:v1 [A-Za-z0-9_-]+ -->\n/u,
+  )[0];
+  const nonEofBytes = Buffer.from(
+    initiallyRendered
+      .replace(marker, "")
+      .replace("## Appendix", `${marker}\n## Appendix`),
+  );
+  const nonEof = importSkillBytes(nonEofBytes, {
+    sourcePath: "non-eof-managed/SKILL.md",
+  });
+  assert.equal(nonEof.graph.edges[0].kind, "parallel");
+
+  const changed = applyOperation(nonEof, {
+    type: "change-edge",
+    edge_id: nonEof.graph.edges[0].id,
+    kind: "sequence",
+  });
+  const rendered = renderWorkflow(changed);
+  assert.equal(
+    rendered.toString("utf8").match(/<!-- workflow-studio:v1 /gu)?.length,
+    1,
+  );
+  const reimported = importSkillBytes(rendered, {
+    sourcePath: "non-eof-managed/SKILL.md",
+  });
+  assert.equal(reimported.graph.edges[0].kind, "sequence");
+  assert.match(rendered.toString("utf8"), /## Appendix\nKeep appendix\./u);
 });
 
 test("malformed managed metadata is diagnosed and ignored as one unit", () => {
@@ -990,8 +1279,9 @@ B
   );
 });
 
-test("writeWorkflow uses safe new output and compare-and-swap in-place export", async () => {
+test("writeWorkflow uses safe new output and compare-and-swap in-place export", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "workflow-studio-core-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
   const source = join(directory, "SKILL.md");
   const output = join(directory, "draft.md");
   const victim = join(directory, "victim.md");
@@ -1039,8 +1329,7 @@ Do one.
 
   const link = join(directory, "linked.md");
   await symlink(source, link);
-  const linked = structuredClone(imported);
-  linked.source.path = link;
+  const linked = importSkillBytes(initial, { sourcePath: link });
   await assert.rejects(writeWorkflow(linked, { inPlace: true }), {
     code: "SYMLINK_REFUSED",
   });

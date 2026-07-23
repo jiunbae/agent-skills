@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  acceptApprovalResult,
   addEdge,
   addNode,
   approvePlan,
@@ -17,11 +19,13 @@ import {
   deleteNode,
   editNode,
   editPlan,
+  graphSemantics,
   moveNode,
   promoteToSkillDraft,
   removeEdge,
   structuralEditBlockReason,
   traceProvenanceSummary,
+  traceSummaryMetrics,
   validationAnnouncement,
   validateState,
 } from "../assets/editor-model.mjs";
@@ -53,6 +57,26 @@ function byteSpan(text, needle, occurrence = 0) {
 }
 
 function workflowArtifact() {
+  const titleHash = (value) =>
+    createHash("sha256").update(value, "utf8").digest("hex");
+  const managed = Buffer.from(
+    JSON.stringify({
+      ir_version: "1.0",
+      nodes: [
+        { id: "step-1", order: 0, title_sha256: titleHash("조사") },
+        { id: "step-2", order: 1, title_sha256: titleHash("Build") },
+      ],
+      edges: [
+        {
+          id: "edge-1",
+          from: "step-1",
+          to: "step-2",
+          kind: "sequence",
+        },
+      ],
+    }),
+    "utf8",
+  ).toString("base64url");
   const raw = [
     "---",
     "name: demo-workflow",
@@ -79,27 +103,12 @@ function workflowArtifact() {
     "",
     "Opaque tail.",
     "",
+    `<!-- workflow-studio:v1 ${managed} -->`,
+    "",
   ].join("\n");
   const artifact = importSkillBytes(Buffer.from(raw), {
     sourcePath: "/tmp/demo/SKILL.md",
   });
-  const [first, second] = artifact.graph.nodes;
-  const originalFirstId = first.id;
-  const originalSecondId = second.id;
-  first.id = "step-1";
-  second.id = "step-2";
-  second.confidence = {
-    level: "explicit",
-    reason: "Managed metadata",
-    rule_id: "managed.v1",
-  };
-  artifact.graph.edges = artifact.graph.edges.map((edge) => ({
-    ...edge,
-    id: "edge-1",
-    from: edge.from === originalFirstId ? "step-1" : "step-2",
-    to: edge.to === originalSecondId ? "step-2" : "step-1",
-  }));
-  artifact.graph.entry_node_ids = ["step-1"];
   validateArtifact(artifact);
   return artifact;
 }
@@ -201,7 +210,7 @@ test("no-op candidate keeps the exact imported bytes", () => {
     Buffer.from(buildCandidateBytes(state)),
     Buffer.from(artifact.source.raw_base64, "base64"),
   );
-  assert.equal(state.nodes[0].confidence.level, "structural");
+  assert.equal(state.nodes[0].confidence.level, "explicit");
   const raw = Buffer.from(artifact.source.raw_base64, "base64");
   assert.equal(
     raw.subarray(
@@ -482,6 +491,81 @@ test("browser fence scanner replaces one genuine managed footer without losing t
   );
 });
 
+test("browser replaces one trusted non-EOF managed declaration without stale topology", () => {
+  const original = Buffer.from(workflowArtifact().source.raw_base64, "base64").toString(
+    "utf8",
+  );
+  const declarations = [
+    ...original.matchAll(
+      /^<!-- workflow-studio:v1 ([A-Za-z0-9_-]+) -->[ \t]*$/gmu,
+    ),
+  ];
+  const genuine = declarations.at(-1)?.[0];
+  assert.ok(genuine);
+  const withoutFooter = original.replace(`${genuine}\n`, "");
+  const nonEof = withoutFooter.replace(
+    "## Appendix",
+    `${genuine}\n\n## Appendix`,
+  );
+  let state = createEditorState(
+    importSkillBytes(Buffer.from(nonEof), {
+      sourcePath: "/tmp/non-eof-managed/SKILL.md",
+    }),
+  );
+  assert.equal(state.managedMetadata.status, "trusted");
+  state = changeEdge(state, "edge-1", { kind: "parallel" });
+  const candidate = buildCandidateMarkdown(state);
+  assert.equal(
+    [...candidate.matchAll(/<!-- workflow-studio:v1 /gu)].length,
+    2,
+    "one fenced example and one genuine declaration must remain",
+  );
+  const reimported = importSkillBytes(Buffer.from(candidate), {
+    sourcePath: "/tmp/non-eof-managed/SKILL.md",
+  });
+  assert.deepEqual(reimported.graph.edges.map((edge) => edge.kind), ["parallel"]);
+  assert.equal(
+    reimported.diagnostics.some((diagnostic) =>
+      ["managed.invalid", "managed.duplicate", "managed.source-conflict"].includes(
+        diagnostic.code,
+      )),
+    false,
+  );
+});
+
+test("browser rejects malformed or duplicate genuine managed declarations", () => {
+  const clean = Buffer.from(workflowArtifact().source.raw_base64, "base64").toString(
+    "utf8",
+  );
+  const marker = [
+    ...clean.matchAll(
+      /^<!-- workflow-studio:v1 ([A-Za-z0-9_-]+) -->[ \t]*$/gmu,
+    ),
+  ].at(-1)?.[0];
+  assert.ok(marker);
+  for (const source of [
+    clean.replace(marker, "<!-- workflow-studio:v1 bm90LWpzb24 -->"),
+    clean.replace(marker, `${marker}\n${marker}`),
+  ]) {
+    const imported = importSkillBytes(Buffer.from(source), {
+      sourcePath: "/tmp/conflicting-managed/SKILL.md",
+    });
+    let state = createEditorState(imported);
+    state = editNode(state, state.nodes[0].id, "title", "Blocked edit");
+    assert.equal(state.managedMetadata.status, "conflict");
+    assert.equal(validateState(state).valid, false);
+    assert.equal(canDownloadArtifact(state), false);
+    assert.throws(
+      () => buildCandidateMarkdown(state),
+      /managed metadata|managed declarations/i,
+    );
+    assert.match(
+      Buffer.from(state.sourceBytes).toString("utf8"),
+      /workflow-studio:v1/,
+    );
+  }
+});
+
 test("approving hashes exact plan and every subsequent edit clears approval", async () => {
   let state = createEditorState(workflowArtifact());
   state = editPlan(state, "adapter", "claude");
@@ -501,6 +585,27 @@ test("approving hashes exact plan and every subsequent edit clears approval", as
   state = await approvePlan(state);
   state = editNode(state, "step-1", "title", "Changed graph");
   assert.equal(state.plan.approval, null);
+});
+
+test("a delayed approval result cannot overwrite intervening plan and graph edits", async () => {
+  let approvalSource = createEditorState(workflowArtifact());
+  approvalSource = editPlan(approvalSource, "cwd", process.cwd());
+  approvalSource = editPlan(approvalSource, "prompt", "ORIGINAL PROMPT");
+  const pending = approvePlan(approvalSource);
+
+  let current = editPlan(
+    approvalSource,
+    "prompt",
+    "EDITED WHILE APPROVAL WAS HASHING",
+  );
+  current = editNode(current, "step-1", "title", "Graph edit kept");
+  const approved = await pending;
+  const settled = acceptApprovalResult(current, approvalSource, approved);
+
+  assert.strictEqual(settled, current);
+  assert.equal(settled.plan.prompt, "EDITED WHILE APPROVAL WAS HASHING");
+  assert.equal(settled.nodes[0].title, "Graph edit kept");
+  assert.equal(settled.plan.approval, null);
 });
 
 test("reopened plans rebuild from workflow only without prompt or approval nesting", async () => {
@@ -693,6 +798,102 @@ test("production trace events become read-only graph evidence and promote topolo
   );
 });
 
+test("trace graph semantics say observed events and inferred order, never dependencies", () => {
+  const state = createEditorState(productionTraceArtifact());
+  const semantics = graphSemantics(state);
+  const labels = Object.values(semantics).join("\n");
+  assert.match(labels, /observed (?:trace )?events?/i);
+  assert.match(labels, /inferred order/i);
+  assert.match(labels, /not causality/i);
+  assert.doesNotMatch(labels, /declared flow|dependencies/i);
+  assert.equal(
+    state.edges.filter((edge) => edge.provenance === "inferred").length,
+    state.artifact.inferred_edges.length,
+  );
+  const metrics = traceSummaryMetrics(state);
+  assert.deepEqual(
+    metrics.find((metric) => metric.name === "inferred order"),
+    {
+      name: "inferred order",
+      count: state.artifact.inferred_edges.length,
+      unit: "edges",
+    },
+  );
+  assert.equal(
+    metrics.some(
+      ({ name, unit }) => name.includes("edges") && unit === "nodes",
+    ),
+    false,
+  );
+});
+
+test("trace-derived inferred edges survive browser edit, IR and Markdown reimport", () => {
+  const trace = productionTraceArtifact();
+  for (const edge of trace.inferred_edges) edge.kind = "sequence";
+  const promoted = promoteToSkillDraft(createEditorState(trace));
+  const imported = importSkillBytes(Buffer.from(promoted.markdown), {
+    sourcePath: "/tmp/trace-edit-roundtrip/SKILL.md",
+  });
+  let state = createEditorState(imported);
+  state = editNode(state, state.nodes[0].id, "title", "Observed event reviewed");
+
+  const browserIr = buildWorkflowArtifact(state);
+  assert.ok(
+    browserIr.graph.edges.every(
+      (edge) =>
+        edge.provenance === "inferred" &&
+        edge.source_provenance === "inferred" &&
+        edge.source_confidence === 0.5,
+    ),
+  );
+  assert.equal(validateArtifact(browserIr), true);
+  for (const markdown of [
+    buildCandidateMarkdown(state),
+    renderWorkflow(browserIr).toString("utf8"),
+  ]) {
+    const reimported = importSkillBytes(Buffer.from(markdown), {
+      sourcePath: "/tmp/trace-edit-roundtrip/SKILL.md",
+    });
+    assert.ok(
+      reimported.graph.edges.every(
+        (edge) =>
+          edge.provenance === "inferred" &&
+          edge.source_provenance === "inferred" &&
+          edge.source_confidence === 0.5 &&
+          edge.confidence.level !== "explicit",
+      ),
+    );
+  }
+});
+
+test("empty workflows can add a first step and recover after final deletion", () => {
+  const imported = importSkillBytes(
+    Buffer.from(
+      [
+        "---",
+        "name: empty-workflow",
+        "description: Empty workflow editing fixture",
+        "---",
+        "",
+        "# Empty workflow",
+        "",
+      ].join("\n"),
+    ),
+    { sourcePath: "/tmp/empty-workflow/SKILL.md" },
+  );
+  let state = createEditorState(imported);
+  assert.equal(state.nodes.length, 0);
+  state = addNode(state, null, "after");
+  assert.equal(state.nodes.length, 1);
+  assert.equal(state.selectedId, state.nodes[0].id);
+  state = deleteNode(state, state.selectedId);
+  assert.equal(state.nodes.length, 0);
+  assert.equal(state.selectedId, null);
+  state = addNode(state, null, "after");
+  assert.equal(state.nodes.length, 1);
+  assert.equal(validateState(state).valid, true);
+});
+
 test("trace display and promotion ignore a forged extra graph", () => {
   const trace = productionTraceArtifact();
   trace.inferred_edges[1].kind = "sequence";
@@ -749,6 +950,55 @@ test("browser plan promotion preserves sequence and parallel topology", () => {
   );
 });
 
+test("browser plan promotion demotes unfenced structural body headings before reimport", () => {
+  const source = [
+    "---",
+    "name: h2-promotion",
+    "description: Browser promotion heading fixture",
+    "---",
+    "",
+    "# H2 promotion",
+    "",
+    "## 1. Inspect",
+    "",
+    "Inspect the input.",
+    "",
+    "### Detail heading",
+    "",
+    "Keep this detail under Inspect.",
+    "",
+    "```md",
+    "### Fenced heading example",
+    "```",
+    "",
+    "## 2. Report",
+    "",
+    "Report the result.",
+    "",
+  ].join("\n");
+  const state = createEditorState(
+    importSkillBytes(Buffer.from(source), {
+      sourcePath: "/tmp/h2-promotion/SKILL.md",
+    }),
+  );
+  assert.equal(state.nodes.length, 2);
+  const draft = promoteToSkillDraft(state);
+  assert.match(draft.markdown, /^#### Detail heading$/mu);
+  assert.match(draft.markdown, /^### Fenced heading example$/mu);
+
+  const reimported = importSkillBytes(Buffer.from(draft.markdown), {
+    sourcePath: "/tmp/h2-promotion-draft/SKILL.md",
+  });
+  assert.equal(reimported.graph.nodes.length, state.nodes.length);
+  assert.equal(
+    reimported.diagnostics.some(
+      (diagnostic) => diagnostic.code === "managed.source-conflict",
+    ),
+    false,
+  );
+  assert.match(reimported.graph.nodes[0].body, /#### Detail heading/u);
+});
+
 test("generic downloads are workflow-only and validate the exact built artifact", () => {
   const workflow = createEditorState(workflowArtifact());
   assert.equal(canDownloadArtifact(workflow), true);
@@ -793,6 +1043,14 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   assert.match(editor, /applyChange\(fromSelect\.id\)/);
   assert.match(editor, /applyChange\(toSelect\.id\)/);
   assert.match(editor, /applyChange\(kindSelect\.id\)/);
+  assert.match(editor, /const approvalSource = state/);
+  assert.match(editor, /acceptApprovalResult\(state, approvalSource, approved\)/);
+  assert.match(editor, /"addFirst"/);
+  assert.match(editor, /next\.selectedId \? `outline-\$\{next\.selectedId\}` : "addFirst"/);
+  assert.match(editor, /traceSummaryMetrics\(state\)/);
+  assert.match(editor, /`\$\{name\} \$\{unit\}`/);
+  assert.match(editor, /"Inferred order"/);
+  assert.match(editor, /not causality/);
   assert.match(
     editor,
     /mutate\(selectNode\(state, node\.id\), `outline-\$\{node\.id\}`\)/,
@@ -810,6 +1068,7 @@ test("static editor exposes semantic views, live status, and labeled controls", 
     "nodeBody",
     "addBefore",
     "addAfter",
+    "addFirst",
     "moveUp",
     "moveDown",
     "deleteNode",
@@ -836,6 +1095,9 @@ test("static editor exposes semantic views, live status, and labeled controls", 
   assert.match(html, /type="button" class="primary">\s*Approve current plan/);
   assert.match(html, /id="structuralEditNotice"/);
   assert.match(html, /id="addEdge"/);
+  assert.match(html, /id="graphEyebrow"/);
+  assert.match(html, /id="edgeEyebrow"/);
+  assert.match(html, />Add first step</);
   assert.doesNotMatch(html, /structural browser edits remain in the/);
   assert.doesNotMatch(html, /<script(?! type="module" src="\/editor\.mjs")/);
 });

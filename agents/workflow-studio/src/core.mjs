@@ -306,7 +306,10 @@ function managedMatches(bytes, expression) {
 }
 
 function managedSpans(bytes) {
-  const blocks = managedMatches(bytes, MANAGED_BLOCK);
+  const blocks = managedMatches(bytes, MANAGED_BLOCK).map((span) => ({
+    ...span,
+    format: "block",
+  }));
   const inline = managedMatches(bytes, MANAGED_INLINE).filter(
     (candidate) =>
       !blocks.some(
@@ -314,10 +317,34 @@ function managedSpans(bytes) {
           candidate.start_byte < block.end_byte &&
           candidate.end_byte > block.start_byte,
       ),
-  );
+  ).map((span) => ({ ...span, format: "inline" }));
   return [...blocks, ...inline].sort(
     (left, right) => left.start_byte - right.start_byte,
   );
+}
+
+function ownedManagedSpan(bytes, span) {
+  let startByte = span.start_byte;
+  let endByte = span.end_byte;
+  const before = bytes.subarray(0, startByte);
+  if (
+    before.length >= 2 &&
+    before.at(-1) === 0x0a &&
+    before.at(-2) === 0x0a
+  ) {
+    startByte -= 1;
+  } else if (
+    before.length >= 4 &&
+    before.subarray(-4).equals(Buffer.from("\r\n\r\n"))
+  ) {
+    startByte -= 2;
+  }
+  if (bytes[endByte] === 0x0d && bytes[endByte + 1] === 0x0a) {
+    endByte += 2;
+  } else if (bytes[endByte] === 0x0a) {
+    endByte += 1;
+  }
+  return { start_byte: startByte, end_byte: endByte };
 }
 
 function trailingManagedStart(bytes) {
@@ -329,7 +356,7 @@ function trailingManagedStart(bytes) {
     const span = spans[index];
     const trailing = decodeUtf8(bytes.subarray(span.end_byte, cursor));
     if (!/^[ \t\r\n]*$/u.test(trailing)) break;
-    footerStart = span.start_byte;
+    footerStart = ownedManagedSpan(bytes, span).start_byte;
     cursor = span.start_byte;
   }
   return footerStart;
@@ -344,39 +371,34 @@ function headingEnd(headings, headingIndex, byteLength) {
 }
 
 function parseManaged(bytes, diagnostics) {
-  const inline = managedMatches(bytes, MANAGED_INLINE)[0];
-  if (inline) {
-    try {
-      const json = Buffer.from(inline.match[1], "base64url").toString("utf8");
-      return {
-        payload: JSON.parse(json),
-        format: "inline",
-        text: inline.match[0],
-      };
-    } catch {
-      diagnostics.push({
-        severity: "error",
-        code: "managed.invalid",
-        message: "Workflow Studio metadata is invalid and was ignored.",
-      });
-      return null;
-    }
+  const spans = managedSpans(bytes);
+  if (spans.length > 1) {
+    diagnostics.push({
+      severity: "error",
+      code: "managed.duplicate",
+      message: "Multiple Workflow Studio metadata declarations conflict and were ignored.",
+    });
+    return null;
   }
-  const block = managedMatches(bytes, MANAGED_BLOCK)[0];
-  if (block) {
-    try {
-      return {
-        payload: JSON.parse(block.match[1]),
-        format: "block",
-        text: block.match[0],
-      };
-    } catch {
-      diagnostics.push({
-        severity: "error",
-        code: "managed.invalid",
-        message: "Workflow Studio managed block is invalid and was ignored.",
-      });
-    }
+  const span = spans[0];
+  if (!span) return null;
+  try {
+    const json =
+      span.format === "inline"
+        ? Buffer.from(span.match[1], "base64url").toString("utf8")
+        : span.match[1];
+    return {
+      payload: JSON.parse(json),
+      format: span.format,
+      text: span.match[0],
+      span,
+    };
+  } catch {
+    diagnostics.push({
+      severity: "error",
+      code: "managed.invalid",
+      message: "Workflow Studio metadata is invalid and was ignored.",
+    });
   }
   return null;
 }
@@ -559,7 +581,7 @@ function managedPayloadGraph(payload) {
 
 function applyManagedGraph(nodes, edges, managed, diagnostics) {
   const payload = managed?.payload;
-  if (!managed) return { nodes, edges };
+  if (!managed) return { nodes, edges, trusted: false };
   const graph = managedPayloadGraph(payload);
   if (!graph) {
     diagnostics.push({
@@ -567,7 +589,7 @@ function applyManagedGraph(nodes, edges, managed, diagnostics) {
       code: "managed.invalid",
       message: "Workflow Studio metadata has an invalid graph and was ignored.",
     });
-    return { nodes, edges };
+    return { nodes, edges, trusted: false };
   }
   const managedNodes = graph.nodes;
   const managedEdges = graph.edges;
@@ -584,7 +606,7 @@ function applyManagedGraph(nodes, edges, managed, diagnostics) {
       code: "managed.source-conflict",
       message: "Managed node metadata no longer matches source structure; inferred graph is shown.",
     });
-    return { nodes, edges };
+    return { nodes, edges, trusted: false };
   }
   const replaced = nodes.map((node, index) => ({
     ...node,
@@ -634,9 +656,9 @@ function applyManagedGraph(nodes, edges, managed, diagnostics) {
       code: "managed.invalid",
       message: "Workflow Studio metadata has invalid edge endpoints and was ignored.",
     });
-    return { nodes, edges };
+    return { nodes, edges, trusted: false };
   }
-  return { nodes: replaced, edges: restoredEdges };
+  return { nodes: replaced, edges: restoredEdges, trusted: true };
 }
 
 function computeOpaque(bytes, nodes) {
@@ -683,7 +705,7 @@ function newlineStyle(bytes) {
   return "lf";
 }
 
-export function importSkillBytes(input, { sourcePath = "SKILL.md" } = {}) {
+function buildWorkflow(input, sourcePath) {
   const bytes = Buffer.isBuffer(input) ? Buffer.from(input) : Buffer.from(input);
   decodeUtf8(bytes);
   const diagnostics = [];
@@ -734,7 +756,30 @@ export function importSkillBytes(input, { sourcePath = "SKILL.md" } = {}) {
     });
   }
   const managed = parseManaged(bytes, diagnostics);
-  ({ nodes, edges } = applyManagedGraph(nodes, edges, managed, diagnostics));
+  const applied = applyManagedGraph(nodes, edges, managed, diagnostics);
+  ({ nodes, edges } = applied);
+  if (managed && applied.trusted) {
+    const owned = ownedManagedSpan(bytes, managed.span);
+    nodes = nodes.map((node) => {
+      const body = node.source_map?.body;
+      if (
+        !body ||
+        owned.start_byte < body.start_byte ||
+        owned.end_byte > body.end_byte
+      ) {
+        return node;
+      }
+      return {
+        ...node,
+        body: decodeUtf8(
+          Buffer.concat([
+            bytes.subarray(body.start_byte, owned.start_byte),
+            bytes.subarray(owned.end_byte, body.end_byte),
+          ]),
+        ),
+      };
+    });
+  }
   if (nodes.length === 0) {
     diagnostics.push({
       severity: "warning",
@@ -774,6 +819,11 @@ export function importSkillBytes(input, { sourcePath = "SKILL.md" } = {}) {
       managed_metadata: managed ? managed.format : null,
     },
   };
+  return workflow;
+}
+
+export function importSkillBytes(input, { sourcePath = "SKILL.md" } = {}) {
+  const workflow = buildWorkflow(input, String(sourcePath));
   validateArtifact(workflow);
   return workflow;
 }
@@ -811,19 +861,27 @@ function validateVersion(artifact) {
 
 function hasCycle(nodes, edges) {
   const outgoing = new Map(nodes.map((node) => [node.id, []]));
-  for (const edge of edges) outgoing.get(edge.from).push(edge.to);
-  const state = new Map();
-  function visit(id) {
-    if (state.get(id) === 1) return true;
-    if (state.get(id) === 2) return false;
-    state.set(id, 1);
-    for (const next of outgoing.get(id) ?? []) {
-      if (visit(next)) return true;
+  const inbound = new Map(nodes.map((node) => [node.id, 0]));
+  for (const edge of edges) {
+    outgoing.get(edge.from)?.push(edge.to);
+    if (inbound.has(edge.to)) {
+      inbound.set(edge.to, inbound.get(edge.to) + 1);
     }
-    state.set(id, 2);
-    return false;
   }
-  return nodes.some((node) => visit(node.id));
+  const ready = nodes
+    .map((node) => node.id)
+    .filter((id) => inbound.get(id) === 0);
+  let visited = 0;
+  for (let index = 0; index < ready.length; index += 1) {
+    const id = ready[index];
+    visited += 1;
+    for (const next of outgoing.get(id) ?? []) {
+      const remaining = inbound.get(next) - 1;
+      inbound.set(next, remaining);
+      if (remaining === 0) ready.push(next);
+    }
+  }
+  return visited !== nodes.length;
 }
 
 function sameByteRange(left, right) {
@@ -1017,17 +1075,24 @@ function validateSafetyProfile(agent, safety, code) {
 
 function validateMappedSources(bytes, nodes) {
   const trusted = scanWorkflowCandidates(bytes).candidates.map(candidateSourceMap);
+  const trustedBySpan = new Map(
+    trusted.map((candidate, index) => [
+      `${candidate.span.start_byte}:${candidate.span.end_byte}`,
+      { candidate, index },
+    ]),
+  );
   const used = new Set();
   for (const node of nodes) {
     if (node.source_map === null || node.source_map === undefined) continue;
     const mapping = node.source_map;
-    const trustedIndex = trusted.findIndex(
-      (candidate, index) =>
-        !used.has(index) && sameByteRange(mapping.span, candidate.span),
+    const trustedMatch = trustedBySpan.get(
+      `${mapping.span?.start_byte}:${mapping.span?.end_byte}`,
     );
-    const candidate = trusted[trustedIndex];
+    const trustedIndex = trustedMatch?.index ?? -1;
+    const candidate = trustedMatch?.candidate;
     if (
       trustedIndex < 0 ||
+      used.has(trustedIndex) ||
       !["span", "heading", "title", "body"].every((field) =>
         sameByteRange(mapping[field], candidate?.[field]),
       )
@@ -1039,6 +1104,62 @@ function validateMappedSources(bytes, nodes) {
     }
     used.add(trustedIndex);
   }
+}
+
+function normalizedBody(value) {
+  return value.replace(/(?:\r\n|\n)$/u, "");
+}
+
+function graphSemantics(workflow, { normalizeBodies = true } = {}) {
+  return {
+    entry_node_ids: workflow.graph.entry_node_ids,
+    nodes: workflow.graph.nodes.map((node, order) => ({
+      id: node.id,
+      kind: node.kind,
+      order,
+      title: node.title,
+      body: normalizeBodies ? normalizedBody(node.body) : node.body,
+    })),
+    edges: workflow.graph.edges.map((edge) => ({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      kind: edge.kind,
+      ...(edge.source_provenance === "inferred"
+        ? {
+            source_provenance: "inferred",
+            source_confidence: edge.source_confidence,
+          }
+        : {}),
+    })),
+  };
+}
+
+function structuralSemantics(workflow) {
+  return {
+    entry_node_ids: workflow.graph.entry_node_ids,
+    nodes: workflow.graph.nodes.map((node, order) => ({
+      id: node.id,
+      order,
+      source_span: node.source_map?.span ?? null,
+    })),
+    edges: workflow.graph.edges.map((edge) => ({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      kind: edge.kind,
+      ...(edge.source_provenance === "inferred"
+        ? {
+            source_provenance: "inferred",
+            source_confidence: edge.source_confidence,
+          }
+        : {}),
+    })),
+  };
+}
+
+function sameCanonical(left, right) {
+  return stableStringify(left) === stableStringify(right);
 }
 
 function validateWorkflow(artifact) {
@@ -1080,14 +1201,19 @@ function validateWorkflow(artifact) {
     throw workflowError("INVALID_GRAPH", "graph nodes and edges are required.");
   }
   const ids = new Set();
-  for (const node of nodes) {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
     if (
       !plainRecord(node) ||
       node.kind !== "step" ||
       typeof node.id !== "string" ||
-      node.id.length === 0
+      node.id.length === 0 ||
+      node.order !== index
     ) {
-      throw workflowError("INVALID_NODE", "Every node must be a named step.");
+      throw workflowError(
+        "INVALID_NODE",
+        "Every node must be a named step in canonical graph order.",
+      );
     }
     if (ids.has(node.id)) {
       throw workflowError("DUPLICATE_NODE", `Duplicate node id: ${node.id}`);
@@ -1240,6 +1366,46 @@ function validateWorkflow(artifact) {
       );
     }
     validateWritableGrammar(artifact);
+  }
+  const sourceWorkflow = buildWorkflow(bytes, artifact.source.path);
+  if (!artifact.revision.dirty) {
+    if (
+      !sameCanonical(
+        graphSemantics(artifact, { normalizeBodies: false }),
+        graphSemantics(sourceWorkflow, { normalizeBodies: false }),
+      )
+    ) {
+      throw workflowError(
+        "GRAPH_SOURCE_MISMATCH",
+        "A clean workflow graph must exactly describe its authoritative source.",
+      );
+    }
+  } else {
+    if (
+      !artifact.revision.structural_dirty &&
+      !sameCanonical(
+        structuralSemantics(artifact),
+        structuralSemantics(sourceWorkflow),
+      )
+    ) {
+      throw workflowError(
+        "STRUCTURAL_DIRTY_REQUIRED",
+        "Added, removed, reordered, or reconnected graph elements require structural_dirty.",
+      );
+    }
+    const rendered = renderWorkflowCandidate(artifact);
+    const reimported = buildWorkflow(rendered, artifact.source.path);
+    if (
+      !sameCanonical(
+        graphSemantics(artifact),
+        graphSemantics(reimported),
+      )
+    ) {
+      throw workflowError(
+        "GRAPH_RENDER_MISMATCH",
+        "Workflow graph semantics do not survive render and reimport.",
+      );
+    }
   }
   return true;
 }
@@ -1575,15 +1741,56 @@ export function applyOperation(input, operation) {
   if (input.kind !== "workflow") {
     throw workflowError("INVALID_OPERATION", "Only workflow artifacts are editable.");
   }
+  if (!plainRecord(operation) || typeof operation.type !== "string") {
+    throw workflowError(
+      "INVALID_OPERATION",
+      "A workflow operation must be an object with a type.",
+    );
+  }
+  const requireOperationId = (value, label) => {
+    if (typeof value !== "string" || value.length === 0) {
+      throw workflowError("INVALID_OPERATION", `${label} must be non-empty text.`);
+    }
+    return value;
+  };
+  const optionalOperationId = (value, label) => {
+    if (value !== undefined) requireOperationId(value, label);
+  };
+  const requireOperationKeys = (allowed) => {
+    const unexpected = Object.keys(operation).filter(
+      (key) => !allowed.includes(key),
+    );
+    if (unexpected.length > 0) {
+      throw workflowError(
+        "INVALID_OPERATION",
+        `Unexpected operation field: ${unexpected[0]}`,
+      );
+    }
+  };
   const workflow = clone(input);
   const nodes = workflow.graph.nodes;
   const edges = workflow.graph.edges;
-  const index = nodes.findIndex((node) => node.id === operation.node_id);
+  const index =
+    typeof operation.node_id === "string"
+      ? nodes.findIndex((node) => node.id === operation.node_id)
+      : -1;
   switch (operation.type) {
     case "edit-node": {
+      requireOperationKeys(["type", "node_id", "title", "body"]);
+      requireOperationId(operation.node_id, "node_id");
       if (index < 0) throw workflowError("NODE_NOT_FOUND", operation.node_id);
+      const fields = ["title", "body"].filter((field) =>
+        Object.hasOwn(operation, field),
+      );
+      if (fields.length === 0) {
+        throw workflowError(
+          "INVALID_OPERATION",
+          "edit-node requires title and/or body.",
+        );
+      }
+      let changed = false;
       for (const field of ["title", "body"]) {
-        if (operation[field] !== undefined) {
+        if (Object.hasOwn(operation, field)) {
           if (typeof operation[field] !== "string") {
             throw workflowError("INVALID_OPERATION", `${field} must be text.`);
           }
@@ -1603,16 +1810,36 @@ export function applyOperation(input, operation) {
               "body",
             );
           }
+          changed ||= nodes[index][field] !== operation[field];
           nodes[index][field] = operation[field];
         }
       }
-      return refreshed(workflow, false);
+      return changed ? refreshed(workflow, false) : workflow;
     }
     case "add-node": {
-      const reference = operation.reference_id
+      requireOperationKeys([
+        "type",
+        "reference_id",
+        "position",
+        "id",
+        "title",
+        "body",
+      ]);
+      optionalOperationId(operation.reference_id, "reference_id");
+      optionalOperationId(operation.id, "id");
+      if (
+        operation.position !== undefined &&
+        !["before", "after"].includes(operation.position)
+      ) {
+        throw workflowError(
+          "INVALID_OPERATION",
+          "add-node position must be before or after.",
+        );
+      }
+      const reference = operation.reference_id !== undefined
         ? nodes.findIndex((node) => node.id === operation.reference_id)
         : nodes.length - 1;
-      if (operation.reference_id && reference < 0) {
+      if (operation.reference_id !== undefined && reference < 0) {
         throw workflowError("NODE_NOT_FOUND", operation.reference_id);
       }
       assertContiguousStructuralSource(input);
@@ -1621,7 +1848,10 @@ export function applyOperation(input, operation) {
         throw workflowError("INVALID_OPERATION", "title must be text.");
       }
       validateStepTitle(title, "title");
-      const body = String(operation.body ?? "");
+      if (operation.body !== undefined && typeof operation.body !== "string") {
+        throw workflowError("INVALID_OPERATION", "body must be text.");
+      }
+      const body = operation.body ?? "";
       validateStepBody(body, defaultHeadingLevel(workflow), "body");
       const position = operation.position === "before" ? reference : reference + 1;
       nodes.splice(Math.max(0, position), 0, {
@@ -1644,6 +1874,8 @@ export function applyOperation(input, operation) {
       return refreshed(workflow, true);
     }
     case "delete-node": {
+      requireOperationKeys(["type", "node_id"]);
+      requireOperationId(operation.node_id, "node_id");
       if (index < 0) throw workflowError("NODE_NOT_FOUND", operation.node_id);
       assertContiguousStructuralSource(input);
       nodes.splice(index, 1);
@@ -1653,6 +1885,14 @@ export function applyOperation(input, operation) {
       return refreshed(workflow, true);
     }
     case "move-node": {
+      requireOperationKeys(["type", "node_id", "direction"]);
+      requireOperationId(operation.node_id, "node_id");
+      if (!["up", "down"].includes(operation.direction)) {
+        throw workflowError(
+          "INVALID_OPERATION",
+          "move-node direction must be up or down.",
+        );
+      }
       if (index < 0) throw workflowError("NODE_NOT_FOUND", operation.node_id);
       const target = operation.direction === "up" ? index - 1 : index + 1;
       if (target < 0 || target >= nodes.length) return workflow;
@@ -1662,6 +1902,19 @@ export function applyOperation(input, operation) {
       return refreshed(workflow, true);
     }
     case "add-edge": {
+      requireOperationKeys(["type", "id", "from", "to", "kind"]);
+      requireOperationId(operation.from, "from");
+      requireOperationId(operation.to, "to");
+      optionalOperationId(operation.id, "id");
+      if (
+        operation.kind !== undefined &&
+        !EDGE_KINDS.has(operation.kind)
+      ) {
+        throw workflowError(
+          "INVALID_OPERATION",
+          "add-edge kind must be sequence or parallel.",
+        );
+      }
       if (!nodes.some((node) => node.id === operation.from)) {
         throw workflowError("NODE_NOT_FOUND", operation.from);
       }
@@ -1686,6 +1939,8 @@ export function applyOperation(input, operation) {
       return refreshed(workflow, true);
     }
     case "remove-edge": {
+      requireOperationKeys(["type", "edge_id"]);
+      requireOperationId(operation.edge_id, "edge_id");
       const before = edges.length;
       workflow.graph.edges = edges.filter((edge) => edge.id !== operation.edge_id);
       if (workflow.graph.edges.length === before) {
@@ -1695,18 +1950,57 @@ export function applyOperation(input, operation) {
       return refreshed(workflow, true);
     }
     case "change-edge": {
+      requireOperationKeys(["type", "edge_id", "from", "to", "kind"]);
+      requireOperationId(operation.edge_id, "edge_id");
       const edge = edges.find((item) => item.id === operation.edge_id);
       if (!edge) throw workflowError("EDGE_NOT_FOUND", operation.edge_id);
-      assertContiguousStructuralSource(input);
-      for (const field of ["from", "to", "kind"]) {
-        if (operation[field] !== undefined) edge[field] = operation[field];
+      const fields = ["from", "to", "kind"].filter((field) =>
+        Object.hasOwn(operation, field),
+      );
+      if (fields.length === 0) {
+        throw workflowError(
+          "INVALID_OPERATION",
+          "change-edge requires from, to, and/or kind.",
+        );
       }
+      if (Object.hasOwn(operation, "from")) {
+        requireOperationId(operation.from, "from");
+        if (!nodes.some((node) => node.id === operation.from)) {
+          throw workflowError("NODE_NOT_FOUND", operation.from);
+        }
+      }
+      if (Object.hasOwn(operation, "to")) {
+        requireOperationId(operation.to, "to");
+        if (!nodes.some((node) => node.id === operation.to)) {
+          throw workflowError("NODE_NOT_FOUND", operation.to);
+        }
+      }
+      if (
+        Object.hasOwn(operation, "kind") &&
+        !EDGE_KINDS.has(operation.kind)
+      ) {
+        throw workflowError(
+          "INVALID_OPERATION",
+          "change-edge kind must be sequence or parallel.",
+        );
+      }
+      assertContiguousStructuralSource(input);
+      let changed = false;
+      for (const field of ["from", "to", "kind"]) {
+        if (Object.hasOwn(operation, field)) {
+          changed ||= edge[field] !== operation[field];
+          edge[field] = operation[field];
+        }
+      }
+      if (!changed) return workflow;
       edge.confidence = confidence(
         "explicit",
         "managed.v1",
         "Edge changed in Workflow Studio.",
       );
       edge.provenance = "managed";
+      delete edge.source_provenance;
+      delete edge.source_confidence;
       return refreshed(workflow, true);
     }
     default:
@@ -1720,9 +2014,7 @@ export function applyOperation(input, operation) {
 function bytePatches(workflow) {
   const original = sourceBytes(workflow);
   const patches = [];
-  const originalImport = importSkillBytes(original, {
-    sourcePath: workflow.source.path,
-  });
+  const originalImport = buildWorkflow(original, workflow.source.path);
   const originalById = new Map(
     originalImport.graph.nodes.map((node) => [node.id, node]),
   );
@@ -1789,18 +2081,51 @@ function applyPatches(bytes, patches) {
   return Buffer.concat(parts);
 }
 
-function withoutManaged(bytes) {
+function trustedManagedDeclaration(bytes) {
   const spans = managedSpans(bytes);
-  if (spans.length === 0) return Buffer.from(bytes);
-  const parts = [];
-  let cursor = 0;
-  for (const span of spans) {
-    if (span.start_byte < cursor) continue;
-    parts.push(bytes.subarray(cursor, span.start_byte));
-    cursor = span.end_byte;
+  if (spans.length === 0) return null;
+  const diagnostics = [];
+  const managed = parseManaged(bytes, diagnostics);
+  const graph = managedPayloadGraph(managed?.payload);
+  const candidates = scanWorkflowCandidates(bytes).candidates;
+  const sourceMatches =
+    graph?.nodes.length === candidates.length &&
+    graph.nodes.every(
+      (node, index) =>
+        node.order === index &&
+        node.title_sha256 === titleFingerprint(
+          cleanTitle(candidates[index].heading.text),
+        ),
+    );
+  if (!managed || !graph || !sourceMatches) {
+    throw workflowError(
+      "MANAGED_METADATA_CONFLICT",
+      "Workflow Studio metadata is invalid, duplicated, or stale; preserve the source and resolve the declaration before editing.",
+    );
   }
-  parts.push(bytes.subarray(cursor));
-  return Buffer.concat(parts);
+  return managed;
+}
+
+function withoutTrustedManaged(bytes, original) {
+  const trusted = trustedManagedDeclaration(original);
+  if (!trusted) return Buffer.from(bytes);
+  const matches = managedSpans(bytes).filter(
+    (span) =>
+      span.format === trusted.format &&
+      span.match[0] === trusted.text,
+  );
+  if (matches.length > 1) {
+    throw workflowError(
+      "MANAGED_METADATA_CONFLICT",
+      "The trusted Workflow Studio declaration became ambiguous while rendering.",
+    );
+  }
+  if (matches.length === 0) return Buffer.from(bytes);
+  const owned = ownedManagedSpan(bytes, matches[0]);
+  return Buffer.concat([
+    bytes.subarray(0, owned.start_byte),
+    bytes.subarray(owned.end_byte),
+  ]);
 }
 
 function managedPayload(workflow) {
@@ -1828,9 +2153,7 @@ function managedPayload(workflow) {
 
 function canonicalManagedRender(workflow, original) {
   const newline = workflow.source.newline === "crlf" ? "\r\n" : "\n";
-  const imported = importSkillBytes(original, {
-    sourcePath: workflow.source.path,
-  });
+  const imported = buildWorkflow(original, workflow.source.path);
   const originalSpans = imported.graph.nodes
     .map((node) => node.source_map?.span)
     .filter(Boolean);
@@ -1840,12 +2163,17 @@ function canonicalManagedRender(workflow, original) {
       : Buffer.from(newline, "utf8");
     const generated = workflow.graph.nodes.map(
       (node, index) =>
-        `### Step ${index + 1}: ${node.title}${newline}${node.body.replace(/\r?\n$/u, "")}${newline}`,
+        `### Step ${index + 1}: ${node.title}${newline}${node.body}${
+          node.body.length > 0 && !/\r?\n$/u.test(node.body) ? newline : ""
+        }`,
     );
     return Buffer.concat([
       original,
       suffix,
-      Buffer.from(`${newline}## Workflow${newline}${newline}${generated.join(newline)}`, "utf8"),
+      Buffer.from(
+        `${newline}## Workflow${newline}${newline}${generated.join("")}`,
+        "utf8",
+      ),
     ]);
   }
   const regionStart = Math.min(...originalSpans.map((span) => span.start_byte));
@@ -1858,20 +2186,18 @@ function canonicalManagedRender(workflow, original) {
   const headingLevel = firstLine?.match(/^(#{2,6})/u)?.[1] ?? "###";
   const sections = workflow.graph.nodes.map(
     (node, index) =>
-      `${headingLevel} Step ${index + 1}: ${node.title}${newline}${node.body.replace(/\r?\n$/u, "")}${newline}`,
+      `${headingLevel} Step ${index + 1}: ${node.title}${newline}${node.body}${
+        node.body.length > 0 && !/\r?\n$/u.test(node.body) ? newline : ""
+      }`,
   );
   return Buffer.concat([
     prefix,
-    Buffer.from(sections.join(newline), "utf8"),
+    Buffer.from(sections.join(""), "utf8"),
     suffix,
   ]);
 }
 
-export function renderWorkflow(workflow) {
-  validateArtifact(workflow);
-  if (workflow.kind !== "workflow") {
-    throw workflowError("INVALID_ARTIFACT", "Only workflows render to SKILL.md.");
-  }
+function renderWorkflowCandidate(workflow) {
   const original = sourceBytes(workflow);
   const dirty = workflow.revision?.dirty ?? workflow.editor?.dirty ?? false;
   const structuralDirty =
@@ -1887,7 +2213,7 @@ export function renderWorkflow(workflow) {
   } else {
     candidate = applyPatches(original, bytePatches(workflow));
   }
-  candidate = withoutManaged(candidate);
+  candidate = withoutTrustedManaged(candidate, original);
   const encoded = Buffer.from(
     stableStringify(managedPayload(workflow)),
     "utf8",
@@ -1907,6 +2233,14 @@ export function renderWorkflow(workflow) {
       "utf8",
     ),
   ]);
+}
+
+export function renderWorkflow(workflow) {
+  validateArtifact(workflow);
+  if (workflow.kind !== "workflow") {
+    throw workflowError("INVALID_ARTIFACT", "Only workflows render to SKILL.md.");
+  }
+  return renderWorkflowCandidate(workflow);
 }
 
 export function diffText(before, after, path = "SKILL.md") {

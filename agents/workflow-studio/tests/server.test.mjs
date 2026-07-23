@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,8 +17,9 @@ const ASSET_CONTENT = {
   "styles.css": "body { color: CanvasText; }\n",
 };
 
-async function fixtureAssets() {
+async function fixtureAssets(t) {
   const directory = await mkdtemp(join(tmpdir(), "workflow-studio-server-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
   await Promise.all(
     Object.entries(ASSET_CONTENT).map(([name, content]) =>
       writeFile(join(directory, name), content),
@@ -59,8 +60,8 @@ function httpRequest(address, {
   });
 }
 
-async function withServer(run, options = {}) {
-  const assetsDir = await fixtureAssets();
+async function withServer(t, run, options = {}) {
+  const assetsDir = await fixtureAssets(t);
   const studio = createStudioServer({
     artifact: { graph: { nodes: [{ id: "step-1", title: "<script>" }] } },
     assetsDir,
@@ -74,8 +75,8 @@ async function withServer(run, options = {}) {
   }
 }
 
-test("serves only bundled assets with exact content types and secure headers", async () => {
-  await withServer(async ({ address }) => {
+test("serves only bundled assets with exact content types and secure headers", async (t) => {
+  await withServer(t, async ({ address }) => {
     for (const [path, name, contentType] of [
       ["/", "index.html", "text/html; charset=utf-8"],
       ["/index.html", "index.html", "text/html; charset=utf-8"],
@@ -97,8 +98,8 @@ test("serves only bundled assets with exact content types and secure headers", a
   });
 });
 
-test("requires the per-process token for the source-bearing artifact", async () => {
-  await withServer(async ({ address, studio }) => {
+test("requires the per-process token for the source-bearing artifact", async (t) => {
+  await withServer(t, async ({ address, studio }) => {
     for (const path of [
       "/api/artifact",
       "/api/artifact?token=wrong",
@@ -121,8 +122,8 @@ test("requires the per-process token for the source-bearing artifact", async () 
   });
 });
 
-test("HEAD returns matching metadata without a response body", async () => {
-  await withServer(async ({ address, studio }) => {
+test("HEAD returns matching metadata without a response body", async (t) => {
+  await withServer(t, async ({ address, studio }) => {
     const getResponse = await httpRequest(address, { path: "/editor.mjs" });
     const headResponse = await httpRequest(address, {
       method: "HEAD",
@@ -149,8 +150,8 @@ test("HEAD returns matching metadata without a response body", async () => {
   });
 });
 
-test("rejects the wrong Host, non-read methods, traversal, and unknown routes", async () => {
-  await withServer(async ({ address, studio }) => {
+test("rejects the wrong Host, non-read methods, traversal, and unknown routes", async (t) => {
+  await withServer(t, async ({ address, studio }) => {
     const wrongHosts = [
       `localhost:${address.port}`,
       `127.0.0.1:${address.port + 1}`,
@@ -188,8 +189,8 @@ test("rejects the wrong Host, non-read methods, traversal, and unknown routes", 
   });
 });
 
-test("accepts only literal loopback bind addresses and defaults to an ephemeral port", async () => {
-  const assetsDir = await fixtureAssets();
+test("accepts only literal loopback bind addresses and defaults to an ephemeral port", async (t) => {
+  const assetsDir = await fixtureAssets(t);
   for (const host of ["0.0.0.0", "::", "localhost", "192.0.2.1"]) {
     assert.throws(
       () => createStudioServer({ artifact: {}, assetsDir, host }),
@@ -210,7 +211,7 @@ test("accepts only literal loopback bind addresses and defaults to an ephemeral 
 });
 
 test("supports an IPv6 loopback listener with strict bracketed Host validation", async (t) => {
-  const assetsDir = await fixtureAssets();
+  const assetsDir = await fixtureAssets(t);
   const studio = createStudioServer({ artifact: {}, assetsDir, host: "::1" });
   let address;
   try {
@@ -237,8 +238,8 @@ test("supports an IPv6 loopback listener with strict bracketed Host validation",
   }
 });
 
-test("bounds artifact responses and rejects non-JSON artifacts", async () => {
-  const assetsDir = await fixtureAssets();
+test("bounds artifact responses and rejects non-JSON artifacts", async (t) => {
+  const assetsDir = await fixtureAssets(t);
   assert.throws(
     () =>
       createStudioServer({
@@ -260,8 +261,8 @@ test("bounds artifact responses and rejects non-JSON artifacts", async () => {
   );
 });
 
-test("close stops accepting requests, expires the token, and is idempotent", async () => {
-  const assetsDir = await fixtureAssets();
+test("close stops accepting requests, expires the token, and is idempotent", async (t) => {
+  const assetsDir = await fixtureAssets(t);
   const studio = createStudioServer({ artifact: { secret: true }, assetsDir });
   const address = await studio.listen();
   const token = studio.token;

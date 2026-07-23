@@ -1,4 +1,5 @@
 import {
+  acceptApprovalResult,
   addEdge,
   addNode,
   approvePlan,
@@ -15,13 +16,14 @@ import {
   deleteNode,
   editNode,
   editPlan,
+  graphSemantics,
   moveNode,
   promoteToSkillDraft,
   removeEdge,
   selectNode,
   setActiveView,
   structuralEditBlockReason,
-  traceProvenanceSummary,
+  traceSummaryMetrics,
   validationAnnouncement,
 } from "./editor-model.mjs";
 
@@ -127,6 +129,11 @@ function graphNodePosition(index) {
 
 function renderGraph() {
   const canvas = element("graphCanvas");
+  const semantics = graphSemantics(state);
+  element("graphEyebrow").textContent = semantics.graphEyebrow;
+  element("graphHeading").textContent = semantics.graphHeading;
+  element("graphLegend").textContent = semantics.graphLegend;
+  canvas.setAttribute("aria-label", semantics.graphAriaLabel);
   if (!state.nodes.length) {
     canvas.replaceChildren(
       create("p", "empty-state", "No recognized workflow steps."),
@@ -140,10 +147,9 @@ function renderGraph() {
     "aria-labelledby": "workflowGraphTitle workflowGraphDescription",
   });
   const title = createSvg("title", { id: "workflowGraphTitle" });
-  title.textContent = "Visual workflow graph";
+  title.textContent = semantics.graphTitle;
   const description = createSvg("desc", { id: "workflowGraphDescription" });
-  description.textContent =
-    "A visual companion to the keyboard-operable ordered workflow outline.";
+  description.textContent = semantics.graphDescription;
   const defs = createSvg("defs");
   const marker = createSvg("marker", {
     id: "arrowhead",
@@ -222,7 +228,11 @@ function renderGraph() {
 }
 
 function renderOutline() {
+  const semantics = graphSemantics(state);
+  element("outlineEyebrow").textContent = semantics.outlineEyebrow;
+  element("outlineHeading").textContent = semantics.outlineHeading;
   const outline = element("workflowOutline");
+  outline.setAttribute("aria-label", semantics.outlineAriaLabel);
   const items = state.nodes.map((node) => {
     const item = create("li");
     const button = create("button", "outline-select");
@@ -250,9 +260,15 @@ function renderOutline() {
 }
 
 function renderInspector() {
+  const semantics = graphSemantics(state);
+  element("inspectorEyebrow").textContent = semantics.inspectorEyebrow;
+  element("inspectorHeading").textContent = semantics.inspectorHeading;
   const node = selectedNode();
   element("emptyInspector").hidden = Boolean(node);
   element("nodeForm").hidden = !node;
+  const structuralReason = structuralEditBlockReason(state);
+  element("addFirst").disabled = Boolean(structuralReason);
+  element("addFirst").hidden = state.kind === "trace";
   if (!node) return;
 
   const title = element("nodeTitle");
@@ -274,7 +290,6 @@ function renderInspector() {
     "Only fields with explicit editable mappings are available.";
 
   const index = state.nodes.findIndex((candidate) => candidate.id === node.id);
-  const structuralReason = structuralEditBlockReason(state);
   const structuralDisabled = !node.structuralEditable || Boolean(structuralReason);
   element("addBefore").disabled = structuralDisabled;
   element("addAfter").disabled = structuralDisabled;
@@ -288,6 +303,11 @@ function renderInspector() {
 }
 
 function renderEdges() {
+  const semantics = graphSemantics(state);
+  const isTrace = state.kind === "trace";
+  element("edgeEyebrow").textContent = semantics.edgeEyebrow;
+  element("edgeHeading").textContent = semantics.edgeHeading;
+  element("newEdgeForm").hidden = isTrace;
   const structuralReason = structuralEditBlockReason(state);
   replaceOptions(element("edgeFrom"), element("edgeFrom").value || state.nodes[0]?.id);
   replaceOptions(
@@ -298,26 +318,36 @@ function renderEdges() {
     element(id).disabled = Boolean(structuralReason) || state.nodes.length === 0;
   }
   const list = element("edgeList");
+  list.setAttribute("aria-label", semantics.edgeAriaLabel);
   if (!state.edges.length) {
-    list.replaceChildren(create("li", "empty-state", "No dependency edges."));
+    list.replaceChildren(create("li", "empty-state", semantics.emptyEdges));
     return;
   }
   const rows = state.edges.map((edge, index) => {
     const item = create("li", "edge-row");
     const fromSelect = create("select");
     fromSelect.id = `edge-${index}-from`;
-    fromSelect.setAttribute("aria-label", `From endpoint for edge ${edge.id}`);
+    fromSelect.setAttribute(
+      "aria-label",
+      `${isTrace ? "Observed event from" : "From endpoint for"} edge ${edge.id}`,
+    );
     replaceOptions(fromSelect, edge.from);
     const toSelect = create("select");
     toSelect.id = `edge-${index}-to`;
-    toSelect.setAttribute("aria-label", `To endpoint for edge ${edge.id}`);
+    toSelect.setAttribute(
+      "aria-label",
+      `${isTrace ? "Observed event to" : "To endpoint for"} edge ${edge.id}`,
+    );
     replaceOptions(toSelect, edge.to);
     const route = create("div", "edge-route");
     route.append(fromSelect, create("span", "", " → "), toSelect);
 
     const kindSelect = create("select");
     kindSelect.id = `edge-${index}-kind`;
-    kindSelect.setAttribute("aria-label", `Type for edge ${edge.id}`);
+    kindSelect.setAttribute(
+      "aria-label",
+      `${isTrace ? "Inferred order type" : "Type"} for edge ${edge.id}`,
+    );
     kindSelect.append(
       option("sequence", "Sequence", edge.kind),
       option("parallel", "Parallel", edge.kind),
@@ -347,7 +377,17 @@ function renderEdges() {
     remove.addEventListener("click", () => {
       mutate(removeEdge(state, edge.id), "edgeFrom");
     });
-    item.append(route, kindSelect, remove);
+    item.append(route, kindSelect);
+    if (isTrace) {
+      item.append(
+        create(
+          "span",
+          "edge-provenance",
+          `${edge.provenance === "inferred" ? "Inferred order" : edge.provenance} · not causality`,
+        ),
+      );
+    }
+    if (!isTrace) item.append(remove);
     return item;
   });
   list.replaceChildren(...rows);
@@ -355,8 +395,14 @@ function renderEdges() {
 
 function renderSourceAndDiff() {
   element("sourceMode").textContent = state.dirty ? "Candidate" : "Original";
-  element("sourcePreview").textContent = buildCandidateMarkdown(state);
-  element("diffPreview").textContent = buildStateDiff(state);
+  try {
+    element("sourcePreview").textContent = buildCandidateMarkdown(state);
+    element("diffPreview").textContent = buildStateDiff(state);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    element("sourcePreview").textContent = `Candidate unavailable: ${message}`;
+    element("diffPreview").textContent = `Diff unavailable: ${message}`;
+  }
 }
 
 function renderPlan() {
@@ -365,9 +411,11 @@ function renderPlan() {
   element("planCwd").value = state.plan.cwd;
   element("planSafety").value = state.plan.safety;
   element("planPrompt").value = state.plan.prompt;
-  element("planPreview").textContent = canPreparePlan
+  element("planPreview").textContent = canPreparePlan && state.validation.valid
     ? JSON.stringify(buildPlanArtifact(state), null, 2)
-    : "Plan preparation is available only for workflow and plan artifacts.";
+    : canPreparePlan
+      ? "Fix validation errors before preparing a plan."
+      : "Plan preparation is available only for workflow and plan artifacts.";
   const approval = state.plan.approval;
   element("approvalBadge").textContent = approval
     ? `Approved ${approval.digest.slice(0, 12)}`
@@ -413,14 +461,13 @@ function renderTrace() {
   element("traceStatus").textContent = isTrace
     ? String(traceStatus).toUpperCase()
     : "No trace loaded";
-  const summary = traceProvenanceSummary(state);
   const summaryContainer = element("traceSummary");
   summaryContainer.replaceChildren(
-    ...Object.entries(summary).map(([name, count]) => {
+    ...traceSummaryMetrics(state).map(({ name, count, unit }) => {
       const tile = create("div", "summary-tile");
       tile.append(
         create("strong", "", count),
-        create("span", "", `${name} nodes`),
+        create("span", "", `${name} ${unit}`),
       );
       return tile;
     }),
@@ -561,11 +608,15 @@ function installHandlers() {
     const next = addNode(state, state.selectedId, "after");
     mutate(next, `outline-${next.selectedId}`);
   });
+  element("addFirst").addEventListener("click", () => {
+    const next = addNode(state, null, "after");
+    mutate(next, `outline-${next.selectedId}`);
+  });
   element("deleteNode").addEventListener("click", () => {
     const deletedTitle = selectedNode()?.title || "step";
     const next = deleteNode(state, state.selectedId);
     next.status = `Deleted ${deletedTitle}; connected edges were removed.`;
-    mutate(next, next.selectedId ? `outline-${next.selectedId}` : "addAfter");
+    mutate(next, next.selectedId ? `outline-${next.selectedId}` : "addFirst");
   });
   element("moveUp").addEventListener("click", () => {
     mutate(moveNode(state, state.selectedId, "up"), `outline-${state.selectedId}`);
@@ -598,10 +649,20 @@ function installHandlers() {
   }
 
   element("approvePlan").addEventListener("click", async () => {
+    const approvalSource = state;
     element("approvePlan").disabled = true;
     setStatus("Hashing the exact plan payload…");
     try {
-      mutate(await approvePlan(state), "downloadPlan");
+      const approved = await approvePlan(approvalSource);
+      const settled = acceptApprovalResult(state, approvalSource, approved);
+      if (settled === state) {
+        const next = structuredClone(settled);
+        next.status =
+          "Approval discarded because the plan or graph changed while hashing.";
+        mutate(next, "approvePlan");
+        return;
+      }
+      mutate(settled, "downloadPlan");
     } catch (error) {
       element("approvePlan").disabled = false;
       setStatus(error instanceof Error ? error.message : String(error));

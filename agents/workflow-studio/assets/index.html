@@ -61,10 +61,10 @@
           <section class="graph-card" aria-labelledby="graphHeading">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Declared flow</p>
+                <p id="graphEyebrow" class="eyebrow">Declared flow</p>
                 <h2 id="graphHeading">Workflow graph</h2>
               </div>
-              <p class="legend" aria-label="Graph legend">
+              <p id="graphLegend" class="legend" aria-label="Graph legend">
                 Solid = sequence · Dashed = parallel
               </p>
             </div>
@@ -75,7 +75,7 @@
           <section class="outline-card" aria-labelledby="outlineHeading">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Keyboard editing path</p>
+                <p id="outlineEyebrow" class="eyebrow">Keyboard editing path</p>
                 <h2 id="outlineHeading">Ordered outline</h2>
               </div>
             </div>
@@ -86,13 +86,14 @@
           <aside class="inspector" aria-labelledby="inspectorHeading">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Selection</p>
+                <p id="inspectorEyebrow" class="eyebrow">Selection</p>
                 <h2 id="inspectorHeading">Step inspector</h2>
               </div>
             </div>
 
             <div id="emptyInspector" class="empty-state">
-              Select a step to inspect or edit it.
+              <p>Select a step to inspect or edit it.</p>
+              <button id="addFirst" type="button">Add first step</button>
             </div>
             <form id="nodeForm" class="form-stack" hidden>
               <div class="field">
@@ -137,7 +138,7 @@
           <section class="edge-editor" aria-labelledby="edgeHeading">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Dependencies</p>
+                <p id="edgeEyebrow" class="eyebrow">Dependencies</p>
                 <h2 id="edgeHeading">Edges</h2>
               </div>
             </div>

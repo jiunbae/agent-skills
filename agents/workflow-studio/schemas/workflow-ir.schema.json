@@ -70,10 +70,19 @@
     },
     "node": {
       "type": "object",
-      "required": ["id", "kind", "title", "body", "source_map", "confidence"],
+      "required": [
+        "id",
+        "kind",
+        "order",
+        "title",
+        "body",
+        "source_map",
+        "confidence"
+      ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "kind": { "const": "step" },
+        "order": { "type": "integer", "minimum": 0 },
         "title": {
           "type": "string",
           "minLength": 1,

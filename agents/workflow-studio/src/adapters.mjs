@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
+import { finished } from "node:stream";
 import { renderWorkflow, validateArtifact } from "./core.mjs";
 
 const AGENTS = new Set(["codex", "claude"]);
@@ -1212,7 +1213,8 @@ export async function runApprovedPlan(
     let discardingLine = false;
     let parsedLineCount = 0;
     let sequence = 0;
-    let terminal = null;
+    let successfulTerminalObserved = false;
+    let failedTerminalObserved = false;
     let protocolError = false;
     let normalizationRejected = false;
     let truncated = false;
@@ -1229,7 +1231,13 @@ export async function runApprovedPlan(
       trace.events.push(normalized);
     };
 
-    const handleLine = (line) => {
+    const handleLine = (
+      line,
+      {
+        malformedKind = "malformed-jsonl",
+        malformedSummary = "malformed provider JSONL preserved",
+      } = {},
+    ) => {
       if (parsedLineCount >= limits.maxEvents) {
         truncated = true;
         return;
@@ -1250,11 +1258,11 @@ export async function runApprovedPlan(
           sequence,
         );
         sequence += 1;
-        malformed.source.raw_type = "malformed-jsonl";
-        malformed.summary = "malformed provider JSONL preserved";
+        malformed.source.raw_type = malformedKind;
+        malformed.summary = malformedSummary;
         retainEvent(malformed);
         trace.diagnostics.push({
-          kind: "malformed-jsonl",
+          kind: malformedKind,
           sequence: malformed.sequence,
           evidence: line.toString("utf8").slice(0, 2048),
         });
@@ -1287,7 +1295,8 @@ export async function runApprovedPlan(
       }
       sequence += 1;
       const evidence = terminalEvidence(normalized);
-      if (evidence) terminal = evidence;
+      if (evidence === "completed") successfulTerminalObserved = true;
+      if (evidence === "failed") failedTerminalObserved = true;
       retainEvent(normalized);
     };
 
@@ -1386,7 +1395,14 @@ export async function runApprovedPlan(
       }
     });
 
-    child.on("close", (code, closeSignal) => {
+    const stdinCompletion = new Promise((resolveCompletion) => {
+      finished(child.stdin, (error) => {
+        resolveCompletion(error ?? null);
+      });
+    });
+
+    child.on("close", async (code, closeSignal) => {
+      const stdinError = await stdinCompletion;
       if (settled) return;
       settled = true;
       signal?.removeEventListener("abort", cancel);
@@ -1395,44 +1411,52 @@ export async function runApprovedPlan(
       trace.process.signal = closeSignal;
       trace.process.stderr = stderrRetained.toString("utf8");
 
-      if (lineBuffer.length > 0 || discardingLine) {
-        if (!discardingLine) {
-          protocolError = true;
-          const partial = normalizeProviderEvent(
-            plan.agent,
-            lineBuffer.toString("utf8"),
-            sequence,
-          );
-          sequence += 1;
-          partial.source.raw_type = "partial-jsonl";
-          partial.summary = "partial final provider line preserved";
-          retainEvent(partial);
-          trace.diagnostics.push({
-            kind: "partial-jsonl",
-            evidence: lineBuffer.toString("utf8").slice(0, 2048),
-          });
-        }
+      if (lineBuffer.length > 0 && !discardingLine) {
+        handleLine(lineBuffer, {
+          malformedKind: "partial-jsonl",
+          malformedSummary: "partial final provider line preserved",
+        });
       }
 
+      if (stdinError) {
+        trace.diagnostics.push({
+          kind: "stdin-error",
+          code:
+            typeof stdinError.code === "string"
+              ? stdinError.code.slice(0, 64)
+              : null,
+          message: (stdinError.message ?? "stdin write failed").slice(0, 512),
+        });
+      }
+
+      const providerTerminalObserved =
+        successfulTerminalObserved || failedTerminalObserved;
       if (cancelled) {
         trace.status = "cancelled";
         trace.failure = {
           kind: "cancelled_by_wrapper",
-          provider_terminal_observed: terminal !== null,
+          provider_terminal_observed: providerTerminalObserved,
         };
       } else if (truncated) {
         trace.status = "truncated";
         trace.failure = {
           kind: "output_truncated",
-          provider_terminal_observed: terminal !== null,
+          provider_terminal_observed: providerTerminalObserved,
         };
-      } else if (trace.failure || code !== 0 || terminal === "failed") {
+      } else if (stdinError) {
+        trace.status = "failed";
+        trace.failure = {
+          kind: "input_delivery_failed",
+          message: "The approved prompt and Skill bytes were not fully delivered to the native CLI.",
+          provider_terminal_observed: providerTerminalObserved,
+        };
+      } else if (trace.failure || code !== 0 || failedTerminalObserved) {
         trace.status = "failed";
         trace.failure ??= {
-          kind: terminal === "failed" ? "agent_failed" : "configuration_failed",
-          provider_terminal_observed: terminal !== null,
+          kind: failedTerminalObserved ? "agent_failed" : "configuration_failed",
+          provider_terminal_observed: providerTerminalObserved,
         };
-      } else if (protocolError || terminal === null) {
+      } else if (protocolError || !successfulTerminalObserved) {
         trace.status = "protocol-error";
         trace.failure = {
           kind: normalizationRejected
@@ -1440,7 +1464,7 @@ export async function runApprovedPlan(
             : protocolError
               ? "malformed_stream"
               : "incomplete_stream",
-          provider_terminal_observed: terminal !== null,
+          provider_terminal_observed: providerTerminalObserved,
         };
       } else {
         trace.status = "completed";
@@ -1455,14 +1479,6 @@ export async function runApprovedPlan(
       resolve(trace);
     });
 
-    child.stdin.on("error", (error) => {
-      if (error?.code !== "EPIPE") {
-        trace.diagnostics.push({
-          kind: "stdin-error",
-          message: error?.message ?? "stdin write failed",
-        });
-      }
-    });
     child.stdin.end(prepared.stdin);
   });
 }
@@ -1484,6 +1500,59 @@ function validateSkillName(name) {
 
 function yamlString(value) {
   return JSON.stringify(String(value));
+}
+
+function normalizedMarkdownInline(value, fallback) {
+  const normalized = String(value)
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return normalized || fallback;
+}
+
+function safeMarkdownParagraph(value) {
+  const normalized = normalizedMarkdownInline(value, "Workflow draft.");
+  return /^(?:#{1,6}(?:\s|$)|<!--)/u.test(normalized)
+    ? `\\${normalized}`
+    : normalized;
+}
+
+function safeMarkdownHeading(value, fallback) {
+  const normalized = normalizedMarkdownInline(value, fallback);
+  return /[ \t]+#+$/u.test(normalized) ? `${normalized}.` : normalized;
+}
+
+function safeGeneratedStepBody(value) {
+  let fence = null;
+  return String(value)
+    .split(/(\r?\n)/u)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      if (fence) {
+        const closing = part.match(/^ {0,3}(`+|~+)[ \t]*$/u);
+        if (
+          closing &&
+          closing[1][0] === fence.char &&
+          closing[1].length >= fence.length
+        ) {
+          fence = null;
+        }
+        return part;
+      }
+      const opening = part.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+      if (
+        opening &&
+        !(opening[1][0] === "`" && opening[2].includes("`"))
+      ) {
+        fence = {
+          char: opening[1][0],
+          length: opening[1].length,
+        };
+        return part;
+      }
+      return /^#{1,3}[ \t]+/u.test(part) ? `\\${part}` : part;
+    })
+    .join("");
 }
 
 function uniquePromotionId(candidate, prefix, index, used) {
@@ -1573,7 +1642,7 @@ function planPromotionGraph(artifact) {
           : `Step ${index + 1}`,
       body:
         typeof node.body === "string" && node.body.trim()
-          ? node.body.trim()
+          ? safeGeneratedStepBody(node.body.trim())
           : "Follow this declared workflow step.",
     });
   }
@@ -1596,12 +1665,15 @@ function tracePromotionGraph(artifact) {
     if (
       !event ||
       typeof event !== "object" ||
-      typeof event.kind !== "string" ||
-      event.kind === "provider.unknown"
+      typeof event.kind !== "string"
     ) {
       continue;
     }
     const index = steps.length;
+    const displayKind = safeMarkdownHeading(
+      event.kind,
+      "provider.unknown",
+    );
     const id = uniquePromotionId(
       typeof event.id === "string" ? event.id : null,
       "trace-event",
@@ -1612,8 +1684,8 @@ function tracePromotionGraph(artifact) {
     if (typeof event.id === "string") endpointMap.set(event.id, id);
     steps.push({
       id,
-      title: event.kind,
-      body: `Reproduce the selected ${event.kind} workflow behavior. This step was derived from observable telemetry, not hidden reasoning.`,
+      title: displayKind,
+      body: `Reproduce the selected ${displayKind} workflow behavior. This step was derived from observable telemetry, not hidden reasoning.`,
     });
   }
   const edgeCandidates =
@@ -1692,6 +1764,7 @@ export function promoteArtifact(artifact, { name, description }) {
       "description must contain 1-1024 characters.",
     );
   }
+  const displayDescription = safeMarkdownParagraph(description);
   const derivedHash = digestObject(artifact);
   const warnings = [
     "Draft requires human review before installation or execution.",
@@ -1704,7 +1777,7 @@ export function promoteArtifact(artifact, { name, description }) {
   const frontmatter = [
     "---",
     `name: ${name}`,
-    `description: ${yamlString(description.trim())}`,
+    `description: ${yamlString(displayDescription)}`,
     "metadata:",
     `  workflow-studio-derived-from: ${yamlString(artifact.kind)}`,
     `  ${metadataKey}: ${yamlString(derivedHash)}`,
@@ -1730,12 +1803,12 @@ export function promoteArtifact(artifact, { name, description }) {
     canonicalJson(managed),
     "utf8",
   ).toString("base64url");
-  const skillMarkdown = `${frontmatter}\n\n# ${name}\n\n${description.trim()}\n\n## Workflow\n\n${workflowMarkdown}\n\n## Provenance and limitations\n\n${warningMarkdown}\n\n<!-- workflow-studio:v1 ${encodedManaged} -->\n`;
+  const skillMarkdown = `${frontmatter}\n\n# ${name}\n\n${displayDescription}\n\n## Workflow\n\n${workflowMarkdown}\n\n## Provenance and limitations\n\n${warningMarkdown}\n\n<!-- workflow-studio:v1 ${encodedManaged} -->\n`;
   return {
     ir_version: "1.0",
     kind: "skill-draft",
     name,
-    description: description.trim(),
+    description: displayDescription,
     derived_from: {
       kind: artifact.kind,
       sha256: derivedHash,
