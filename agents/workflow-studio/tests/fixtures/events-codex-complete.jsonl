@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-1"}
+{"type":"item.started","item":{"id":"item-1","type":"command_execution","command":"sensitive command"}}
+{"type":"item.completed","item":{"id":"item-1","type":"command_execution","exit_code":0}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}

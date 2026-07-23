@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#라이선스"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-30-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-31-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#스킬-카탈로그">스킬</a> •
@@ -120,6 +120,7 @@ cd ~/.agent-skills
 | `background-reviewer` | 페르소나 병렬 리뷰 + 적대적 검증 + root-cause 병합 |
 | `incident-writer` | 구조화된 장애 및 상태 페이지 보고서 작성 |
 | `rpf` | 하나의 동적 pointer 문서를 따르는 다중 에이전트 리뷰·계획·작업·피드백 루프 |
+| `workflow-studio` | 시각적 Skill 워크플로 편집·계획 승인·실행 추적 |
 
 ### 🛠 development/ — 개발 도구
 
@@ -317,6 +318,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>30</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
+  <sub><strong>31</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
   <sub>CLI 도구: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

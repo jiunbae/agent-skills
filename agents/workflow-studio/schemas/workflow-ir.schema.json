@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-skills.local/workflow-studio/workflow-ir-1.0.schema.json",
+  "title": "Workflow Studio Artifact 1.0",
+  "type": "object",
+  "required": ["ir_version", "kind"],
+  "properties": {
+    "ir_version": { "const": "1.0" },
+    "kind": { "enum": ["workflow", "plan", "trace"] },
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "object",
+      "required": ["path", "sha256", "byte_length", "raw_base64"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "byte_length": { "type": "integer", "minimum": 0 },
+        "raw_base64": { "type": "string" }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": ["entry_node_ids", "nodes", "edges"],
+      "properties": {
+        "entry_node_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "title", "body", "source_map", "confidence"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "kind": { "const": "step" },
+              "title": { "type": "string" },
+              "body": { "type": "string" },
+              "source_map": { "type": ["object", "null"] },
+              "confidence": { "type": "object" }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "from", "to", "kind", "confidence"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "kind": { "enum": ["sequence", "parallel"] },
+              "confidence": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "opaque_spans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start_byte", "end_byte", "sha256", "reason"],
+        "properties": {
+          "start_byte": { "type": "integer", "minimum": 0 },
+          "end_byte": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}
