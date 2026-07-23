@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   acceptApprovalResult,
@@ -217,6 +219,15 @@ function productionTraceArtifact() {
       hidden_reasoning_recovered: false,
     },
   };
+}
+
+async function readIfPresent(path) {
+  try {
+    return await readFile(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 test("no-op candidate keeps the exact imported bytes", () => {
@@ -495,6 +506,105 @@ test("real background implementer browser edits match core title, body, and edge
   assert.equal(edgeReimport.graph.edges[0].confidence.level, "explicit");
 });
 
+test("real Skill middle deletions render canonically and preserve opaque source", async () => {
+  const fixtures = [
+    {
+      label: "repository background-implementer",
+      path: new URL("../../background-implementer/SKILL.md", import.meta.url),
+      sourcePath: "agents/background-implementer/SKILL.md",
+      required: true,
+    },
+    {
+      label: "installed agents background-implementer",
+      path: join(homedir(), ".agents/skills/background-implementer/SKILL.md"),
+      sourcePath: join(
+        homedir(),
+        ".agents/skills/background-implementer/SKILL.md",
+      ),
+    },
+    {
+      label: "installed Codex background-implementer",
+      path: join(homedir(), ".codex/skills/background-implementer/SKILL.md"),
+      sourcePath: join(
+        homedir(),
+        ".codex/skills/background-implementer/SKILL.md",
+      ),
+    },
+    {
+      label: "installed Claude background-implementer",
+      path: join(homedir(), ".claude/skills/background-implementer/SKILL.md"),
+      sourcePath: join(
+        homedir(),
+        ".claude/skills/background-implementer/SKILL.md",
+      ),
+    },
+    {
+      label: "conversation Skill",
+      path: "/tmp/conversation-skill/SKILL.md",
+      sourcePath: "/tmp/conversation-skill/SKILL.md",
+    },
+  ];
+  let exercised = 0;
+
+  for (const fixture of fixtures) {
+    const raw = fixture.required
+      ? await readFile(fixture.path)
+      : await readIfPresent(fixture.path);
+    if (!raw) continue;
+    const workflow = importSkillBytes(raw, { sourcePath: fixture.sourcePath });
+    assert.ok(
+      workflow.graph.nodes.length >= 3,
+      `${fixture.label} needs an interior node`,
+    );
+    const middle = workflow.graph.nodes[Math.floor(workflow.graph.nodes.length / 2)];
+    const coreDeleted = applyOperation(workflow, {
+      type: "delete-node",
+      node_id: middle.id,
+    });
+    const browserDeleted = deleteNode(createEditorState(workflow), middle.id);
+
+    assert.equal(
+      browserDeleted.nodes.some((node) => node.id === middle.id),
+      false,
+      fixture.label,
+    );
+    assert.equal(structuralEditBlockReason(browserDeleted), "", fixture.label);
+    assert.equal(canDownloadArtifact(browserDeleted), true, fixture.label);
+    let candidate;
+    assert.doesNotThrow(() => {
+      candidate = Buffer.from(buildCandidateBytes(browserDeleted));
+    }, fixture.label);
+
+    const browserArtifact = buildWorkflowArtifact(browserDeleted);
+    assert.equal(validateArtifact(browserArtifact), true, fixture.label);
+    assert.deepEqual(candidate, renderWorkflow(browserArtifact), fixture.label);
+    assert.deepEqual(candidate, renderWorkflow(coreDeleted), fixture.label);
+    for (const opaque of workflow.opaque_spans) {
+      const bytes = raw.subarray(opaque.start_byte, opaque.end_byte);
+      if (bytes.length > 0) {
+        assert.notEqual(
+          candidate.indexOf(bytes),
+          -1,
+          `${fixture.label} lost opaque bytes ${opaque.start_byte}:${opaque.end_byte}`,
+        );
+      }
+    }
+
+    const reimported = importSkillBytes(candidate, {
+      sourcePath: fixture.sourcePath,
+    });
+    assert.equal(validateArtifact(reimported), true, fixture.label);
+    assert.equal(
+      reimported.graph.nodes.some((node) => node.id === middle.id),
+      false,
+      fixture.label,
+    );
+    exercised += 1;
+  }
+
+  assert.ok(exercised >= 1, "the repository Skill must always be exercised");
+});
+
 test("disjoint mapped regions reject structural UI edits and preserve opaque bytes", () => {
   const initial = createEditorState(disjointWorkflowArtifact());
   assert.match(structuralEditBlockReason(initial), /separate source regions/i);
@@ -514,6 +624,17 @@ test("disjoint mapped regions reject structural UI edits and preserve opaque byt
   const artifact = buildWorkflowArtifact(mapped);
   assert.equal(validateArtifact(artifact), true);
   assert.match(renderWorkflow(artifact).toString(), /MUST PRESERVE THIS OPAQUE NOTE\./);
+
+  const unrenderable = structuredClone(initial);
+  unrenderable.dirty = true;
+  unrenderable.structuralDirty = true;
+  assert.equal(validateState(unrenderable).valid, true);
+  assert.throws(() => buildCandidateBytes(unrenderable), /separate mapped regions/i);
+  assert.equal(
+    canDownloadArtifact(unrenderable),
+    false,
+    "download eligibility must include candidate rendering",
+  );
 });
 
 test("edge add/change/remove validates endpoints, duplicates, and cycles", () => {

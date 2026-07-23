@@ -288,6 +288,26 @@ function GraphCanvas({
     [notifySelection],
   );
 
+  const handleBeforeDelete = useCallback(
+    ({ edges, nodes }) => {
+      const selectedNode =
+        nodes.find((node) => node.id === selectionRef.current.nodeId) ?? nodes[0];
+      if (selectedNode) {
+        onDeleteNode?.(selectedNode.id);
+        return false;
+      }
+
+      const selectedEdge =
+        edges.find((edge) => edge.id === selectionRef.current.edgeId) ?? edges[0];
+      if (selectedEdge) onDeleteEdge?.(selectedEdge.id);
+
+      // Domain state owns deletion. Prevent React Flow from also applying its
+      // transient remove changes while the canonical props settle.
+      return false;
+    },
+    [onDeleteEdge, onDeleteNode],
+  );
+
   return (
     <ReactFlow
       aria-label="Workflow graph"
@@ -303,6 +323,7 @@ function GraphCanvas({
       nodes={flowNodes}
       nodesConnectable={!readOnly}
       nodesFocusable
+      onBeforeDelete={readOnly ? undefined : handleBeforeDelete}
       onConnect={
         readOnly
           ? undefined
@@ -338,7 +359,10 @@ function GraphCanvas({
               }
           }
       }
-      onlyRenderVisibleElements
+      // The parent already bounds the interactive graph to 1,000/1,000.
+      // Keeping the bounded set mounted avoids a blank edge frame while
+      // controlled domain props and node measurements settle.
+      onlyRenderVisibleElements={false}
       ref={canvasRef}
     >
       <Background />

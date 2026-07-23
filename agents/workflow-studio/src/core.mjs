@@ -1143,11 +1143,17 @@ function validateSafetyProfile(agent, safety, code) {
 }
 
 function validateMappedSources(bytes, nodes) {
-  const trusted = scanWorkflowCandidates(bytes).candidates.map(candidateSourceMap);
+  const trusted = scanWorkflowCandidates(bytes).candidates.map((candidate) => ({
+    current: candidateSourceMap(candidate),
+    legacyTitle: {
+      start_byte: candidate.heading.titleStart,
+      end_byte: candidate.heading.titleEnd,
+    },
+  }));
   const trustedBySpan = new Map(
-    trusted.map((candidate, index) => [
-      `${candidate.span.start_byte}:${candidate.span.end_byte}`,
-      { candidate, index },
+    trusted.map((mapping, index) => [
+      `${mapping.current.span.start_byte}:${mapping.current.span.end_byte}`,
+      { mapping, index },
     ]),
   );
   const used = new Set();
@@ -1158,13 +1164,21 @@ function validateMappedSources(bytes, nodes) {
       `${mapping.span?.start_byte}:${mapping.span?.end_byte}`,
     );
     const trustedIndex = trustedMatch?.index ?? -1;
-    const candidate = trustedMatch?.candidate;
+    const trustedMapping = trustedMatch?.mapping;
+    const current = trustedMapping?.current;
+    const titleMatches =
+      sameByteRange(mapping.title, current?.title) ||
+      (
+        !sameByteRange(trustedMapping?.legacyTitle, current?.title) &&
+        sameByteRange(mapping.title, trustedMapping?.legacyTitle)
+      );
     if (
       trustedIndex < 0 ||
       used.has(trustedIndex) ||
-      !["span", "heading", "title", "body"].every((field) =>
-        sameByteRange(mapping[field], candidate?.[field]),
-      )
+      !["span", "heading", "body"].every((field) =>
+        sameByteRange(mapping[field], current?.[field]),
+      ) ||
+      !titleMatches
     ) {
       throw workflowError(
         "SOURCE_MAP_MISMATCH",
@@ -1654,6 +1668,7 @@ function validateTrace(artifact) {
     }
     sequences.add(event.sequence);
   }
+  const inferredPairs = new Set();
   for (const edge of artifact.inferred_edges) {
     if (
       !plainRecord(edge) ||
@@ -1670,6 +1685,14 @@ function validateTrace(artifact) {
     ) {
       throw workflowError(code, "Trace contains an invalid inferred edge.");
     }
+    const pair = `${edge.from_sequence}\0${edge.to_sequence}`;
+    if (inferredPairs.has(pair)) {
+      throw workflowError(
+        code,
+        `Trace contains a duplicate inferred edge: ${edge.from_sequence} → ${edge.to_sequence}.`,
+      );
+    }
+    inferredPairs.add(pair);
   }
   const processRecord = artifact.process;
   if (
@@ -2143,8 +2166,8 @@ function bytePatches(workflow) {
     if (!originalNode) continue;
     if (node.title !== originalNode.title) {
       patches.push({
-        start: node.source_map.title.start_byte,
-        end: node.source_map.title.end_byte,
+        start: originalNode.source_map.title.start_byte,
+        end: originalNode.source_map.title.end_byte,
         bytes: Buffer.from(node.title, "utf8"),
       });
     }

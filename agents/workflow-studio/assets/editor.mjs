@@ -866,14 +866,36 @@ function downloadJson(value, filename) {
 function applySelectedEdgeChange(focusId) {
   const edge = selectedEdge();
   if (!edge) return;
-  applyDomainMutation(
-    changeEdge(state, edge.id, {
-      from: element("selectedEdgeFrom").value,
-      to: element("selectedEdgeTo").value,
-      kind: element("selectedEdgeKind").value,
-    }),
-    { focusId },
+  const attempted = {
+    from: element("selectedEdgeFrom").value,
+    to: element("selectedEdgeTo").value,
+    kind: element("selectedEdgeKind").value,
+  };
+  const next = changeEdge(state, edge.id, attempted);
+  if (applyDomainMutation(next, { focusId })) return;
+
+  const duplicate = state.edges.find(
+    (candidate) =>
+      candidate.id !== edge.id &&
+      candidate.from === attempted.from &&
+      candidate.to === attempted.to,
   );
+  pendingFocusId = focusId;
+  render();
+  if (duplicate) {
+    const from =
+      state.nodes.find((node) => node.id === attempted.from)?.title ||
+      attempted.from;
+    const to =
+      state.nodes.find((node) => node.id === attempted.to)?.title ||
+      attempted.to;
+    setStatus(
+      `Could not change dependency: ${from} → ${to} already exists. ` +
+        "The canonical endpoint values were restored.",
+    );
+  } else {
+    setStatus("The dependency was unchanged; canonical values were restored.");
+  }
 }
 
 function installHandlers() {
@@ -916,14 +938,34 @@ function installHandlers() {
     openReview("diff", event.currentTarget);
   });
   element("closeReview").addEventListener("click", closeReview);
-  element("reviewSourceTab").addEventListener("click", () => {
-    reviewMode = "source";
-    renderReviewDrawer();
-  });
-  element("reviewDiffTab").addEventListener("click", () => {
-    reviewMode = "diff";
-    renderReviewDrawer();
-  });
+  const reviewTabs = [
+    [element("reviewSourceTab"), "source"],
+    [element("reviewDiffTab"), "diff"],
+  ];
+  for (const [tab, mode] of reviewTabs) {
+    tab.addEventListener("click", () => {
+      reviewMode = mode;
+      renderReviewDrawer();
+    });
+    tab.addEventListener("keydown", (event) => {
+      const index = reviewTabs.findIndex(([candidate]) => candidate === tab);
+      let target = null;
+      if (event.key === "ArrowRight") {
+        target = reviewTabs[(index + 1) % reviewTabs.length][0];
+      }
+      if (event.key === "ArrowLeft") {
+        target =
+          reviewTabs[(index - 1 + reviewTabs.length) % reviewTabs.length][0];
+      }
+      if (event.key === "Home") target = reviewTabs[0][0];
+      if (event.key === "End") target = reviewTabs[reviewTabs.length - 1][0];
+      if (target) {
+        event.preventDefault();
+        target.click();
+        target.focus();
+      }
+    });
+  }
 
   element("nodeTitle").addEventListener("input", (event) => {
     const id = selectedNode()?.id;

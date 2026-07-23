@@ -96,6 +96,16 @@ function completedTrace(agent = "codex") {
   };
 }
 
+function legacyTitleStart(bytes, mapping) {
+  const heading = bytes.subarray(
+    mapping.heading.start_byte,
+    mapping.heading.end_byte,
+  ).toString("utf8");
+  const marker = heading.match(/^#{2,6}[ \t]+/u);
+  assert.ok(marker, "fixture source map must identify an ATX heading");
+  return mapping.heading.start_byte + Buffer.byteLength(marker[0], "utf8");
+}
+
 test("imports representative workflow skills deterministically and ignores fenced headings", async () => {
   const security = await importSkillFile(
     join(ROOT, "security/security-auditor/SKILL.md"),
@@ -185,6 +195,68 @@ test("real background implementer mapped edits preserve numbered H2 tokens and o
   assert.equal(reimported.graph.nodes.length, 5);
   assert.equal(reimported.graph.nodes[0].title, "Decompose work into a task DAG");
   assert.match(reimported.graph.nodes[0].body, /bounded independent units/u);
+});
+
+test("exact legacy 1.0 title maps validate and edit through canonical structural tokens", () => {
+  const fixtures = [
+    {
+      sourcePath: "legacy-workflow-child/SKILL.md",
+      raw: Buffer.from(`---
+name: legacy-workflow-child
+description: exact former title mapping
+---
+
+## Workflow
+### Step 1: One
+First.
+### Step 2: Two
+Second.
+`),
+      heading: /^### Step 1: Renamed$/mu,
+    },
+    {
+      sourcePath: "legacy-numbered-h2/SKILL.md",
+      raw: Buffer.from(`---
+name: legacy-numbered-h2
+description: exact former numbered title mapping
+---
+
+## 1. One
+First.
+## 2. Two
+Second.
+`),
+      heading: /^## 1\. Renamed$/mu,
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    const workflow = importSkillBytes(fixture.raw, {
+      sourcePath: fixture.sourcePath,
+    });
+    const legacy = structuredClone(workflow);
+    for (const node of legacy.graph.nodes) {
+      const start = legacyTitleStart(fixture.raw, node.source_map);
+      assert.ok(start < node.source_map.title.start_byte);
+      node.source_map.title.start_byte = start;
+    }
+
+    assert.equal(validateArtifact(legacy), true);
+    assert.deepEqual(renderWorkflow(legacy), fixture.raw);
+
+    const edited = applyOperation(legacy, {
+      type: "edit-node",
+      node_id: legacy.graph.nodes[0].id,
+      title: "Renamed",
+    });
+    const rendered = renderWorkflow(edited);
+    assert.match(rendered.toString("utf8"), fixture.heading);
+    const reimported = importSkillBytes(rendered, {
+      sourcePath: fixture.sourcePath,
+    });
+    assert.equal(reimported.graph.nodes[0].title, "Renamed");
+    assert.equal(validateArtifact(reimported), true);
+  }
 });
 
 test("no-op render is byte-identical for real, CRLF, unicode, and no-final-newline skills", async () => {
@@ -479,6 +551,24 @@ Second body.
       code: "SOURCE_MAP_MISMATCH",
     });
   }
+
+  const legacy = structuredClone(workflow);
+  const legacyMapping = legacy.graph.nodes[0].source_map;
+  legacyMapping.title.start_byte = legacyTitleStart(raw, legacyMapping);
+  assert.equal(validateArtifact(legacy), true);
+
+  const forgedLegacyEnd = structuredClone(legacy);
+  forgedLegacyEnd.graph.nodes[0].source_map.title.end_byte -= 1;
+  assert.throws(() => renderWorkflow(forgedLegacyEnd), {
+    code: "SOURCE_MAP_MISMATCH",
+  });
+
+  const forgedAtxInclusive = structuredClone(legacy);
+  forgedAtxInclusive.graph.nodes[0].source_map.title.start_byte =
+    forgedAtxInclusive.graph.nodes[0].source_map.heading.start_byte;
+  assert.throws(() => renderWorkflow(forgedAtxInclusive), {
+    code: "SOURCE_MAP_MISMATCH",
+  });
 
   const forgedSpan = structuredClone(workflow);
   const mapping = forgedSpan.graph.nodes[0].source_map;
@@ -876,6 +966,44 @@ test("completed traces require coherent process and provider terminal evidence",
   assert.throws(() => validateArtifact(failureRecord), {
     code: "INVALID_TRACE",
   });
+});
+
+test("trace validation rejects duplicate inferred sequence pairs", () => {
+  const trace = completedTrace();
+  trace.events.unshift({
+    sequence: 0,
+    provider: "codex",
+    kind: "item.completed",
+    status: "completed",
+    provenance: "observed",
+    source: { raw_type: "test-item" },
+    summary: "provider item completed",
+  });
+  trace.events[1].sequence = 1;
+  trace.inferred_edges = [
+    {
+      from_sequence: 0,
+      to_sequence: 1,
+      kind: "sequence",
+      provenance: "inferred",
+      confidence: 1,
+    },
+    {
+      from_sequence: 0,
+      to_sequence: 1,
+      kind: "sequence",
+      provenance: "inferred",
+      confidence: 0.5,
+    },
+  ];
+
+  assert.throws(
+    () => validateArtifact(trace),
+    {
+      code: "INVALID_TRACE",
+      message: /duplicate inferred edge/u,
+    },
+  );
 });
 
 test("managed inferred edges retain non-explicit provenance after reimport", () => {

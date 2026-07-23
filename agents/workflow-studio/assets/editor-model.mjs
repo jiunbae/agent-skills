@@ -666,7 +666,8 @@ function findNode(state, nodeId) {
 }
 
 function hasDisjointMappedRegions(state) {
-  const spans = state.nodes
+  const importedGraph = artifactGraph(state.workflowArtifact ?? state.artifact);
+  const spans = asArray(importedGraph.nodes)
     .map(mappedNodeSpan)
     .filter(Boolean)
     .sort((left, right) => left.start - right.start);
@@ -1456,11 +1457,13 @@ function validateDownloadWorkflow(artifact) {
 }
 
 export function canDownloadArtifact(state) {
-  return (
-    state.kind === "workflow" &&
-    validateState(state).valid &&
-    validateDownloadWorkflow(buildWorkflowArtifact(state))
-  );
+  if (!(state.kind === "workflow" && validateState(state).valid)) return false;
+  try {
+    buildCandidateBytes(state);
+    return validateDownloadWorkflow(buildWorkflowArtifact(state));
+  } catch {
+    return false;
+  }
 }
 
 export function validationAnnouncement(state) {

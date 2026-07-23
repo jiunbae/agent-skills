@@ -1,12 +1,25 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  rm,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import test from "node:test";
 
-import { importSkillBytes, importSkillFile } from "../src/core.mjs";
+import {
+  importSkillBytes,
+  importSkillFile,
+  renderWorkflow,
+  validateArtifact,
+} from "../src/core.mjs";
 import { createStudioServer } from "../src/server.mjs";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +30,11 @@ const BACKGROUND_IMPLEMENTER = resolve(
   REPOSITORY_ROOT,
   "agents/background-implementer/SKILL.md",
 );
+const INSTALLED_BACKGROUND_IMPLEMENTER =
+  "/Users/jiun/.agents/skills/background-implementer/SKILL.md";
+const CONVERSATION_SKILL = "/tmp/conversation-skill/SKILL.md";
+const CONVERSATION_WORKFLOW = "/tmp/conversation-skill/workflow.json";
+const CLI = resolve(STUDIO_ROOT, "scripts/workflow-studio.mjs");
 const TEST_TIMEOUT_MS = Number.parseInt(
   process.env.WORKFLOW_STUDIO_BROWSER_TIMEOUT_MS || "120000",
   10,
@@ -38,6 +56,19 @@ async function executableExists(path) {
   } catch {
     return false;
   }
+}
+
+async function fileExists(path) {
+  try {
+    await access(path, fsConstants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 async function findBrowserRuntime() {
@@ -175,6 +206,75 @@ async function expectText(page, selector, expected) {
   );
 }
 
+async function downloadFile(page, selector) {
+  const pending = page.waitForEvent("download", { timeout: 15_000 });
+  await page.locator(selector).click();
+  const download = await pending;
+  const path = await download.path();
+  assert.ok(path, `${selector} download must have a local temporary path`);
+  return { bytes: await readFile(path), path };
+}
+
+function runCli(args) {
+  const result = spawnSync(process.execPath, [CLI, ...args], {
+    cwd: REPOSITORY_ROOT,
+    encoding: "utf8",
+    timeout: 20_000,
+  });
+  assert.equal(
+    result.status,
+    0,
+    `CLI ${args[0]} failed: ${result.stderr || result.stdout}`,
+  );
+  return result;
+}
+
+async function verifyArtifactBrowserRoundTrip(
+  browser,
+  artifact,
+  label,
+  context,
+) {
+  assert.equal(validateArtifact(artifact), true);
+  const expectedMarkdown = renderWorkflow(artifact);
+  context.diagnostic(
+    `${label}: ${artifact.graph.nodes.length}/${artifact.graph.edges.length}, ` +
+      `sha256 ${sha256(expectedMarkdown)}`,
+  );
+  let errors = [];
+  await withStudio(artifact, async ({ origin, token }) => {
+    const browserContext = await browser.newContext({ acceptDownloads: true });
+    const page = await browserContext.newPage();
+    errors = observePage(page);
+    const parityRoot = await mkdtemp(
+      join(tmpdir(), "workflow-studio-browser-fixture-"),
+    );
+    try {
+      await openStudio(
+        page,
+        origin,
+        token,
+        `${artifact.graph.nodes.length} steps · ${artifact.graph.edges.length} edges`,
+      );
+      const irFile = await downloadFile(page, "#downloadIr");
+      const markdownFile = await downloadFile(page, "#downloadMarkdown");
+      const downloadedIr = JSON.parse(irFile.bytes.toString("utf8"));
+      assert.equal(validateArtifact(downloadedIr), true);
+      assert.deepEqual(renderWorkflow(downloadedIr), markdownFile.bytes);
+      assert.deepEqual(markdownFile.bytes, expectedMarkdown);
+      runCli(["validate", irFile.path]);
+      const cliMarkdown = join(parityRoot, "SKILL.cli.md");
+      runCli(["export", irFile.path, "--out", cliMarkdown]);
+      assert.deepEqual(await readFile(cliMarkdown), expectedMarkdown);
+    } finally {
+      await rm(parityRoot, { force: true, recursive: true });
+      await page.close({ runBeforeUnload: false });
+      await browserContext.close();
+    }
+  });
+  return errors.map((error) => `${label}: ${error}`);
+}
+
 function largeWorkflowArtifact() {
   const lines = [
     "---",
@@ -224,7 +324,7 @@ test(
 
       await withStudio(artifact, async ({ origin, token }) => {
         const browserContext = await browser.newContext({
-          acceptDownloads: false,
+          acceptDownloads: true,
         });
         const page = await browserContext.newPage();
         const errors = observePage(page);
@@ -258,14 +358,31 @@ test(
           await page.locator("#nodeTitle").blur();
           await expectText(page, ".react-flow__node", editedTitle);
 
-          await page.locator("#openDiff").click();
+          await page.locator("#openSource").click();
           await page.locator("#reviewDrawer").waitFor({ state: "visible" });
+          await page.locator("#reviewSourceTab").focus();
+          await page.locator("#reviewSourceTab").press("ArrowRight");
+          assert.equal(
+            await page.locator("#reviewDiffTab").getAttribute("aria-selected"),
+            "true",
+          );
+          await page.locator("#reviewDiffTab").press("Home");
+          assert.equal(
+            await page.locator("#reviewSourceTab").getAttribute("aria-selected"),
+            "true",
+          );
+          await page.locator("#reviewSourceTab").press("End");
           const diff = await page.locator("#diffPreview").textContent();
           assert.match(diff, /@@ full-file @@/u);
           assert.match(diff, /-## 1\. Decompose into a task DAG/u);
           assert.match(diff, /\+## 1\. Decompose into a verified task DAG/u);
           assert.match(diff, /[-+ ]## Version Notes/u);
           await page.locator("#closeReview").click();
+          await page.waitForFunction(
+            () => document.activeElement?.id === "openSource",
+            null,
+            { timeout: 10_000 },
+          );
 
           await page.locator("#undoEdit").click();
           await expectValue(page, "#nodeTitle", originalTitle);
@@ -284,16 +401,93 @@ test(
           await page.locator("#selectedEdgeKind").selectOption("sequence");
           await expectValue(page, "#selectedEdgeKind", "sequence");
           await expectText(page, ".react-flow__edge-text", "sequence");
+          const secondNodeId = await page
+            .locator(".react-flow__node", { hasText: "Wave execution" })
+            .getAttribute("data-id");
+          const thirdNodeId = await page
+            .locator(".react-flow__node", {
+              hasText: "Assign and isolate workers",
+            })
+            .getAttribute("data-id");
+          assert.ok(firstNodeId && secondNodeId && thirdNodeId);
+          await page
+            .locator("#selectedEdgeTo")
+            .selectOption(String(thirdNodeId));
+          await expectValue(page, "#selectedEdgeTo", String(thirdNodeId));
+          await page
+            .locator("#selectedEdgeFrom")
+            .selectOption(String(secondNodeId));
+          await expectValue(page, "#selectedEdgeFrom", String(firstNodeId));
+          await page.waitForFunction(
+            () => document.activeElement?.id === "selectedEdgeFrom",
+            null,
+            { timeout: 10_000 },
+          );
+          await expectText(page, "#statusMessage", "already exists");
+          await page
+            .locator("#selectedEdgeTo")
+            .selectOption(String(secondNodeId));
+          await expectValue(page, "#selectedEdgeTo", String(secondNodeId));
           const selectedEdge = page.locator(".react-flow__edge.selected");
           await selectedEdge.focus();
           await selectedEdge.press("Delete");
-          assert.equal(await page.locator(".react-flow__edge").count(), 3);
+          await page.waitForFunction(
+            () => document.querySelectorAll(".react-flow__edge").length === 3,
+            null,
+            { timeout: 10_000 },
+          );
+          const edgeDeletedIrFile = await downloadFile(page, "#downloadIr");
+          const edgeDeletedIr = JSON.parse(
+            edgeDeletedIrFile.bytes.toString("utf8"),
+          );
+          assert.equal(edgeDeletedIr.graph.edges.length, 3);
+          assert.equal(validateArtifact(edgeDeletedIr), true);
           await page.locator("#undoEdit").click();
           await page.waitForFunction(
             () => document.querySelectorAll(".react-flow__edge").length === 4,
             null,
             { timeout: 10_000 },
           );
+
+          const interiorNode = page.locator(".react-flow__node", {
+            hasText: "Assign and isolate workers",
+          });
+          await interiorNode.click();
+          await expectValue(page, "#nodeTitle", "Assign and isolate workers");
+          await page.locator("#deleteNode").click();
+          await page.waitForFunction(
+            () => document.querySelectorAll(".react-flow__node").length === 4,
+            null,
+            { timeout: 10_000 },
+          );
+          const parityRoot = await mkdtemp(
+            join(tmpdir(), "workflow-studio-browser-r11-"),
+          );
+          try {
+            const irFile = await downloadFile(page, "#downloadIr");
+            const markdownFile = await downloadFile(
+              page,
+              "#downloadMarkdown",
+            );
+            const downloadedIr = JSON.parse(irFile.bytes.toString("utf8"));
+            assert.equal(validateArtifact(downloadedIr), true);
+            assert.equal(downloadedIr.graph.nodes.length, 4);
+            assert.deepEqual(renderWorkflow(downloadedIr), markdownFile.bytes);
+            assert.equal(
+              validateArtifact(
+                importSkillBytes(markdownFile.bytes, {
+                  sourcePath: "/downloads/background-implementer/SKILL.md",
+                }),
+              ),
+              true,
+            );
+            runCli(["validate", irFile.path]);
+            const cliMarkdown = join(parityRoot, "SKILL.cli.md");
+            runCli(["export", irFile.path, "--out", cliMarkdown]);
+            assert.deepEqual(await readFile(cliMarkdown), markdownFile.bytes);
+          } finally {
+            await rm(parityRoot, { force: true, recursive: true });
+          }
 
           await page.locator("#tabPlan").click();
           await expectText(page, "#approvalBadge", "CLI approval required");
@@ -325,6 +519,36 @@ test(
           await browserContext.close();
         }
       });
+
+      for (const [label, path] of [
+        ["installed background-implementer", INSTALLED_BACKGROUND_IMPLEMENTER],
+        ["conversation Skill", CONVERSATION_SKILL],
+      ]) {
+        if (!(await fileExists(path))) continue;
+        const fixture = await importSkillFile(path);
+        allErrors.push(
+          ...(await verifyArtifactBrowserRoundTrip(
+            browser,
+            fixture,
+            label,
+            context,
+          )),
+        );
+      }
+
+      if (await fileExists(CONVERSATION_WORKFLOW)) {
+        const legacyConversation = JSON.parse(
+          await readFile(CONVERSATION_WORKFLOW, "utf8"),
+        );
+        allErrors.push(
+          ...(await verifyArtifactBrowserRoundTrip(
+            browser,
+            legacyConversation,
+            "legacy conversation Workflow IR",
+            context,
+          )),
+        );
+      }
 
       const largeArtifact = largeWorkflowArtifact();
       await withStudio(largeArtifact, async ({ origin, token }) => {
