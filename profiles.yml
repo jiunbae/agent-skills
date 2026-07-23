@@ -8,6 +8,7 @@ core:
     - agents/background-implementer
     - agents/background-planner
     - agents/background-reviewer
+    - agents/rpf
 
 dev:
   description: "Development workflow tools"

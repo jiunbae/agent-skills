@@ -66,6 +66,7 @@ CORE_SKILLS=(
   "agents/background-implementer"
   "agents/background-planner"
   "agents/background-reviewer"
+  "agents/rpf"
 )
 
 # Core 모드 플래그
@@ -177,6 +178,8 @@ Core 스킬 (워크스페이스 공통):
   - security/security-auditor       보안 감사
   - agents/background-implementer   백그라운드 병렬 구현
   - agents/background-planner       백그라운드 병렬 기획
+  - agents/background-reviewer      다중 LLM 병렬 코드 리뷰
+  - agents/rpf                      Pointer 기반 반복 개선 루프
 
 그룹 (자동 탐색):
 EOF

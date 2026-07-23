@@ -1,0 +1,6 @@
+interface:
+  display_name: "RPF"
+  short_description: "Drive multi-agent work from one living pointer document"
+  default_prompt: "Use $rpf to create or load a pointer document and iteratively review, plan, work, and incorporate feedback until its goals converge."
+policy:
+  allow_implicit_invocation: false

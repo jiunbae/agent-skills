@@ -50,7 +50,8 @@ $CoreSkills = @(
     'security/security-auditor',
     'agents/background-implementer',
     'agents/background-planner',
-    'agents/background-reviewer'
+    'agents/background-reviewer',
+    'agents/rpf'
 )
 $Targets = @()
 $ExcludeDirs = @('static', 'cli', 'codex-support', 'hooks', 'personas', '.git', '.github', '.agents', 'node_modules', '__pycache__')

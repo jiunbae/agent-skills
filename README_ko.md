@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#라이선스"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-29-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-30-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#스킬-카탈로그">스킬</a> •
@@ -105,6 +105,7 @@ cd ~/.agent-skills
 - `agents/background-implementer` — 백그라운드 병렬 구현
 - `agents/background-planner` — 백그라운드 병렬 기획
 - `agents/background-reviewer` — 다중 LLM 병렬 코드 리뷰
+- `agents/rpf` — Pointer 기반 반복 리뷰·계획·작업·피드백
 
 ---
 
@@ -118,6 +119,7 @@ cd ~/.agent-skills
 | `background-planner` | 백그라운드 병렬 기획 (멀티 LLM, 자동 저장) |
 | `background-reviewer` | 다중 LLM 병렬 코드 리뷰 (보안/아키텍처/코드 품질) |
 | `incident-writer` | 구조화된 장애 및 상태 페이지 보고서 작성 |
+| `rpf` | 하나의 동적 pointer 문서를 따르는 다중 에이전트 리뷰·계획·작업·피드백 루프 |
 
 ### 🛠 development/ — 개발 도구
 
@@ -313,6 +315,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>29</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
+  <sub><strong>30</strong> 스킬 | <strong>7</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
   <sub>CLI 도구: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>
