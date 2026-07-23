@@ -573,6 +573,35 @@ test("failure fields on a Codex completion produce a canonical failed trace", as
   assert.equal(validateArtifact(trace), true);
 });
 
+test("explicit Codex terminal cancellation cannot become successful completion", async (t) => {
+  const plan = approvedFakePlan(t);
+  const trace = await runApprovedPlan(plan, {
+    env: fakeEnv(plan, {
+      FAKE_AGENT_SCENARIO: "codex-completed-cancelled",
+    }),
+  });
+  const terminal = trace.events.at(-1);
+
+  assert.equal(trace.process.exit_code, 0);
+  assert.equal(trace.status, "failed");
+  assert.equal(trace.completeness, "partial");
+  assert.equal(trace.failure.kind, "agent_failed");
+  assert.equal(trace.failure.provider_terminal_observed, true);
+  assert.deepEqual(
+    {
+      kind: terminal.kind,
+      status: terminal.status,
+      raw_status: terminal.source.raw.status,
+    },
+    {
+      kind: "turn.completed",
+      status: "failed",
+      raw_status: "cancelled",
+    },
+  );
+  assert.equal(validateArtifact(trace), true);
+});
+
 test("stdin delivery failure prevents terminal success from completing a run", async (t) => {
   const plan = approvedFakePlan(
     t,
@@ -804,6 +833,9 @@ test("Codex completion failure markers normalize monotonically", () => {
   const failures = [
     { status: "failed" },
     { status: "error" },
+    { status: "cancelled" },
+    { status: "rejected" },
+    { status: null },
     { is_error: true },
     { error: { message: "boom" } },
     { exit_code: 1 },
@@ -841,6 +873,32 @@ test("Codex completion failure markers normalize monotonically", () => {
     { kind: successful.kind, status: successful.status },
     { kind: "turn.completed", status: "completed" },
   );
+
+  const successfulWithoutStatus = normalizeProviderEvent(
+    "codex",
+    { type: "turn.completed" },
+    failures.length + 1,
+  );
+  assert.deepEqual(
+    {
+      kind: successfulWithoutStatus.kind,
+      status: successfulWithoutStatus.status,
+    },
+    { kind: "turn.completed", status: "completed" },
+  );
+});
+
+test("loaded plans hit canonical artifact bounds before adapter canonicalization", (t) => {
+  const plan = approvedFakePlan(t);
+  let nested = "leaf";
+  for (let depth = 0; depth < 12_000; depth += 1) nested = [nested];
+  plan.untrusted_extension = nested;
+
+  const error = assert.throws(
+    () => validateNativePlan(plan, { checkCwd: false }),
+    { code: "ARTIFACT_STRUCTURE_LIMIT" },
+  );
+  assert.equal(error instanceof RangeError, false);
 });
 
 test("plan and trace promotion are deterministic and omit raw trace payloads", async (t) => {

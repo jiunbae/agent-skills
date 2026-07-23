@@ -151,7 +151,12 @@ function productionTraceArtifact() {
       { type: "item.completed", item: { id: "tool-1", type: "command_execution" } },
       1,
     ),
-    normalizeProviderEvent("codex", { type: "turn.completed" }, 2),
+    normalizeProviderEvent(
+      "codex",
+      { type: "item.completed", item: { id: "tool-2", type: "command_execution" } },
+      2,
+    ),
+    normalizeProviderEvent("codex", { type: "turn.completed" }, 3),
   ];
   return {
     ir_version: "1.0",
@@ -186,6 +191,13 @@ function productionTraceArtifact() {
         from_sequence: 1,
         to_sequence: 2,
         kind: "parallel",
+        provenance: "inferred",
+        confidence: 0.5,
+      },
+      {
+        from_sequence: 2,
+        to_sequence: 3,
+        kind: "sequence",
         provenance: "inferred",
         confidence: 0.5,
       },
@@ -781,7 +793,7 @@ test("production trace events become read-only graph evidence and promote topolo
   assert.ok(state.edges.every((edge) => edge.readOnly));
   assert.ok(state.edges.every((edge) => edge.provenance === "inferred"));
   assert.deepEqual(traceProvenanceSummary(state), {
-    observed: 3,
+    observed: 4,
     inferred: 0,
     declared: 0,
     unknown: 0,
@@ -802,7 +814,7 @@ test("production trace events become read-only graph evidence and promote topolo
   });
   assert.deepEqual(
     reimported.graph.edges.map((edge) => edge.kind),
-    ["sequence", "parallel"],
+    ["sequence", "parallel", "sequence"],
   );
   const marker = [...draft.markdown.matchAll(
     /<!-- workflow-studio:v1 ([A-Za-z0-9_-]+) -->/gu,
@@ -898,6 +910,31 @@ test("trace graph semantics say observed events and inferred order, never depend
     ),
     false,
   );
+});
+
+test("workflow and plan artifacts expose no trace provenance metrics", () => {
+  const workflow = createEditorState(workflowArtifact());
+  const plan = createEditorState(buildPlanArtifact(workflow));
+  const emptySummary = {
+    observed: 0,
+    inferred: 0,
+    declared: 0,
+    unknown: 0,
+  };
+
+  for (const state of [workflow, plan]) {
+    assert.deepEqual(traceProvenanceSummary(state), emptySummary);
+    assert.deepEqual(traceSummaryMetrics(state), []);
+  }
+
+  const trace = createEditorState(productionTraceArtifact());
+  assert.deepEqual(traceSummaryMetrics(trace), [
+    { name: "observed", count: 4, unit: "nodes" },
+    { name: "inferred", count: 0, unit: "nodes" },
+    { name: "declared", count: 0, unit: "nodes" },
+    { name: "unknown", count: 0, unit: "nodes" },
+    { name: "inferred order", count: 3, unit: "edges" },
+  ]);
 });
 
 test("trace-derived inferred edges survive browser edit, IR and Markdown reimport", () => {

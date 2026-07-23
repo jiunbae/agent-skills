@@ -2199,6 +2199,7 @@ export function traceProvenanceSummary(state) {
     declared: 0,
     unknown: 0,
   };
+  if (state.kind !== "trace") return summary;
   for (const node of state.nodes) {
     const key = Object.hasOwn(summary, node.provenance)
       ? node.provenance
@@ -2209,15 +2210,14 @@ export function traceProvenanceSummary(state) {
 }
 
 export function traceSummaryMetrics(state) {
+  if (state.kind !== "trace") return [];
   const metrics = Object.entries(traceProvenanceSummary(state)).map(
     ([name, count]) => ({ name, count, unit: "nodes" }),
   );
-  if (state.kind === "trace") {
-    metrics.push({
-      name: "inferred order",
-      count: state.edges.filter((edge) => edge.provenance === "inferred").length,
-      unit: "edges",
-    });
-  }
+  metrics.push({
+    name: "inferred order",
+    count: state.edges.filter((edge) => edge.provenance === "inferred").length,
+    unit: "edges",
+  });
   return metrics;
 }

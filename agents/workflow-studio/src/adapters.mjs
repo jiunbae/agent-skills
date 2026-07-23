@@ -414,6 +414,9 @@ function commandFor(agent, cwd, safety) {
 }
 
 function validatePlan(plan) {
+  // Run the shared iterative artifact guard before adapter-local recursive
+  // canonicalization so loaded plans fail with the canonical typed bounds.
+  validateArtifact(plan);
   assertJson(plan);
   if (!plan || plan.kind !== "plan" || plan.ir_version !== "1.0") {
     throw adapterError(
@@ -421,7 +424,6 @@ function validatePlan(plan) {
       'Expected a plan artifact with ir_version "1.0".',
     );
   }
-  validateArtifact(plan);
   validateApproval(plan.approval);
   assertAgent(plan.agent);
   if (typeof plan.cwd !== "string" || !isAbsolute(plan.cwd)) {
@@ -732,10 +734,12 @@ function portableEvent(agent, event) {
     if (type === "thread.started") return ["run.started", "running"];
     if (type === "turn.started") return ["turn.started", "running"];
     if (type === "turn.completed") {
+      const explicitNonSuccessStatus =
+        Object.hasOwn(event, "status") && event.status !== "completed";
       const failed =
+        explicitNonSuccessStatus ||
         event.is_error === true ||
         event.error !== undefined ||
-        ["error", "failed"].includes(event.status) ||
         event.exit_code > 0;
       return ["turn.completed", failed ? "failed" : "completed"];
     }

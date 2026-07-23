@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { open, readFile, lstat, mkdir, rename, rm } from "node:fs/promises";
+import { link, open, readFile, lstat, mkdir, rename, rm } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import process from "node:process";
 
@@ -171,23 +171,49 @@ async function reserveNewFile(path) {
   const absolute = resolve(path);
   const parent = dirname(absolute);
   try {
+    await lstat(absolute);
+    throw cliError(
+      "OUTPUT_EXISTS",
+      `Output already exists; V1 does not force overwrite: ${absolute}`,
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const temporary = join(
+    parent,
+    `.workflow-studio-${process.pid}-${Date.now()}-${process.hrtime.bigint()}.tmp`,
+  );
+  try {
+    const handle = await open(temporary, "wx", 0o600);
     return {
       absolute,
-      handle: await open(absolute, "wx", 0o600),
+      temporary,
+      handle,
+      identity: await handle.stat({ bigint: true }),
       committed: false,
     };
   } catch (error) {
-    if (error?.code === "EEXIST") {
-      throw cliError(
-        "OUTPUT_EXISTS",
-        `Output already exists; V1 does not force overwrite: ${absolute}`,
-      );
-    }
     if (error?.code === "ENOENT") {
       throw cliError("INVALID_PATH", `Output parent does not exist: ${parent}`);
     }
     throw error;
   }
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function removeOwnedTemporary(reservation) {
+  let current;
+  try {
+    current = await lstat(reservation.temporary, { bigint: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  if (!sameFileIdentity(current, reservation.identity)) return;
+  await rm(reservation.temporary);
 }
 
 async function discardReservation(reservation) {
@@ -196,7 +222,7 @@ async function discardReservation(reservation) {
     reservation.handle = null;
   }
   if (!reservation.committed) {
-    await rm(reservation.absolute, { force: true }).catch(() => {});
+    await removeOwnedTemporary(reservation).catch(() => {});
   }
 }
 
@@ -204,8 +230,34 @@ async function commitReservation(reservation, bytes) {
   try {
     await reservation.handle.writeFile(bytes);
     await reservation.handle.sync();
+    const temporaryInfo = await lstat(reservation.temporary, { bigint: true });
+    if (!sameFileIdentity(temporaryInfo, reservation.identity)) {
+      throw cliError(
+        "OUTPUT_CHANGED",
+        `Private output reservation changed; no artifact was published: ${reservation.absolute}`,
+      );
+    }
     await reservation.handle.close();
     reservation.handle = null;
+    try {
+      await link(reservation.temporary, reservation.absolute);
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        throw cliError(
+          "OUTPUT_CHANGED",
+          `Output became occupied after preflight; no artifact was published: ${reservation.absolute}`,
+        );
+      }
+      throw error;
+    }
+    const publishedInfo = await lstat(reservation.absolute, { bigint: true });
+    if (!sameFileIdentity(publishedInfo, reservation.identity)) {
+      throw cliError(
+        "OUTPUT_CHANGED",
+        `Output pathname changed during publication; the artifact was not safely published: ${reservation.absolute}`,
+      );
+    }
+    await removeOwnedTemporary(reservation);
     reservation.committed = true;
   } catch (error) {
     await discardReservation(reservation);

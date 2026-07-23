@@ -5,6 +5,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -75,6 +76,55 @@ async function fakeAgentEnv(item, agent, scenario) {
   return {
     PATH: `${item.directory}${delimiter}${process.env.PATH ?? ""}`,
     FAKE_AGENT_SCENARIO: scenario,
+  };
+}
+
+async function replacingAgentEnv(item, tracePath, {
+  replaceOnVersion = false,
+  runtimeCwd,
+} = {}) {
+  const bin = join(item.directory, "restricted-bin");
+  await mkdir(bin);
+  const nodePath = join(bin, "node");
+  const agentPath = join(bin, "codex");
+  await symlink(process.execPath, nodePath);
+  await writeFile(
+    agentPath,
+    `#!/usr/bin/env node
+import { rename, unlink, writeFile } from "node:fs/promises";
+
+async function replaceTrace() {
+  try {
+    await unlink(process.env.FAKE_TRACE_TARGET);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await writeFile(process.env.FAKE_TRACE_TARGET, "replacement bytes\\n");
+}
+
+if (process.argv.includes("--version")) {
+  if (process.env.FAKE_REPLACE_ON_VERSION === "1") {
+    await replaceTrace();
+    await rename(
+      process.env.FAKE_RUNTIME_CWD,
+      process.env.FAKE_RUNTIME_CWD + ".moved",
+    );
+  }
+  process.stdout.write("replacement-agent 1.0.0\\n");
+} else {
+  for await (const chunk of process.stdin) void chunk;
+  await replaceTrace();
+  process.stdout.write('{"type":"turn.completed"}\\n');
+}
+`,
+    { mode: 0o700 },
+  );
+  await chmod(agentPath, 0o700);
+  return {
+    PATH: bin,
+    FAKE_TRACE_TARGET: tracePath,
+    FAKE_REPLACE_ON_VERSION: replaceOnVersion ? "1" : "0",
+    FAKE_RUNTIME_CWD: runtimeCwd ?? item.directory,
   };
 }
 
@@ -627,7 +677,7 @@ test("validate rejects bare plan, bare trace, and invalid workflow entries", asy
   failure(await invoke(["validate", invalidEntryPath]), "INVALID_ENTRY_NODES");
 });
 
-test("run reserves the trace output before invoking the native agent", async (t) => {
+test("run rejects an occupied trace output before invoking the native agent", async (t) => {
   const item = await fixture(t);
   const approvedPath = await approvedPlan(item);
   const tracePath = join(item.directory, "existing-trace.json");
@@ -644,6 +694,91 @@ test("run reserves the trace output before invoking the native agent", async (t)
   );
   assert.equal(await readFile(tracePath, "utf8"), "do-not-overwrite\n");
   await assert.rejects(readFile(auditPath, "utf8"), { code: "ENOENT" });
+});
+
+test("run publishes a near-NAME_MAX trace through a short private name", async (t) => {
+  const item = await fixture(t);
+  const approvedPath = await approvedPlan(item);
+  const tracePath = join(item.directory, `${"t".repeat(220)}.json`);
+  const env = await fakeAgentEnv(item, "codex", "codex-complete");
+  success(
+    await invoke(["run", approvedPath, "--trace", tracePath], { env }),
+  );
+  success(await invoke(["validate", tracePath]));
+  assert.deepEqual(
+    (await readdir(item.directory)).filter((name) =>
+      name.startsWith(".workflow-studio-") && name.endsWith(".tmp")
+    ),
+    [],
+  );
+});
+
+test("run never overwrites, removes, or falsely reports a trace path replaced during execution", async (t) => {
+  const completedItem = await fixture(t);
+  const completedApproved = await approvedPlan(completedItem);
+  const completedTrace = join(completedItem.directory, "replaced-trace.json");
+  const completedEnv = await replacingAgentEnv(
+    completedItem,
+    completedTrace,
+  );
+  const diagnostic = failure(
+    await invoke(
+      ["run", completedApproved, "--trace", completedTrace],
+      { env: completedEnv },
+    ),
+    "OUTPUT_CHANGED",
+  );
+  assert.doesNotMatch(diagnostic.message, /\bsaved\b/iu);
+  assert.equal(await readFile(completedTrace, "utf8"), "replacement bytes\n");
+  assert.deepEqual(
+    (await readdir(completedItem.directory)).filter((name) =>
+      name.includes(".workflow-studio-") && name.endsWith(".tmp")
+    ),
+    [],
+  );
+
+  const exceptionalItem = await fixture(t);
+  const runtimeCwd = join(exceptionalItem.directory, "runtime");
+  await mkdir(runtimeCwd);
+  const workflowPath = join(exceptionalItem.directory, "exception-workflow.json");
+  const planPath = join(exceptionalItem.directory, "exception-plan.json");
+  const approvedPath = join(exceptionalItem.directory, "exception-approved.json");
+  const exceptionalTrace = join(exceptionalItem.directory, "exception-trace.json");
+  success(await invoke(["import", exceptionalItem.skill, "--out", workflowPath]));
+  success(await invoke([
+    "plan",
+    workflowPath,
+    "--prompt",
+    "Inspect this workspace.",
+    "--agent",
+    "codex",
+    "--cwd",
+    runtimeCwd,
+    "--safety",
+    "read-only",
+    "--out",
+    planPath,
+  ]));
+  success(await invoke(["approve", planPath, "--out", approvedPath]));
+  const exceptionalEnv = await replacingAgentEnv(
+    exceptionalItem,
+    exceptionalTrace,
+    { replaceOnVersion: true, runtimeCwd },
+  );
+  failure(
+    await invoke(
+      ["run", approvedPath, "--trace", exceptionalTrace],
+      { env: exceptionalEnv },
+    ),
+    "INVALID_CWD",
+  );
+  assert.equal(await readFile(exceptionalTrace, "utf8"), "replacement bytes\n");
+  assert.deepEqual(
+    (await readdir(exceptionalItem.directory)).filter((name) =>
+      name.includes(".workflow-studio-") && name.endsWith(".tmp")
+    ),
+    [],
+  );
 });
 
 test("run maps SIGINT and SIGTERM to AbortSignal cancellation and saves traces", async (t) => {
