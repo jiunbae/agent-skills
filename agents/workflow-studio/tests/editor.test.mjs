@@ -25,7 +25,12 @@ import {
   validationAnnouncement,
   validateState,
 } from "../assets/editor-model.mjs";
-import { normalizeProviderEvent, verifyPlanApproval } from "../src/adapters.mjs";
+import {
+  approvePlan as approveNativePlan,
+  buildRunEnvelope,
+  normalizeProviderEvent,
+  verifyPlanApproval,
+} from "../src/adapters.mjs";
 import {
   importSkillBytes,
   renderWorkflow,
@@ -140,6 +145,20 @@ function productionTraceArtifact() {
     ir_version: "1.0",
     kind: "trace",
     run_id: "run-editor-fixture",
+    plan_hash: "1".repeat(64),
+    workflow_revision: "2".repeat(64),
+    agent: "codex",
+    cwd: process.cwd(),
+    safety: {
+      intent: "read-only",
+      provider: "codex",
+      sandbox: "read-only",
+      boundary: "os-sandbox",
+    },
+    adapter: {
+      executable: "codex",
+      version: "test",
+    },
     status: "completed",
     completeness: "complete",
     events,
@@ -159,6 +178,19 @@ function productionTraceArtifact() {
         confidence: 0.5,
       },
     ],
+    diagnostics: [],
+    process: {
+      exit_code: 0,
+      signal: null,
+      stderr: "",
+      stderr_bytes: 0,
+      stdout_bytes: 1,
+    },
+    provenance: {
+      events: "observed",
+      sequence_edges: "inferred",
+      hidden_reasoning_recovered: false,
+    },
   };
 }
 
@@ -354,6 +386,100 @@ test("edge add/change/remove validates endpoints, duplicates, and cycles", () =>
   assert.equal(canDownloadArtifact(cyclic), false);
   assert.match(validateState(cyclic).errors.join("\n"), /acyclic/);
   assert.match(validationAnnouncement(cyclic), /validation error.*acyclic/is);
+  assert.throws(
+    () => promoteToSkillDraft(cyclic),
+    /cannot promote an invalid graph.*acyclic/is,
+  );
+});
+
+test("browser writable grammar rejects padded and ATX-closing titles and structural body headings", () => {
+  const initial = createEditorState(workflowArtifact());
+  for (const title of [" Padded", "Padded ", "Review ###"]) {
+    const invalid = editNode(initial, "step-1", "title", title);
+    assert.equal(validateState(invalid).valid, false, title);
+    assert.equal(canDownloadArtifact(invalid), false, title);
+    assert.throws(
+      () => promoteToSkillDraft(invalid),
+      /cannot promote an invalid graph/i,
+      title,
+    );
+  }
+
+  for (const body of [
+    "First.\n\n### Step 99: Injected\n\nInjected body.\n",
+    "First.\n\n## Appendix\n\nUnexpected boundary.\n",
+  ]) {
+    const invalid = editNode(initial, "step-1", "body", body);
+    assert.equal(validateState(invalid).valid, false, body);
+    assert.equal(canDownloadArtifact(invalid), false, body);
+    assert.match(validateState(invalid).errors.join("\n"), /recognized workflow structure/i);
+    assert.throws(
+      () => promoteToSkillDraft(invalid),
+      /cannot promote an invalid graph/i,
+    );
+  }
+
+  const fenced = editNode(
+    initial,
+    "step-1",
+    "body",
+    "```md\n### This heading is example text\n```\n",
+  );
+  assert.equal(validateState(fenced).valid, true);
+});
+
+test("browser fence scanner replaces one genuine managed footer without losing topology", () => {
+  const raw = [
+    "---",
+    "name: false-closer",
+    'description: "False fence closer fixture."',
+    "---",
+    "",
+    "# False closer",
+    "",
+    "```md",
+    "```not-a-close",
+    "<!-- workflow-studio:v1 ZmFrZQ -->",
+    "```",
+    "",
+    "## Workflow",
+    "",
+    "### Step 1: First",
+    "First body.",
+    "",
+    "### Step 2: Second",
+    "Second body.",
+    "",
+  ].join("\n");
+  let state = createEditorState(
+    importSkillBytes(Buffer.from(raw), {
+      sourcePath: "/tmp/false-closer/SKILL.md",
+    }),
+  );
+  state = changeEdge(state, state.edges[0].id, { kind: "parallel" });
+  const managedOnce = buildCandidateBytes(state);
+  let reopened = importSkillBytes(Buffer.from(managedOnce), {
+    sourcePath: "/tmp/false-closer/SKILL.md",
+  });
+  assert.deepEqual(reopened.graph.edges.map((edge) => edge.kind), ["parallel"]);
+
+  state = createEditorState(reopened);
+  state = editNode(state, state.nodes[0].id, "title", "First revised");
+  const candidate = buildCandidateMarkdown(state);
+  assert.equal(
+    [...candidate.matchAll(/<!-- workflow-studio:v1 /gu)].length,
+    2,
+    "the fenced example and one genuine footer must remain",
+  );
+  reopened = importSkillBytes(Buffer.from(candidate), {
+    sourcePath: "/tmp/false-closer/SKILL.md",
+  });
+  assert.deepEqual(reopened.graph.edges.map((edge) => edge.kind), ["parallel"]);
+  assert.equal(
+    reopened.diagnostics.some((diagnostic) =>
+      ["managed.invalid", "managed.source-conflict"].includes(diagnostic.code)),
+    false,
+  );
 });
 
 test("approving hashes exact plan and every subsequent edit clears approval", async () => {
@@ -418,6 +544,70 @@ test("reopened plans rebuild from workflow only without prompt or approval nesti
     Math.max(...sizes) - Math.min(...sizes) < 160,
     `reapproval artifacts unexpectedly grew: ${sizes.join(", ")}`,
   );
+});
+
+test("reopen and reapproval preserve non-UTF-8 prompt bytes until the prompt is edited", async () => {
+  const originalPrompt = Buffer.from([0xff, 0xfe, 0x41]);
+  const nativePlan = approveNativePlan(
+    buildRunEnvelope({
+      workflow: workflowArtifact(),
+      prompt: originalPrompt,
+      agent: "codex",
+      cwd: process.cwd(),
+      safety: "read-only",
+    }),
+  );
+
+  let state = createEditorState(nativePlan);
+  assert.match(
+    validateState(state).warnings.join("\n"),
+    /non-UTF-8 bytes.*preserved exactly/i,
+  );
+  state = await approvePlan(state);
+  let approved = approvedPlanArtifact(state);
+  assert.deepEqual(
+    Buffer.from(approved.prompt.bytes_base64, "base64"),
+    originalPrompt,
+  );
+  assert.equal(verifyPlanApproval(approved), true);
+
+  state = createEditorState(approved);
+  state = await approvePlan(state);
+  approved = approvedPlanArtifact(state);
+  assert.deepEqual(
+    Buffer.from(approved.prompt.bytes_base64, "base64"),
+    originalPrompt,
+  );
+  assert.equal(verifyPlanApproval(approved), true);
+
+  state = editPlan(state, "prompt", state.plan.prompt);
+  assert.doesNotMatch(
+    validateState(state).warnings.join("\n"),
+    /non-UTF-8 bytes.*preserved exactly/i,
+  );
+  state = await approvePlan(state);
+  approved = approvedPlanArtifact(state);
+  assert.notDeepEqual(
+    Buffer.from(approved.prompt.bytes_base64, "base64"),
+    originalPrompt,
+  );
+  assert.deepEqual(
+    Buffer.from(approved.prompt.bytes_base64, "base64"),
+    Buffer.from("��A", "utf8"),
+  );
+  assert.equal(verifyPlanApproval(approved), true);
+});
+
+test("browser approval preserves absolute cwd spellings for runtime validation", async () => {
+  for (const cwd of ["/tmp", "/definitely-missing-workflow-studio-r3"]) {
+    let state = createEditorState(workflowArtifact());
+    state = editPlan(state, "cwd", cwd);
+    state = editPlan(state, "prompt", "Review the exact approved plan.");
+    state = await approvePlan(state);
+    const approved = approvedPlanArtifact(state);
+    assert.equal(approved.cwd, cwd);
+    assert.ok(approved.command.argv.includes(cwd));
+  }
 });
 
 test("approval rejects unsupported agent and safety enum values", async () => {
@@ -494,9 +684,48 @@ test("production trace events become read-only graph evidence and promote topolo
     metadata.edges.every(
       (edge) =>
         edge.source_provenance === "inferred" &&
+        typeof edge.source_confidence === "number" &&
         edge.inference_label === "inferred-order-not-causality",
     ),
   );
+  assert.ok(
+    reimported.graph.edges.every((edge) => edge.provenance === "inferred"),
+  );
+});
+
+test("trace display and promotion ignore a forged extra graph", () => {
+  const trace = productionTraceArtifact();
+  trace.inferred_edges[1].kind = "sequence";
+  trace.graph = {
+    entry_node_ids: ["fabricated"],
+    nodes: [
+      {
+        id: "fabricated",
+        kind: "step",
+        title: "Recovered hidden reasoning",
+        body: "Fabricated.",
+        source_map: null,
+        confidence: {
+          level: "explicit",
+          rule_id: "forged",
+          reason: "forged",
+        },
+      },
+    ],
+    edges: [],
+  };
+  assert.equal(validateArtifact(trace), true);
+
+  const state = createEditorState(trace);
+  assert.equal(state.nodes.length, trace.events.length);
+  assert.ok(state.nodes.every((node) => node.readOnly));
+  assert.equal(
+    state.nodes.some((node) => node.title === "Recovered hidden reasoning"),
+    false,
+  );
+  const draft = promoteToSkillDraft(state);
+  assert.doesNotMatch(draft.markdown, /Recovered hidden reasoning|Fabricated/);
+  assert.match(draft.markdown, /provider turn completed/);
 });
 
 test("browser plan promotion preserves sequence and parallel topology", () => {
@@ -558,6 +787,8 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   );
   assert.match(editor, /downloadIr"\)\.disabled = !downloadAllowed/);
   assert.match(editor, /downloadMarkdown"\)\.disabled = !downloadAllowed/);
+  assert.match(editor, /promotePlan"\)\.disabled =\s*!canPreparePlan \|\| !state\.validation\.valid/);
+  assert.match(editor, /promoteTrace"\)\.disabled =\s*!isTrace \|\| !state\.nodes\.length \|\| !state\.validation\.valid/);
   assert.match(editor, /setStatus\(validationAnnouncement\(state\)\)/);
   assert.match(editor, /applyChange\(fromSelect\.id\)/);
   assert.match(editor, /applyChange\(toSelect\.id\)/);

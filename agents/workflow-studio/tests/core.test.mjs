@@ -21,6 +21,10 @@ import {
   validateArtifact,
   writeWorkflow,
 } from "../src/core.mjs";
+import {
+  approvePlan,
+  buildRunEnvelope,
+} from "../src/adapters.mjs";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
 
@@ -79,6 +83,46 @@ test("no-op render is byte-identical for real, CRLF, unicode, and no-final-newli
   assert.equal(workflow.source.final_newline, false);
   assert.equal(workflow.graph.nodes.length, 2);
   assert.deepEqual(renderWorkflow(workflow), raw);
+});
+
+test("frontmatter delimiters must be exact column-zero lines", () => {
+  const raw = Buffer.from(`---
+name: frontmatter-scalar
+description: |
+  Keep this description line.
+  ---
+## Workflow
+### Step 1: Frontmatter comment
+---
+
+## Workflow
+### Step 1: Actual
+Keep the actual instructions.
+`);
+  const workflow = importSkillBytes(raw, {
+    sourcePath: "frontmatter-scalar/SKILL.md",
+  });
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Actual"],
+  );
+
+  const edited = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: workflow.graph.nodes[0].id,
+    body: "Edited actual instructions.\n",
+  });
+  const rendered = renderWorkflow(edited);
+  assert.match(
+    rendered.toString("utf8"),
+    /description: \|\n  Keep this description line\.\n  ---\n## Workflow\n### Step 1: Frontmatter comment\n---/u,
+  );
+  assert.deepEqual(
+    importSkillBytes(rendered, {
+      sourcePath: "frontmatter-scalar/SKILL.md",
+    }).graph.nodes.map((node) => node.title),
+    ["Actual"],
+  );
 });
 
 test("supported edits render managed metadata while preserving source outside mapped spans", () => {
@@ -158,6 +202,47 @@ Keep body two.
   });
   assert.equal(deleted.graph.nodes.length, 2);
   assert.doesNotMatch(renderWorkflow(deleted).toString("utf8"), /Keep body two/u);
+});
+
+test("trailing managed metadata remains opaque and outside the final node body", () => {
+  const raw = Buffer.from(`---
+name: managed-footer
+description: managed footer coverage
+---
+
+## Workflow
+### Step 1: One
+First.
+### Step 2: Two
+Second.
+`);
+  const workflow = importSkillBytes(raw, {
+    sourcePath: "managed-footer/SKILL.md",
+  });
+  const edited = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: workflow.graph.nodes[0].id,
+    title: "Renamed",
+  });
+  const rendered = renderWorkflow(edited);
+  const markerStart = rendered.indexOf("<!-- workflow-studio:v1 ");
+  assert.ok(markerStart > 0);
+
+  const reimported = importSkillBytes(rendered, {
+    sourcePath: "managed-footer/SKILL.md",
+  });
+  const finalNode = reimported.graph.nodes.at(-1);
+  assert.doesNotMatch(finalNode.body, /workflow-studio:v1/u);
+  assert.equal(finalNode.source_map.body.end_byte, markerStart);
+  assert.equal(finalNode.source_map.span.end_byte, markerStart);
+  assert.ok(
+    reimported.opaque_spans.some(
+      (span) =>
+        span.start_byte === markerStart &&
+        span.end_byte === rendered.length,
+    ),
+  );
+  validateArtifact(reimported);
 });
 
 test("managed marker examples inside fenced code survive title and structural edits", () => {
@@ -482,7 +567,7 @@ Second.
   );
 });
 
-test("empty and multiline titles are rejected at mutation and validation boundaries", () => {
+test("ambiguous titles and heading-like bodies are rejected before rendering", () => {
   const workflow = importSkillBytes(
     Buffer.from(`---
 name: title-grammar
@@ -494,7 +579,13 @@ description: title grammar
 Body.
 `),
   );
-  for (const title of ["", "   ", "Changed\n## Injected", "Changed\rInjected"]) {
+  for (const title of [
+    "",
+    "   ",
+    " Spaced ",
+    "Changed\n## Injected",
+    "Changed\rInjected",
+  ]) {
     assert.throws(
       () =>
         applyOperation(workflow, {
@@ -518,6 +609,238 @@ Body.
   const invalid = structuredClone(workflow);
   invalid.graph.nodes[0].title = "";
   assert.throws(() => validateArtifact(invalid), { code: "INVALID_TITLE" });
+
+  for (const title of ["Changed ###", "Changed \t##"]) {
+    assert.throws(
+      () =>
+        applyOperation(workflow, {
+          type: "edit-node",
+          node_id: workflow.graph.nodes[0].id,
+          title,
+        }),
+      { code: "AMBIGUOUS_TITLE" },
+    );
+  }
+
+  for (const body of [
+    "First.\n### Step 99: Injected\nInjected.\n",
+    "First.\n## Replacement workflow\nInjected.\n",
+    "First.\n```md\n### Hidden but never closed\n",
+  ]) {
+    assert.throws(
+      () =>
+        applyOperation(workflow, {
+          type: "edit-node",
+          node_id: workflow.graph.nodes[0].id,
+          body,
+        }),
+      { code: "AMBIGUOUS_BODY" },
+    );
+  }
+
+  const fencedBody = `First.
+\`\`\`md
+\`\`\`not-a-close
+### Step 99: Fenced example
+\`\`\`
+`;
+  const fenced = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: workflow.graph.nodes[0].id,
+    body: fencedBody,
+  });
+  assert.equal(importSkillBytes(renderWorkflow(fenced)).graph.nodes.length, 1);
+
+  const numbered = importSkillBytes(
+    Buffer.from(`---
+name: numbered-body
+description: numbered body grammar
+---
+
+## Phase 1: One
+Original.
+### Detail
+Keep a lower-level detail heading.
+`),
+  );
+  const numberedEdited = applyOperation(numbered, {
+    type: "edit-node",
+    node_id: numbered.graph.nodes[0].id,
+    body: "Changed.\n### Detail\nStill part of phase one.\n",
+  });
+  assert.deepEqual(
+    importSkillBytes(renderWorkflow(numberedEdited)).graph.nodes.map(
+      (node) => node.title,
+    ),
+    ["Phase 1: One"],
+  );
+});
+
+test("core plan validation binds rendered Skill bytes and exact approval digest", () => {
+  const workflow = importSkillBytes(
+    Buffer.from(`---
+name: plan-validation
+description: plan validation
+---
+
+## Workflow
+### Step 1: One
+Body.
+`),
+  );
+  const plan = buildRunEnvelope({
+    workflow,
+    prompt: "Run this workflow.",
+    agent: "codex",
+    cwd: ROOT,
+  });
+  assert.equal(validateArtifact(plan), true);
+
+  const mismatchedSkill = structuredClone(plan);
+  const replacement = Buffer.from("different but internally consistent bytes");
+  mismatchedSkill.skill.bytes_base64 = replacement.toString("base64");
+  mismatchedSkill.skill.byte_length = replacement.length;
+  mismatchedSkill.skill.sha256 = createHash("sha256")
+    .update(replacement)
+    .digest("hex");
+  assert.throws(() => validateArtifact(mismatchedSkill), {
+    code: "INVALID_PLAN",
+  });
+
+  const approved = approvePlan(plan);
+  assert.equal(validateArtifact(approved), true);
+  approved.warnings.push("Mutation after approval.");
+  assert.throws(() => validateArtifact(approved), {
+    code: "INVALID_PLAN",
+  });
+});
+
+test("completed traces require coherent process and provider terminal evidence", () => {
+  const completedTrace = (agent = "codex") => ({
+    ir_version: "1.0",
+    kind: "trace",
+    run_id: "run-core-trace",
+    plan_hash: "1".repeat(64),
+    workflow_revision: "2".repeat(64),
+    agent,
+    cwd: ROOT,
+    safety:
+      agent === "codex"
+        ? {
+            intent: "read-only",
+            provider: "codex",
+            sandbox: "read-only",
+            boundary: "os-sandbox",
+          }
+        : {
+            intent: "read-only",
+            provider: "claude",
+            permission_mode: "plan",
+            boundary: "tool-permission-policy-not-os-sandbox",
+          },
+    adapter: { executable: agent, version: "test" },
+    events: [
+      {
+        sequence: 0,
+        provider: agent,
+        kind: agent === "codex" ? "turn.completed" : "run.completed",
+        status: "completed",
+        provenance: "observed",
+        source: { raw_type: "test" },
+        summary: "provider completed",
+      },
+    ],
+    inferred_edges: [],
+    diagnostics: [],
+    process: {
+      exit_code: 0,
+      signal: null,
+      stderr: "",
+      stderr_bytes: 0,
+      stdout_bytes: 1,
+    },
+    status: "completed",
+    completeness: "complete",
+    provenance: {
+      events: "observed",
+      sequence_edges: "inferred",
+      hidden_reasoning_recovered: false,
+    },
+  });
+
+  assert.equal(validateArtifact(completedTrace("codex")), true);
+  assert.equal(validateArtifact(completedTrace("claude")), true);
+
+  const nonzero = completedTrace();
+  nonzero.process.exit_code = 7;
+  assert.throws(() => validateArtifact(nonzero), { code: "INVALID_TRACE" });
+
+  const signalled = completedTrace();
+  signalled.process.signal = "SIGTERM";
+  assert.throws(() => validateArtifact(signalled), { code: "INVALID_TRACE" });
+
+  const noTerminal = completedTrace();
+  noTerminal.events[0].kind = "message.completed";
+  assert.throws(() => validateArtifact(noTerminal), { code: "INVALID_TRACE" });
+
+  const failedTerminal = completedTrace();
+  failedTerminal.events.push({
+    ...failedTerminal.events[0],
+    sequence: 1,
+    kind: "turn.failed",
+    status: "failed",
+    summary: "provider failed",
+  });
+  assert.throws(() => validateArtifact(failedTerminal), {
+    code: "INVALID_TRACE",
+  });
+
+  const failureRecord = completedTrace();
+  failureRecord.failure = { kind: "contradictory_failure" };
+  assert.throws(() => validateArtifact(failureRecord), {
+    code: "INVALID_TRACE",
+  });
+});
+
+test("managed inferred edges retain non-explicit provenance after reimport", () => {
+  const workflow = importSkillBytes(
+    Buffer.from(`---
+name: inferred-edge
+description: inferred edge provenance
+---
+
+## Workflow
+### Step 1: One
+First.
+### Step 2: Two
+Second.
+`),
+    { sourcePath: "inferred-edge/SKILL.md" },
+  );
+  const edited = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: workflow.graph.nodes[0].id,
+    title: "Renamed",
+  });
+  const edge = edited.graph.edges[0];
+  edge.source_provenance = "inferred";
+  edge.source_confidence = 0.5;
+  edge.provenance = "inferred";
+  edge.confidence = {
+    level: "heuristic",
+    rule_id: "trace.inferred-order",
+    reason: "Observed sequence is not asserted as causality.",
+  };
+  delete edited.revision.current_sha256;
+  edited.revision.current_sha256 = artifactHash(edited);
+
+  const reimported = importSkillBytes(renderWorkflow(edited), {
+    sourcePath: "inferred-edge/SKILL.md",
+  });
+  assert.equal(reimported.graph.edges[0].provenance, "inferred");
+  assert.equal(reimported.graph.edges[0].source_provenance, "inferred");
+  assert.equal(reimported.graph.edges[0].source_confidence, 0.5);
+  assert.notEqual(reimported.graph.edges[0].confidence.level, "explicit");
 });
 
 test("malformed managed metadata is diagnosed and ignored as one unit", () => {
@@ -671,6 +994,7 @@ test("writeWorkflow uses safe new output and compare-and-swap in-place export", 
   const directory = await mkdtemp(join(tmpdir(), "workflow-studio-core-"));
   const source = join(directory, "SKILL.md");
   const output = join(directory, "draft.md");
+  const victim = join(directory, "victim.md");
   const initial = Buffer.from(`---
 name: safe
 description: safe
@@ -681,7 +1005,16 @@ description: safe
 Do one.
 `);
   await writeFile(source, initial);
+  await writeFile(victim, "IRREPLACEABLE VICTIM\n");
   const imported = await importSkillFile(source);
+  await assert.rejects(
+    writeWorkflow(imported, {
+      outputPath: victim,
+      inPlace: true,
+    }),
+    { code: "OUTPUT_CONFLICT" },
+  );
+  assert.equal(await readFile(victim, "utf8"), "IRREPLACEABLE VICTIM\n");
   for (const sameSource of [
     source,
     join(directory, "not-created", "..", "SKILL.md"),

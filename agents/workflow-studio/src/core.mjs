@@ -25,6 +25,11 @@ const CONFIDENCE_LEVELS = new Set([
   "unknown",
 ]);
 const MAX_MANAGED_ITEMS = 1_000;
+const APPROVAL_SEMANTICS = Object.freeze({
+  algorithm: "sha256",
+  scope: "exact-native-run-envelope",
+  statement: "plan approved for native execution; graph not enforced",
+});
 
 function workflowError(code, message, details) {
   const error = new Error(message);
@@ -145,7 +150,7 @@ function lineTable(bytes) {
 }
 
 function parseFrontmatter(lines, diagnostics) {
-  if (lines[0]?.text.trim() !== "---") {
+  if (lines[0]?.text !== "---") {
     diagnostics.push({
       severity: "error",
       code: "frontmatter.missing",
@@ -155,7 +160,7 @@ function parseFrontmatter(lines, diagnostics) {
   }
   let closing = -1;
   for (let index = 1; index < lines.length; index += 1) {
-    if (lines[index].text.trim() === "---") {
+    if (lines[index].text === "---") {
       closing = index;
       break;
     }
@@ -315,6 +320,21 @@ function managedSpans(bytes) {
   );
 }
 
+function trailingManagedStart(bytes) {
+  const spans = managedSpans(bytes);
+  if (spans.length === 0) return bytes.length;
+  let cursor = bytes.length;
+  let footerStart = bytes.length;
+  for (let index = spans.length - 1; index >= 0; index -= 1) {
+    const span = spans[index];
+    const trailing = decodeUtf8(bytes.subarray(span.end_byte, cursor));
+    if (!/^[ \t\r\n]*$/u.test(trailing)) break;
+    footerStart = span.start_byte;
+    cursor = span.start_byte;
+  }
+  return footerStart;
+}
+
 function headingEnd(headings, headingIndex, byteLength) {
   const current = headings[headingIndex];
   for (let index = headingIndex + 1; index < headings.length; index += 1) {
@@ -442,7 +462,7 @@ function scanWorkflowCandidates(bytes, diagnostics = []) {
   const headings = scanHeadings(lines, frontmatter.endByte);
   return {
     frontmatter,
-    candidates: deriveCandidates(headings, bytes.length),
+    candidates: deriveCandidates(headings, trailingManagedStart(bytes)),
   };
 }
 
@@ -499,6 +519,8 @@ function managedPayloadGraph(payload) {
   if (nodes.some((node, index) => node.order !== index)) return null;
   const edgeIds = new Set();
   for (const edge of edges) {
+    const hasSourceProvenance = Object.hasOwn(edge ?? {}, "source_provenance");
+    const hasSourceConfidence = Object.hasOwn(edge ?? {}, "source_confidence");
     if (
       !edge ||
       typeof edge !== "object" ||
@@ -512,6 +534,12 @@ function managedPayloadGraph(payload) {
       !ids.has(edge.to) ||
       edge.from === edge.to ||
       !EDGE_KINDS.has(edge.kind) ||
+      hasSourceProvenance !== hasSourceConfidence ||
+      (hasSourceProvenance &&
+        (edge.source_provenance !== "inferred" ||
+          typeof edge.source_confidence !== "number" ||
+          edge.source_confidence < 0 ||
+          edge.source_confidence > 1)) ||
       edgeIds.has(edge.id)
     ) {
       return null;
@@ -574,12 +602,26 @@ function applyManagedGraph(nodes, edges, managed, diagnostics) {
     from: edge.from,
     to: edge.to,
     kind: edge.kind,
-    confidence: confidence(
-      "explicit",
-      "managed.v1",
-      "Edge restored from Workflow Studio metadata.",
-    ),
-    provenance: "managed",
+    confidence:
+      edge.source_provenance === "inferred"
+        ? confidence(
+            "heuristic",
+            "managed.inferred.v1",
+            `Inferred edge restored from Workflow Studio metadata with source confidence ${edge.source_confidence}.`,
+          )
+        : confidence(
+            "explicit",
+            "managed.v1",
+            "Edge restored from Workflow Studio metadata.",
+          ),
+    provenance:
+      edge.source_provenance === "inferred" ? "inferred" : "managed",
+    ...(edge.source_provenance === "inferred"
+      ? {
+          source_provenance: "inferred",
+          source_confidence: edge.source_confidence,
+        }
+      : {}),
     editable: true,
   }));
   if (
@@ -823,6 +865,76 @@ function validateStepTitle(value, label = "node title") {
       `${label} must be non-empty single-line text without surrounding whitespace.`,
     );
   }
+  if (/[ \t]+#+$/u.test(value)) {
+    throw workflowError(
+      "AMBIGUOUS_TITLE",
+      `${label} must not end with a Markdown ATX closing sequence such as " ###".`,
+    );
+  }
+}
+
+function nodeHeadingLevel(workflow, node) {
+  const mapping = node?.source_map?.heading;
+  if (!mapping) return null;
+  const bytes = sourceBytes(workflow).subarray(
+    mapping.start_byte,
+    mapping.end_byte,
+  );
+  return decodeUtf8(bytes).match(/^(#{2,6})/u)?.[1].length ?? null;
+}
+
+function defaultHeadingLevel(workflow) {
+  for (const node of workflow.graph.nodes) {
+    const level = nodeHeadingLevel(workflow, node);
+    if (level !== null) return level;
+  }
+  return 3;
+}
+
+function validateStepBody(value, headingLevel, label = "node body") {
+  if (typeof value !== "string") {
+    throw workflowError("INVALID_NODE", `${label} must be text.`);
+  }
+  let fence = null;
+  for (const line of lineTable(Buffer.from(value, "utf8"))) {
+    const transition = advanceFence(fence, line.text);
+    if (transition.boundary) {
+      fence = transition.fence;
+      continue;
+    }
+    if (fence) continue;
+    const heading = atxHeading(line);
+    if (heading && heading.level <= headingLevel) {
+      throw workflowError(
+        "AMBIGUOUS_BODY",
+        `${label} contains a level-${heading.level} heading that would change the recognized workflow structure.`,
+      );
+    }
+  }
+  if (fence) {
+    throw workflowError(
+      "AMBIGUOUS_BODY",
+      `${label} leaves a fenced code block open and would hide following workflow structure.`,
+    );
+  }
+}
+
+function validateWritableGrammar(workflow) {
+  const structuralDirty =
+    workflow.revision?.structural_dirty ??
+    workflow.editor?.structural_dirty ??
+    false;
+  const structuralLevel = defaultHeadingLevel(workflow);
+  for (const node of workflow.graph.nodes) {
+    validateStepTitle(node.title, `title on ${node.id}`);
+    validateStepBody(
+      node.body,
+      structuralDirty
+        ? structuralLevel
+        : (nodeHeadingLevel(workflow, node) ?? structuralLevel),
+      `body on ${node.id}`,
+    );
+  }
 }
 
 function validateConfidence(value, label) {
@@ -995,6 +1107,8 @@ function validateWorkflow(artifact) {
   }
   const edgeIds = new Set();
   for (const edge of edges) {
+    const hasSourceProvenance = Object.hasOwn(edge ?? {}, "source_provenance");
+    const hasSourceConfidence = Object.hasOwn(edge ?? {}, "source_confidence");
     if (
       !edge ||
       typeof edge.id !== "string" ||
@@ -1002,7 +1116,15 @@ function validateWorkflow(artifact) {
       !ids.has(edge.from) ||
       !ids.has(edge.to) ||
       edge.from === edge.to ||
-      !EDGE_KINDS.has(edge.kind)
+      !EDGE_KINDS.has(edge.kind) ||
+      hasSourceProvenance !== hasSourceConfidence ||
+      (hasSourceProvenance &&
+        (edge.source_provenance !== "inferred" ||
+          typeof edge.source_confidence !== "number" ||
+          edge.source_confidence < 0 ||
+          edge.source_confidence > 1 ||
+          edge.provenance !== "inferred" ||
+          edge.confidence?.level === "explicit"))
     ) {
       throw workflowError("INVALID_EDGE", `Invalid graph edge: ${edge?.id ?? "?"}`);
     }
@@ -1117,8 +1239,18 @@ function validateWorkflow(artifact) {
         "Dirty workflow revision digest does not match the artifact.",
       );
     }
+    validateWritableGrammar(artifact);
   }
   return true;
+}
+
+function planApprovalDigest(plan) {
+  const runEnvelope = clone(plan);
+  delete runEnvelope.approval;
+  return artifactHash({
+    run_envelope: runEnvelope,
+    approval: APPROVAL_SEMANTICS,
+  });
 }
 
 function validatePlan(artifact) {
@@ -1140,7 +1272,7 @@ function validatePlan(artifact) {
     );
   }
   validateByteRecord(artifact.prompt, "plan.prompt", code);
-  validateByteRecord(artifact.skill, "plan.skill", code);
+  const skillBytes = validateByteRecord(artifact.skill, "plan.skill", code);
   if (
     artifact.skill.delivery !== "prompt-context" ||
     !(
@@ -1149,6 +1281,12 @@ function validatePlan(artifact) {
     )
   ) {
     throw workflowError(code, "Plan Skill delivery metadata is invalid.");
+  }
+  if (!skillBytes.equals(renderWorkflow(artifact.workflow))) {
+    throw workflowError(
+      code,
+      "Plan Skill bytes do not match the rendered workflow candidate.",
+    );
   }
   if (
     artifact.execution_mode !== "native-cli-prompt-context" ||
@@ -1189,21 +1327,28 @@ function validatePlan(artifact) {
     throw workflowError(code, "Plan command is not the fixed safe adapter command.");
   }
   if (artifact.approval !== undefined) {
-    const semantics = {
-      algorithm: "sha256",
-      scope: "exact-native-run-envelope",
-      statement: "plan approved for native execution; graph not enforced",
-    };
     const approval = artifact.approval;
+    const expectedKeys = ["algorithm", "digest", "scope", "statement"];
+    const actualKeys = plainRecord(approval)
+      ? Object.keys(approval).sort()
+      : [];
     if (
       !plainRecord(approval) ||
-      approval.algorithm !== semantics.algorithm ||
-      approval.scope !== semantics.scope ||
-      approval.statement !== semantics.statement
+      actualKeys.length !== expectedKeys.length ||
+      actualKeys.some((key, index) => key !== expectedKeys[index]) ||
+      approval.algorithm !== APPROVAL_SEMANTICS.algorithm ||
+      approval.scope !== APPROVAL_SEMANTICS.scope ||
+      approval.statement !== APPROVAL_SEMANTICS.statement
     ) {
       throw workflowError(code, "Plan approval metadata is invalid.");
     }
     requireSha256(approval.digest, "plan.approval.digest", code);
+    if (approval.digest !== planApprovalDigest(artifact)) {
+      throw workflowError(
+        code,
+        "Plan approval digest does not match the exact native-run envelope.",
+      );
+    }
   }
   return true;
 }
@@ -1305,6 +1450,37 @@ function validateTrace(artifact) {
     (artifact.status !== "completed" && artifact.completeness !== "partial")
   ) {
     throw workflowError(code, "Trace terminal status is invalid.");
+  }
+  if (artifact.status === "completed") {
+    const successKind =
+      artifact.agent === "codex" ? "turn.completed" : "run.completed";
+    const hasSuccessfulTerminal = artifact.events.some(
+      (event) => event.kind === successKind && event.status === "completed",
+    );
+    const hasFailedTerminal = artifact.events.some(
+      (event) =>
+        ["turn.failed", "run.failed"].includes(event.kind) ||
+        (["turn.completed", "run.completed"].includes(event.kind) &&
+          event.status === "failed"),
+    );
+    if (processRecord.exit_code !== 0 || processRecord.signal !== null) {
+      throw workflowError(
+        code,
+        "A completed trace requires process exit_code 0 and no signal.",
+      );
+    }
+    if (!hasSuccessfulTerminal) {
+      throw workflowError(
+        code,
+        `A completed ${artifact.agent} trace requires an observed ${successKind} event with completed status.`,
+      );
+    }
+    if (hasFailedTerminal || Object.hasOwn(artifact, "failure")) {
+      throw workflowError(
+        code,
+        "A completed trace must not contain failure evidence or a failed terminal event.",
+      );
+    }
   }
   if (
     !plainRecord(artifact.provenance) ||
@@ -1413,6 +1589,19 @@ export function applyOperation(input, operation) {
           }
           if (field === "title") {
             validateStepTitle(operation[field], "title");
+          } else {
+            const structuralDirty =
+              workflow.revision?.structural_dirty ??
+              workflow.editor?.structural_dirty ??
+              false;
+            validateStepBody(
+              operation[field],
+              structuralDirty
+                ? defaultHeadingLevel(workflow)
+                : (nodeHeadingLevel(workflow, nodes[index]) ??
+                  defaultHeadingLevel(workflow)),
+              "body",
+            );
           }
           nodes[index][field] = operation[field];
         }
@@ -1432,12 +1621,14 @@ export function applyOperation(input, operation) {
         throw workflowError("INVALID_OPERATION", "title must be text.");
       }
       validateStepTitle(title, "title");
+      const body = String(operation.body ?? "");
+      validateStepBody(body, defaultHeadingLevel(workflow), "body");
       const position = operation.position === "before" ? reference : reference + 1;
       nodes.splice(Math.max(0, position), 0, {
         id: operation.id ?? nextNodeId(workflow),
         kind: "step",
         title,
-        body: String(operation.body ?? ""),
+        body,
         mode: "sequence",
         order: 0,
         source_map: null,
@@ -1625,6 +1816,12 @@ function managedPayload(workflow) {
       from: edge.from,
       to: edge.to,
       kind: edge.kind,
+      ...(edge.source_provenance === "inferred"
+        ? {
+            source_provenance: "inferred",
+            source_confidence: edge.source_confidence,
+          }
+        : {}),
     })),
   };
 }
@@ -1682,6 +1879,7 @@ export function renderWorkflow(workflow) {
     workflow.editor?.structural_dirty ??
     false;
   if (!dirty) return Buffer.from(original);
+  validateWritableGrammar(workflow);
   let candidate;
   if (structuralDirty) {
     assertContiguousStructuralSource(workflow);
@@ -1751,6 +1949,12 @@ export async function writeWorkflow(
   { outputPath, inPlace = false } = {},
 ) {
   validateArtifact(workflow);
+  if (inPlace && outputPath !== undefined) {
+    throw workflowError(
+      "OUTPUT_CONFLICT",
+      "outputPath and inPlace cannot be combined; in-place export only targets the imported source.",
+    );
+  }
   const sourcePath = resolve(workflow.source.path);
   const target = resolve(outputPath ?? (inPlace ? sourcePath : ""));
   if (!outputPath && !inPlace) {

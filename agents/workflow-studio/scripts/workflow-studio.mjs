@@ -17,6 +17,7 @@ import {
   buildRunEnvelope,
   promoteArtifact,
   runApprovedPlan,
+  validateNativePlan,
   verifyPlanApproval,
 } from "../src/adapters.mjs";
 import { createStudioServer } from "../src/server.mjs";
@@ -255,7 +256,11 @@ async function importCommand(parsed) {
 async function validateCommand(parsed) {
   assertShape(parsed, { positionals: 1 });
   const artifact = await readJson(parsed.positionals[0]);
-  validateArtifact(artifact);
+  if (artifact?.kind === "plan" && artifact?.ir_version === "1.0") {
+    validateNativePlan(artifact);
+  } else {
+    validateArtifact(artifact);
+  }
   result({
     command: "validate",
     artifact: resolve(parsed.positionals[0]),
@@ -457,13 +462,13 @@ async function runCommand(parsed) {
   if (plan?.kind !== "plan" || plan?.ir_version !== "1.0") {
     requireKind(plan, "plan");
   }
+  validateNativePlan(plan);
   if (!verifyPlanApproval(plan)) {
     throw cliError(
       "APPROVAL_REQUIRED",
       "The plan is unapproved or changed since approval.",
     );
   }
-  validateArtifact(plan);
   const reservation = await reserveNewFile(option(parsed, "trace"));
   const controller = new AbortController();
   const abort = () => controller.abort();

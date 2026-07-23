@@ -5,7 +5,7 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import { renderWorkflow, validateArtifact } from "./core.mjs";
 
@@ -266,15 +266,35 @@ function canonicalCwd(cwd) {
   if (typeof cwd !== "string" || cwd.length === 0) {
     throw adapterError("INVALID_CWD", "cwd must be a non-empty path.");
   }
+  if (!isAbsolute(cwd)) {
+    throw adapterError("INVALID_CWD", `cwd must be an absolute path: ${cwd}`, {
+      cwd,
+      reason: "not-absolute",
+    });
+  }
   let resolved;
   try {
     resolved = realpathSync(cwd);
     if (!statSync(resolved).isDirectory()) {
-      throw adapterError("INVALID_CWD", `cwd is not a directory: ${cwd}`);
+      throw adapterError("INVALID_CWD", `cwd is not a directory: ${cwd}`, {
+        cwd,
+        reason: "not-directory",
+      });
     }
   } catch (error) {
     if (error?.code === "INVALID_CWD") throw error;
-    throw adapterError("INVALID_CWD", `cwd does not exist: ${cwd}`);
+    const missing = ["ENOENT", "ENOTDIR"].includes(error?.code);
+    throw adapterError(
+      "INVALID_CWD",
+      missing
+        ? `cwd does not exist: ${cwd}`
+        : `cwd is not accessible: ${cwd}`,
+      {
+        cwd,
+        reason: missing ? "missing" : "inaccessible",
+        cause_code: error?.code ?? null,
+      },
+    );
   }
   return resolved;
 }
@@ -399,11 +419,8 @@ function validatePlan(plan) {
   validateArtifact(plan);
   validateApproval(plan.approval);
   assertAgent(plan.agent);
-  if (canonicalCwd(plan.cwd) !== plan.cwd) {
-    throw adapterError(
-      "INVALID_PLAN",
-      "Plan cwd is not the canonical directory selected for approval.",
-    );
+  if (typeof plan.cwd !== "string" || !isAbsolute(plan.cwd)) {
+    throw adapterError("INVALID_PLAN", "Plan cwd must be an absolute path.");
   }
   const expectedSafety = safetyProfile(plan.agent, plan.safety?.intent);
   if (canonicalJson(plan.safety) !== canonicalJson(expectedSafety)) {
@@ -442,6 +459,27 @@ function validatePlan(plan) {
       "Plan command differs from the fixed safe adapter command.",
     );
   }
+  if (
+    plan.approval !== undefined &&
+    plan.approval.digest !== approvalDigest(plan)
+  ) {
+    throw adapterError(
+      "INVALID_PLAN",
+      "Plan approval digest does not match the exact native-run envelope.",
+    );
+  }
+}
+
+export function validateNativePlan(plan, { checkCwd = true } = {}) {
+  if (typeof checkCwd !== "boolean") {
+    throw adapterError(
+      "INVALID_ARGUMENT",
+      "checkCwd must be a boolean when provided.",
+    );
+  }
+  validatePlan(plan);
+  if (checkCwd) canonicalCwd(plan.cwd);
+  return true;
 }
 
 function buildStdin(plan) {
@@ -901,7 +939,7 @@ export function buildRunEnvelope({
 }
 
 export function approvePlan(plan) {
-  validatePlan(plan);
+  validateNativePlan(plan);
   const approved = withoutApproval(plan);
   approved.approval = {
     ...APPROVAL_SEMANTICS,
@@ -914,14 +952,14 @@ export function verifyPlanApproval(plan) {
   try {
     validatePlan(plan);
     if (plan.approval === undefined) return false;
-    return plan.approval.digest === approvalDigest(plan);
+    return true;
   } catch {
     return false;
   }
 }
 
 export function prepareAdapter(plan, executableOverride) {
-  validatePlan(plan);
+  validateNativePlan(plan);
   if (executableOverride !== undefined) {
     throw adapterError(
       "EXECUTABLE_OVERRIDE_FORBIDDEN",
@@ -1150,6 +1188,7 @@ export async function runApprovedPlan(
     trace.failure = {
       kind: "cancelled_by_wrapper",
       message: "Run was cancelled before the CLI process started.",
+      provider_terminal_observed: false,
     };
     return trace;
   }
@@ -1484,11 +1523,26 @@ function promotedEdges(candidates, endpointMap, nodeIds) {
     ) {
       continue;
     }
+    const sourceProvenance =
+      candidate.source_provenance ?? candidate.provenance;
+    const sourceConfidence =
+      candidate.source_confidence ??
+      (typeof candidate.confidence === "number"
+        ? candidate.confidence
+        : undefined);
     edges.push({
       id: uniquePromotionId(candidate.id, "edge-promoted", edges.length, used),
       from,
       to,
       kind,
+      ...(sourceProvenance === "inferred"
+        ? { source_provenance: "inferred" }
+        : {}),
+      ...(typeof sourceConfidence === "number" &&
+      sourceConfidence >= 0 &&
+      sourceConfidence <= 1
+        ? { source_confidence: sourceConfidence }
+        : {}),
     });
   }
   return edges;

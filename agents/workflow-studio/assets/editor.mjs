@@ -378,7 +378,8 @@ function renderPlan() {
     !state.validation.valid ||
     !state.plan.cwd.startsWith("/") ||
     !state.plan.prompt.trim();
-  element("promotePlan").disabled = !canPreparePlan;
+  element("promotePlan").disabled =
+    !canPreparePlan || !state.validation.valid;
   renderDraft();
 }
 
@@ -454,7 +455,8 @@ function renderTrace() {
       }),
     );
   }
-  element("promoteTrace").disabled = !isTrace || !state.nodes.length;
+  element("promoteTrace").disabled =
+    !isTrace || !state.nodes.length || !state.validation.valid;
 }
 
 function renderValidation() {
@@ -606,6 +608,10 @@ function installHandlers() {
     }
   });
   element("promotePlan").addEventListener("click", () => {
+    if (!state.validation.valid) {
+      setStatus(validationAnnouncement(state));
+      return;
+    }
     const next = structuredClone(state);
     next.promotedDraft = promoteToSkillDraft(state);
     next.draftDirty = true;
@@ -613,6 +619,10 @@ function installHandlers() {
     mutate(next, "downloadDraft");
   });
   element("promoteTrace").addEventListener("click", () => {
+    if (!state.validation.valid) {
+      setStatus(validationAnnouncement(state));
+      return;
+    }
     const next = setActiveView(state, "plan");
     next.promotedDraft = promoteToSkillDraft(state);
     next.draftDirty = true;

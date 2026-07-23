@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
+  mkdir,
   mkdtemp,
   readFile,
+  realpath,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -221,7 +225,154 @@ test("plan approval is explicit and both approval and run reject mutation", asyn
       "--trace",
       join(item.directory, "must-not-run.json"),
     ]),
-    "APPROVAL_REQUIRED",
+    "INVALID_PLAN",
+  );
+});
+
+test("validate, approve, and run agree on Skill, approval, and cwd errors", async () => {
+  const item = await fixture();
+  const workflowPath = join(item.directory, "workflow.json");
+  const planPath = join(item.directory, "plan.json");
+  const approvedPath = join(item.directory, "approved.json");
+  success(await invoke(["import", item.skill, "--out", workflowPath]));
+  success(await invoke([
+    "plan",
+    workflowPath,
+    "--prompt",
+    "Inspect this workspace.",
+    "--agent",
+    "codex",
+    "--cwd",
+    item.directory,
+    "--safety",
+    "read-only",
+    "--out",
+    planPath,
+  ]));
+  success(await invoke(["approve", planPath, "--out", approvedPath]));
+
+  const mismatched = JSON.parse(await readFile(planPath, "utf8"));
+  const unrelatedSkill = Buffer.from(
+    "---\nname: unrelated\ndescription: Unrelated skill.\n---\n",
+    "utf8",
+  );
+  mismatched.skill.bytes_base64 = unrelatedSkill.toString("base64");
+  mismatched.skill.byte_length = unrelatedSkill.length;
+  mismatched.skill.sha256 = createHash("sha256")
+    .update(unrelatedSkill)
+    .digest("hex");
+  const mismatchedPath = join(item.directory, "mismatched-skill.json");
+  await writeFile(mismatchedPath, JSON.stringify(mismatched));
+  failure(await invoke(["validate", mismatchedPath]), "INVALID_PLAN");
+  failure(
+    await invoke([
+      "approve",
+      mismatchedPath,
+      "--out",
+      join(item.directory, "mismatched-approved.json"),
+    ]),
+    "INVALID_PLAN",
+  );
+
+  const mismatchedApproved = JSON.parse(await readFile(approvedPath, "utf8"));
+  mismatchedApproved.skill = mismatched.skill;
+  const mismatchedApprovedPath = join(
+    item.directory,
+    "mismatched-approved.json",
+  );
+  await writeFile(mismatchedApprovedPath, JSON.stringify(mismatchedApproved));
+  failure(
+    await invoke([
+      "run",
+      mismatchedApprovedPath,
+      "--trace",
+      join(item.directory, "mismatched-trace.json"),
+    ]),
+    "INVALID_PLAN",
+  );
+
+  const stale = JSON.parse(await readFile(approvedPath, "utf8"));
+  stale.warnings.push("Changed after approval.");
+  const stalePath = join(item.directory, "stale-approved.json");
+  await writeFile(stalePath, JSON.stringify(stale));
+  failure(await invoke(["validate", stalePath]), "INVALID_PLAN");
+  failure(
+    await invoke([
+      "approve",
+      stalePath,
+      "--out",
+      join(item.directory, "stale-reapproved.json"),
+    ]),
+    "INVALID_PLAN",
+  );
+  failure(
+    await invoke([
+      "run",
+      stalePath,
+      "--trace",
+      join(item.directory, "stale-trace.json"),
+    ]),
+    "INVALID_PLAN",
+  );
+});
+
+test("CLI plans canonicalize cwd aliases and report a disappeared cwd as INVALID_CWD", async () => {
+  const item = await fixture();
+  const runtimeCwd = join(item.directory, "runtime-cwd");
+  const cwdAlias = join(item.directory, "runtime-cwd-alias");
+  await mkdir(runtimeCwd);
+  await symlink(runtimeCwd, cwdAlias, "dir");
+  const workflowPath = join(item.directory, "workflow.json");
+  const planPath = join(item.directory, "alias-plan.json");
+  const approvedPath = join(item.directory, "alias-approved.json");
+  success(await invoke(["import", item.skill, "--out", workflowPath]));
+  success(await invoke([
+    "plan",
+    workflowPath,
+    "--prompt",
+    "Inspect this workspace.",
+    "--agent",
+    "codex",
+    "--cwd",
+    cwdAlias,
+    "--safety",
+    "read-only",
+    "--out",
+    planPath,
+  ]));
+  const plan = JSON.parse(await readFile(planPath, "utf8"));
+  assert.equal(plan.cwd, await realpath(runtimeCwd));
+  assert.ok(plan.command.argv.includes(plan.cwd));
+  success(await invoke(["validate", planPath]));
+  success(await invoke(["approve", planPath, "--out", approvedPath]));
+  success(await invoke(["validate", approvedPath]));
+
+  await rm(runtimeCwd, { recursive: true, force: true });
+  for (const artifactPath of [planPath, approvedPath]) {
+    const diagnostic = failure(
+      await invoke(["validate", artifactPath]),
+      "INVALID_CWD",
+    );
+    assert.equal(diagnostic.details.reason, "missing");
+    assert.equal(diagnostic.details.cwd, plan.cwd);
+  }
+  failure(
+    await invoke([
+      "approve",
+      planPath,
+      "--out",
+      join(item.directory, "missing-cwd-approved.json"),
+    ]),
+    "INVALID_CWD",
+  );
+  failure(
+    await invoke([
+      "run",
+      approvedPath,
+      "--trace",
+      join(item.directory, "missing-cwd-trace.json"),
+    ]),
+    "INVALID_CWD",
   );
 });
 

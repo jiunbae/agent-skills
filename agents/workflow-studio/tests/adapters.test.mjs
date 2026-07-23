@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
@@ -20,6 +21,7 @@ import {
   prepareAdapter,
   promoteArtifact,
   runApprovedPlan,
+  validateNativePlan,
   verifyPlanApproval,
 } from "../src/adapters.mjs";
 import {
@@ -64,6 +66,14 @@ function makeTemporaryWorkspace(t) {
   const directory = mkdtempSync(join(tmpdir(), "workflow-studio-adapter-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return realpathSync(directory);
+}
+
+function makeCwdAlias(t, target) {
+  const parent = mkdtempSync(join(tmpdir(), "workflow-studio-cwd-alias-"));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const alias = join(parent, "workspace");
+  symlinkSync(target, alias, "dir");
+  return alias;
 }
 
 function approvedFakePlan(t, agent = "codex", safety = "read-only", prompt) {
@@ -224,6 +234,97 @@ test("approval binds every mutable plan envelope field", (t) => {
   assert.throws(
     () => prepareAdapter(approved, "/bin/echo"),
     (error) => error.code === "EXECUTABLE_OVERRIDE_FORBIDDEN",
+  );
+});
+
+test("approval rejects mismatched Skill bytes and stale digests precisely", (t) => {
+  const cwd = makeTemporaryWorkspace(t);
+  const mismatched = buildRunEnvelope({
+    workflow: workflowFixture(),
+    prompt: "Inspect safely.",
+    agent: "codex",
+    cwd,
+  });
+  const unrelatedSkill = Buffer.from(
+    "---\nname: unrelated\ndescription: Unrelated skill.\n---\n",
+    "utf8",
+  );
+  mismatched.skill.bytes_base64 = unrelatedSkill.toString("base64");
+  mismatched.skill.byte_length = unrelatedSkill.length;
+  mismatched.skill.sha256 = createHash("sha256")
+    .update(unrelatedSkill)
+    .digest("hex");
+  assert.throws(
+    () => validateNativePlan(mismatched),
+    (error) =>
+      error.code === "INVALID_PLAN" &&
+      /rendered workflow candidate/u.test(error.message),
+  );
+  assert.throws(
+    () => approvePlan(mismatched),
+    (error) => error.code === "INVALID_PLAN",
+  );
+
+  const stale = approvePlan(
+    buildRunEnvelope({
+      workflow: workflowFixture(),
+      prompt: "Inspect safely.",
+      agent: "codex",
+      cwd,
+    }),
+  );
+  stale.warnings.push("Changed after approval.");
+  assert.equal(verifyPlanApproval(stale), false);
+  assert.throws(
+    () => validateNativePlan(stale),
+    (error) =>
+      error.code === "INVALID_PLAN" &&
+      /approval digest/u.test(error.message),
+  );
+});
+
+test("an approved existing cwd alias runs unchanged while missing cwd is INVALID_CWD", async (t) => {
+  const canonical = makeTemporaryWorkspace(t);
+  symlinkSync(fakeAgent, join(canonical, "codex"));
+  const alias = makeCwdAlias(t, canonical);
+  const plan = buildRunEnvelope({
+    workflow: workflowFixture(),
+    prompt: "Run through the approved cwd alias.",
+    agent: "codex",
+    cwd: canonical,
+  });
+  plan.cwd = alias;
+  plan.command.argv[plan.command.argv.indexOf(canonical)] = alias;
+  const approved = approvePlan(plan);
+
+  assert.equal(approved.cwd, alias);
+  assert.equal(verifyPlanApproval(approved), true);
+  assert.equal(prepareAdapter(approved).cwd, alias);
+  assert.ok(prepareAdapter(approved).argv.includes(alias));
+
+  const auditPath = join(canonical, "alias-audit.json");
+  const trace = await runApprovedPlan(approved, {
+    env: {
+      PATH: `${canonical}${delimiter}${process.env.PATH ?? ""}`,
+      FAKE_AGENT_AUDIT: auditPath,
+      FAKE_AGENT_SCENARIO: "codex-complete",
+    },
+  });
+  const audit = JSON.parse(readFileSync(auditPath, "utf8"));
+  assert.equal(trace.status, "completed");
+  assert.ok(audit.argv.includes(alias));
+  assert.equal(audit.cwd, canonical);
+
+  const missing = approvedFakePlan(t);
+  const missingCwd = missing.cwd;
+  rmSync(missingCwd, { recursive: true, force: true });
+  assert.equal(verifyPlanApproval(missing), true);
+  await assert.rejects(
+    runApprovedPlan(missing),
+    (error) =>
+      error.code === "INVALID_CWD" &&
+      error.details?.cwd === missingCwd &&
+      error.details?.reason === "missing",
   );
 });
 
@@ -421,16 +522,15 @@ test("deep valid JSON events become bounded protocol diagnostics", async (t) => 
   );
 });
 
-test("AbortSignal cancellation is wrapper cancellation, not provider acknowledgement", async (t) => {
+test("pre-aborted cancellation deterministically records absent provider terminal evidence", async (t) => {
   const controller = new AbortController();
   const plan = approvedFakePlan(t);
-  const run = runApprovedPlan(plan, {
+  controller.abort();
+  const trace = await runApprovedPlan(plan, {
     env: fakeEnv(plan, { FAKE_AGENT_SCENARIO: "cancel" }),
     signal: controller.signal,
     limits: { cancellationGraceMs: 100 },
   });
-  setTimeout(() => controller.abort(), 80);
-  const trace = await run;
 
   assert.equal(trace.status, "cancelled");
   assert.equal(trace.failure.kind, "cancelled_by_wrapper");
@@ -527,6 +627,42 @@ test("plan and trace promotion are deterministic and omit raw trace payloads", a
   assert.match(
     promotedTrace.skill_markdown,
     /observable telemetry, not hidden reasoning/u,
+  );
+  const provenancePlan = approvedFakePlan(t);
+  const provenanceTrace = await runApprovedPlan(provenancePlan, {
+    env: fakeEnv(provenancePlan, { FAKE_AGENT_SCENARIO: "codex-complete" }),
+  });
+  const provenanceDraft = promoteArtifact(provenanceTrace, {
+    name: "promoted-trace-provenance",
+    description: "Preserve inferred trace ordering as inferred metadata.",
+  });
+  const managedPayload = JSON.parse(
+    Buffer.from(
+      provenanceDraft.skill_markdown.match(
+        /<!-- workflow-studio:v1 ([A-Za-z0-9_-]+) -->/u,
+      )[1],
+      "base64url",
+    ).toString("utf8"),
+  );
+  assert.ok(managedPayload.edges.length > 0);
+  assert.ok(
+    managedPayload.edges.every(
+      (edge) =>
+        edge.source_provenance === "inferred" &&
+        edge.source_confidence === 0.5,
+    ),
+  );
+  const reimportedTrace = importSkillBytes(
+    Buffer.from(provenanceDraft.skill_markdown, "utf8"),
+    { sourcePath: "/virtual/promoted-trace/SKILL.md" },
+  );
+  assert.ok(reimportedTrace.graph.edges.length > 0);
+  assert.ok(
+    reimportedTrace.graph.edges.every(
+      (edge) =>
+        edge.provenance === "inferred" &&
+        edge.confidence.level !== "explicit",
+    ),
   );
 });
 

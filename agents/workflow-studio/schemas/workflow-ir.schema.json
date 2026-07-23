@@ -77,7 +77,7 @@
         "title": {
           "type": "string",
           "minLength": 1,
-          "pattern": "^(?=\\S(?:.*\\S)?$)[^\\r\\n]+$"
+          "pattern": "^(?!.*[ \\t]+#+$)(?=\\S(?:.*\\S)?$)[^\\r\\n]+$"
         },
         "body": { "type": "string" },
         "source_map": { "type": ["object", "null"] },
@@ -93,7 +93,17 @@
         "from": { "type": "string", "minLength": 1 },
         "to": { "type": "string", "minLength": 1 },
         "kind": { "enum": ["sequence", "parallel"] },
-        "confidence": { "$ref": "#/$defs/confidence" }
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "source_provenance": { "const": "inferred" },
+        "source_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "dependentRequired": {
+        "source_provenance": ["source_confidence"],
+        "source_confidence": ["source_provenance"]
       },
       "additionalProperties": true
     },
@@ -406,7 +416,81 @@
             "required": ["status"]
           },
           "then": {
-            "properties": { "completeness": { "const": "complete" } }
+            "allOf": [
+              {
+                "properties": {
+                  "completeness": { "const": "complete" },
+                  "process": {
+                    "properties": {
+                      "exit_code": { "const": 0 },
+                      "signal": { "const": null }
+                    }
+                  }
+                }
+              },
+              { "not": { "required": ["failure"] } },
+              {
+                "if": {
+                  "properties": { "agent": { "const": "codex" } },
+                  "required": ["agent"]
+                },
+                "then": {
+                  "properties": {
+                    "events": {
+                      "contains": {
+                        "properties": {
+                          "kind": { "const": "turn.completed" },
+                          "status": { "const": "completed" }
+                        },
+                        "required": ["kind", "status"]
+                      }
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "events": {
+                      "contains": {
+                        "properties": {
+                          "kind": { "const": "run.completed" },
+                          "status": { "const": "completed" }
+                        },
+                        "required": ["kind", "status"]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "events": {
+                    "not": {
+                      "contains": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": ["turn.failed", "run.failed"]
+                              }
+                            },
+                            "required": ["kind"]
+                          },
+                          {
+                            "properties": {
+                              "kind": {
+                                "enum": ["turn.completed", "run.completed"]
+                              },
+                              "status": { "const": "failed" }
+                            },
+                            "required": ["kind", "status"]
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
           },
           "else": {
             "required": ["failure"],

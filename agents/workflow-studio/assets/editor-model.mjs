@@ -1,5 +1,6 @@
 const UTF8 = new TextEncoder();
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: false });
+const UTF8_FATAL_DECODER = new TextDecoder("utf-8", { fatal: true });
 const CONFIDENCE_VALUES = new Set([
   "explicit",
   "structural",
@@ -381,13 +382,7 @@ function traceGraph(artifact) {
 }
 
 function artifactGraph(artifact) {
-  if (
-    artifact.kind === "trace" &&
-    Array.isArray(artifact.events) &&
-    !artifact.graph
-  ) {
-    return traceGraph(artifact);
-  }
+  if (artifact.kind === "trace") return traceGraph(artifact);
   if (artifact.graph && typeof artifact.graph === "object") return artifact.graph;
   if (artifact.workflow && typeof artifact.workflow === "object") {
     return artifact.workflow.graph || artifact.workflow;
@@ -507,11 +502,32 @@ function defaultPrompt(normalized) {
 
 function planPrompt(artifact, fallback) {
   const value = firstDefined(artifact.prompt, artifact.plan?.prompt, fallback);
-  if (typeof value === "string") return value;
-  if (value?.bytes_base64) {
-    return UTF8_DECODER.decode(decodeBase64(value.bytes_base64));
+  if (typeof value === "string") {
+    return {
+      text: value,
+      bytesBase64: bytesToBase64(UTF8.encode(value)),
+      nonUtf8: false,
+    };
   }
-  return fallback;
+  if (value?.bytes_base64) {
+    const bytes = decodeBase64(value.bytes_base64);
+    let nonUtf8 = false;
+    try {
+      UTF8_FATAL_DECODER.decode(bytes);
+    } catch {
+      nonUtf8 = true;
+    }
+    return {
+      text: UTF8_DECODER.decode(bytes),
+      bytesBase64: bytesToBase64(bytes),
+      nonUtf8,
+    };
+  }
+  return {
+    text: fallback,
+    bytesBase64: bytesToBase64(UTF8.encode(fallback)),
+    nonUtf8: false,
+  };
 }
 
 export function createEditorState(payload) {
@@ -582,7 +598,10 @@ export function createEditorState(payload) {
       adapter,
       cwd,
       safety,
-      prompt,
+      prompt: prompt.text,
+      promptBytesBase64: prompt.bytesBase64,
+      promptEdited: false,
+      promptWasNonUtf8: prompt.nonUtf8,
       approval: null,
       inputHashes: null,
       preparedAt: null,
@@ -792,6 +811,9 @@ export function editPlan(state, field, value) {
   if (!["adapter", "cwd", "safety", "prompt"].includes(field)) return state;
   const next = clone(state);
   next.plan[field] = String(value);
+  if (field === "prompt") {
+    next.plan.promptEdited = true;
+  }
   next.planDirty = true;
   next.plan.approval = null;
   next.plan.inputHashes = null;
@@ -827,17 +849,109 @@ function graphHasCycle(nodes, edges) {
   return visited !== nodes.length;
 }
 
+function titleError(title) {
+  if (
+    typeof title !== "string" ||
+    title.trim().length === 0 ||
+    title !== title.trim() ||
+    /[\r\n]/u.test(title)
+  ) {
+    return "must be non-empty single-line text without surrounding whitespace";
+  }
+  if (/[ \t]+#+[ \t]*$/u.test(title)) {
+    return "must not end with a Markdown ATX closing hash sequence";
+  }
+  return "";
+}
+
+function advanceMarkdownFence(fence, text) {
+  if (fence) {
+    const closing = text.match(/^ {0,3}(`+|~+)[ \t]*$/u);
+    if (
+      closing &&
+      closing[1][0] === fence.character &&
+      closing[1].length >= fence.length
+    ) {
+      return { fence: null, boundary: "close" };
+    }
+    return { fence, boundary: null };
+  }
+  const opening = text.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+  if (
+    !opening ||
+    (opening[1][0] === "`" && opening[2].includes("`"))
+  ) {
+    return { fence: null, boundary: null };
+  }
+  return {
+    fence: { character: opening[1][0], length: opening[1].length },
+    boundary: "open",
+  };
+}
+
+function nodeHeadingLevel(state, node) {
+  const heading = spanFrom(asObject(node.source_map).heading);
+  if (
+    !heading ||
+    heading.start < 0 ||
+    heading.end > state.sourceBytes.length
+  ) {
+    return null;
+  }
+  return UTF8_DECODER.decode(
+    state.sourceBytes.subarray(heading.start, heading.end),
+  ).match(/^(#{2,6})/u)?.[1].length ?? null;
+}
+
+function defaultHeadingLevel(state) {
+  for (const node of state.nodes) {
+    const level = nodeHeadingLevel(state, node);
+    if (level !== null) return level;
+  }
+  return 3;
+}
+
+function bodyStructuralIssue(body, headingLevel) {
+  let fence = null;
+  for (const line of String(body).split(/\r?\n/u)) {
+    const before = fence;
+    const advanced = advanceMarkdownFence(fence, line);
+    fence = advanced.fence;
+    if (before || advanced.boundary === "open") continue;
+    const heading = line.match(/^(#{2,6})([ \t]+)(.*)$/u);
+    if (heading && heading[1].length <= headingLevel) {
+      return `contains an unfenced level-${heading[1].length} ATX heading that would change recognized workflow structure`;
+    }
+  }
+  if (fence) {
+    return "leaves a fenced code block open and would hide following workflow structure";
+  }
+  return "";
+}
+
 export function validateState(state) {
   const errors = [];
   const warnings = [];
   const ids = new Set();
+  const structuralLevel = defaultHeadingLevel(state);
   for (const node of state.nodes) {
     if (!node.id) errors.push("Every node needs an ID.");
     if (ids.has(node.id)) errors.push(`Duplicate node ID: ${node.id}.`);
     ids.add(node.id);
-    if (!node.title.trim()) errors.push(`Node ${node.id} needs a title.`);
-    if (/[\r\n]/u.test(node.title)) {
-      errors.push(`Node ${node.id} title must stay on one line.`);
+    const invalidTitle = titleError(node.title);
+    if (invalidTitle) {
+      errors.push(`Node ${node.id} title ${invalidTitle}.`);
+    }
+    const bodyIssue = bodyStructuralIssue(
+      node.body,
+      state.structuralDirty
+        ? structuralLevel
+        : (nodeHeadingLevel(state, node) ?? structuralLevel),
+    );
+    if (bodyIssue) {
+      errors.push(
+        `Node ${node.id} body ${bodyIssue}.`,
+      );
     }
     if (!node.sourceMap.title && node.title !== node.original.title) {
       warnings.push(
@@ -876,6 +990,14 @@ export function validateState(state) {
       `Unsupported safety profile: ${String(state.plan.safety)}. Choose read-only or workspace-write.`,
     );
   }
+  if (
+    state.plan?.promptWasNonUtf8 &&
+    !state.plan.promptEdited
+  ) {
+    warnings.push(
+      "The prompt contains non-UTF-8 bytes. They will be preserved exactly until the prompt field is edited; editing converts the prompt to UTF-8.",
+    );
+  }
   if (state.structuralDirty) {
     warnings.push(
       "Structural edits rewrite the recognized workflow region and preserve stable IDs and edges in managed metadata.",
@@ -906,6 +1028,17 @@ function validateDownloadWorkflow(artifact) {
       return false;
     }
     const nodeIds = new Set(nodes.map((node) => node.id));
+    if (
+      nodeIds.size !== nodes.length ||
+      nodes.some(
+        (node) =>
+          !node?.id ||
+          titleError(node.title) ||
+          typeof node.body !== "string",
+      )
+    ) {
+      return false;
+    }
     const inbound = new Set(edges.map((edge) => edge.to));
     const expectedEntries = nodes
       .filter((node) => !inbound.has(node.id))
@@ -921,11 +1054,13 @@ function validateDownloadWorkflow(artifact) {
         (edge) =>
           !nodeIds.has(edge.from) ||
           !nodeIds.has(edge.to) ||
+          edge.from === edge.to ||
           !EDGE_KINDS.has(edge.kind),
       )
     ) {
       return false;
     }
+    if (graphHasCycle(nodes, edges)) return false;
     const coverage = [
       ...nodes.map(mappedNodeSpan).filter(Boolean),
       ...asArray(artifact.opaque_spans).map(spanFrom).filter(Boolean),
@@ -1121,16 +1256,7 @@ function removeManagedBlock(text) {
   const insideFence = (offset) => {
     let fence = null;
     for (const line of text.slice(0, offset).split(/\r?\n/u)) {
-      const marker = line.match(/^ {0,3}(`{3,}|~{3,})(?:[^`~]*)$/u)?.[1];
-      if (!marker) continue;
-      if (!fence) {
-        fence = { character: marker[0], length: marker.length };
-      } else if (
-        marker[0] === fence.character &&
-        marker.length >= fence.length
-      ) {
-        fence = null;
-      }
+      fence = advanceMarkdownFence(fence, line).fence;
     }
     return Boolean(fence);
   };
@@ -1375,7 +1501,10 @@ export function buildWorkflowArtifact(state) {
 }
 
 export function buildPlanArtifact(state) {
-  const promptBytes = UTF8.encode(state.plan.prompt);
+  const promptBytes =
+    !state.plan.promptEdited && typeof state.plan.promptBytesBase64 === "string"
+      ? decodeBase64(state.plan.promptBytesBase64)
+      : UTF8.encode(state.plan.prompt);
   const skillBytes = buildCandidateBytes(state);
   const workflow = buildWorkflowArtifact(state);
   const safety =
@@ -1467,12 +1596,16 @@ export function canonicalJson(value) {
 }
 
 export async function sha256Text(value) {
+  return sha256Bytes(UTF8.encode(String(value)));
+}
+
+async function sha256Bytes(bytes) {
   if (!globalThis.crypto?.subtle) {
     throw new Error("Web Crypto SHA-256 is unavailable in this browser.");
   }
   const digest = await globalThis.crypto.subtle.digest(
     "SHA-256",
-    UTF8.encode(String(value)),
+    bytes,
   );
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -1499,9 +1632,14 @@ export async function approvePlan(state) {
     throw new Error("Enter the exact effective prompt before approval.");
   }
   const next = clone(state);
+  const promptBytes =
+    !state.plan.promptEdited && typeof state.plan.promptBytesBase64 === "string"
+      ? decodeBase64(state.plan.promptBytesBase64)
+      : UTF8.encode(state.plan.prompt);
+  const skillBytes = buildCandidateBytes(state);
   next.plan.inputHashes = {
-    prompt_sha256: await sha256Text(state.plan.prompt),
-    skill_sha256: await sha256Text(buildCandidateMarkdown(state)),
+    prompt_sha256: await sha256Bytes(promptBytes),
+    skill_sha256: await sha256Bytes(skillBytes),
   };
   const pending = buildPlanArtifact(next);
   next.plan.inputHashes.workflow_revision = await sha256Text(
@@ -1563,7 +1701,18 @@ export function promoteToSkillDraft(input) {
       ? "trace"
       : "plan"
     : String(firstDefined(source?.kind, "trace"));
-  const graph = editorState ? editorState : artifactGraph(source);
+  if (editorState) {
+    const validation = validateState(editorState);
+    if (!validation.valid) {
+      throw new Error(
+        `Cannot promote an invalid graph: ${validation.errors.join(" ")}`,
+      );
+    }
+  }
+  const graph =
+    kind === "trace"
+      ? traceGraph(source)
+      : editorState ?? artifactGraph(source);
   const nodes = asArray(graph.nodes).map(normalizeNode).map((node, index) => ({
     ...node,
     title: singleLineTitle(node.title, `Step ${index + 1}`),
@@ -1636,9 +1785,17 @@ export function promoteToSkillDraft(input) {
       from: edge.from,
       to: edge.to,
       kind: edge.kind,
-      source_provenance: edge.provenance,
       ...(edge.provenance === "inferred"
-        ? { inference_label: "inferred-order-not-causality" }
+        ? {
+            source_provenance: "inferred",
+            source_confidence:
+              typeof edge.confidence === "number"
+                ? edge.confidence
+                : typeof edge.source_confidence === "number"
+                  ? edge.source_confidence
+                  : 0.5,
+            inference_label: "inferred-order-not-causality",
+          }
         : {}),
     })),
   };
