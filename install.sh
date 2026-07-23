@@ -1036,6 +1036,17 @@ uninstall_codex_skill_link() {
   done
 }
 
+prune_copied_node_modules() {
+  local copied_root="$1"
+  local dependency_path
+
+  while IFS= read -r -d '' dependency_path; do
+    rm -rf -- "$dependency_path"
+  done < <(
+    find -P "$copied_root" -name node_modules -prune -print0
+  )
+}
+
 # 스킬 설치
 install_skill() {
   local group="$1"
@@ -1077,7 +1088,8 @@ install_skill() {
     fi
   else
     if [[ "$COPY_MODE" == "true" ]]; then
-      cp -r "$source_path" "$target_path"
+      cp -RP "$source_path" "$target_path"
+      prune_copied_node_modules "$target_path"
       log_success "복사됨: ${group}/${skill} -> ${target_name}"
     else
       ln -s "$source_path" "$target_path"

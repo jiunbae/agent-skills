@@ -1,9 +1,11 @@
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { isIP } from "node:net";
 import { isAbsolute, resolve } from "node:path";
 
 const DEFAULT_HOST = "127.0.0.1";
+const WILDCARD_IPV4_HOST = "0.0.0.0";
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
 const ASSETS = new Map([
@@ -18,22 +20,40 @@ const ASSETS = new Map([
     "/editor-model.mjs",
     { file: "editor-model.mjs", type: "text/javascript; charset=utf-8" },
   ],
+  [
+    "/generated/graph-canvas.mjs",
+    {
+      file: "generated/graph-canvas.mjs",
+      type: "text/javascript; charset=utf-8",
+    },
+  ],
+  [
+    "/generated/graph-canvas.css",
+    {
+      file: "generated/graph-canvas.css",
+      type: "text/css; charset=utf-8",
+    },
+  ],
 ]);
 
 const SECURITY_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
   "Content-Security-Policy":
-    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
   "Cross-Origin-Resource-Policy": "same-origin",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
 });
 
-function assertLoopbackHost(host) {
-  if (host !== "127.0.0.1" && host !== "::1") {
+function assertBindHost(host) {
+  if (
+    host !== "127.0.0.1" &&
+    host !== "::1" &&
+    host !== WILDCARD_IPV4_HOST
+  ) {
     throw new TypeError(
-      'Studio host must be the loopback literal "127.0.0.1" or "::1".',
+      'Studio host must be "127.0.0.1", "::1", or the explicit LAN bind "0.0.0.0".',
     );
   }
 }
@@ -72,6 +92,17 @@ function encodeArtifact(artifact) {
 function expectedHostHeader(address) {
   const literal = address.family === "IPv6" ? `[${address.address}]` : address.address;
   return `${literal}:${address.port}`;
+}
+
+function hostHeaderAllowed(address, bindHost, header) {
+  if (typeof header !== "string") return false;
+  if (bindHost !== WILDCARD_IPV4_HOST) {
+    return header === expectedHostHeader(address);
+  }
+
+  const match = /^([^:]+):([0-9]+)$/u.exec(header);
+  if (!match || Number(match[2]) !== address.port) return false;
+  return isIP(match[1]) === 4;
 }
 
 function hasTraversalOrInvalidEncoding(rawTarget) {
@@ -119,8 +150,10 @@ function send(response, method, status, body, headers = {}) {
  * Create a read-only Workflow Studio server.
  *
  * The caller supplies an already-bounded artifact value. The server serializes
- * it once, binds only to a literal loopback address, and exposes no write or run
- * endpoint.
+ * it once and exposes no write or run endpoint. The default is loopback; the
+ * explicit 0.0.0.0 bind accepts only IPv4-literal Host headers on the bound
+ * port so token URLs can be opened from the local network without accepting
+ * arbitrary DNS Host values.
  */
 export function createStudioServer({
   artifact,
@@ -128,7 +161,7 @@ export function createStudioServer({
   host = DEFAULT_HOST,
   port = 0,
 } = {}) {
-  assertLoopbackHost(host);
+  assertBindHost(host);
   assertPort(port);
   if (typeof assetsDir !== "string" || assetsDir.length === 0) {
     throw new TypeError("Studio assetsDir must be a non-empty path string.");
@@ -144,7 +177,7 @@ export function createStudioServer({
     if (
       !address ||
       typeof address === "string" ||
-      request.headers.host !== expectedHostHeader(address)
+      !hostHeaderAllowed(address, host, request.headers.host)
     ) {
       send(response, request.method ?? "GET", 421, "Misdirected Request\n", {
         "Content-Type": "text/plain; charset=utf-8",

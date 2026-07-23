@@ -39,14 +39,45 @@ node scripts/workflow-studio.mjs studio /path/to/workflow.json
 ```
 
 Report parser diagnostics, confidence, and opaque regions. In the studio,
-inspect **Graph**, **Source**, and **Diff** before downloading an edited IR or
-Markdown draft. The server is read-only; browser export is a client-side
-download.
+keep the **Workflow** canvas, semantic outline, and selection inspector in one
+workspace. Select a step or dependency on the React Flow canvas or
+keyboard-operable outline. Use the inspector to edit it, add/reorder/delete
+steps, or create and change dependencies. Canvas handles support direct
+connect/reconnect, and selected graph elements can be deleted. Node positions
+are local view state, not Workflow IR.
+
+Use undo/redo for semantic graph edits. Open **Review source** and **Review
+diff** in the side drawer before downloading an edited IR or Markdown draft;
+the review drawer does not replace the graph workspace. The server is
+read-only, and browser export is a client-side download.
+
+For a repository-backed smoke test, import the real adjacent skill:
+
+```bash
+node scripts/workflow-studio.mjs import \
+  ../background-implementer/SKILL.md \
+  --out /tmp/background-implementer.workflow.json
+node scripts/workflow-studio.mjs studio \
+  /tmp/background-implementer.workflow.json
+```
+
+Default Studio binding is loopback. Use `--host 0.0.0.0` only when the user
+explicitly requests LAN access, disclose that the token URL becomes reachable
+from the IPv4 network, and tell them to replace `0.0.0.0` in the printed URL
+with `http://<LAN-IP>:PORT/?token=TOKEN`, preserving the printed port and token.
+Use a trusted network/firewall, keep the token URL out of documentation and
+logs, and stop Studio after review.
 
 V1 graph edits are limited to step title/body edits, add before/after, delete,
 reorder, and acyclic `sequence` or `parallel` edge add/remove/change. Reject
 cycles, missing endpoints, duplicate IDs, and unsupported constructs instead
 of guessing.
+
+Mount the interactive canvas only at or below both limits: 1,000 nodes and
+1,000 edges. Above either limit, use the bounded semantic fallback, which
+mounts only the first 100 step rows and first 100 dependency rows. Do not imply
+that unmounted rows are directly editable; full-artifact downloads remain
+available.
 
 ## 3. Export safely
 
@@ -84,9 +115,12 @@ node scripts/workflow-studio.mjs studio /path/to/trace.json
 ```
 
 In the studio Plan view, changing the prompt, agent, working directory, safety
-profile, or graph clears approval. Either approve and download that exact plan
-in the browser, or close the studio, recreate the CLI plan with the corrected
-inputs, and approve the new file before `run`.
+profile, or graph clears prior review. **Browser review current plan** hashes
+the browser payload and marks it **Browser reviewed**; this is not CLI
+authorization. Download that exact plan and pass it through
+`workflow-studio approve` for the separate **CLI approval required** gate, or
+close Studio, recreate the CLI plan with the corrected inputs, and approve the
+new file before `run`.
 
 Use `--agent claude` for Claude Code. Default to `read-only`;
 `workspace-write` requires a separate, explicit user choice. Approval hashes the
@@ -119,9 +153,18 @@ future behavior.
 - Codex CLI and Claude Code CLI adapters only.
 - Observation is limited to emitted CLI events; provider schemas and safety
   semantics differ.
+- The React Flow canvas is interactive only through 1,000 nodes and 1,000
+  edges; larger artifacts use the first-100-rows-per-kind bounded fallback.
 - No global install, remote service, collaboration server, or server-side
   browser write/run endpoint.
 - Validated on macOS with Node.js 26.5.0, Codex CLI 0.144.6, and Claude Code
   2.1.218; other operating systems and Node versions are not claimed.
+
+The runtime uses checked-in `assets/generated/` JavaScript and CSS and makes no
+CDN or registry request. UI dependencies and esbuild are exact-pinned in the
+component-local package and lockfile. Contributors must run
+`npm run check:generated` after `npm ci --ignore-scripts`; copy installers omit
+`node_modules` but retain the generated bundle and
+`THIRD_PARTY_NOTICES.md`.
 
 See `README.md` for artifact locations, grammar details, and a complete example.

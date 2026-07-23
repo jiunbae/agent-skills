@@ -709,11 +709,13 @@ function uniqueNodeId(nodes) {
   return `step-${number}`;
 }
 
-function uniqueEdgeId(edges) {
+function uniqueEdgeId(edges, from, to) {
   const used = new Set(edges.map((edge) => edge.id));
-  let number = edges.length + 1;
-  while (used.has(`edge-${number}`)) number += 1;
-  return `edge-${number}`;
+  const base = `edge-${from}-${to}`;
+  if (!used.has(base)) return base;
+  let number = 2;
+  while (used.has(`${base}-${number}`)) number += 1;
+  return `${base}-${number}`;
 }
 
 export function selectNode(state, nodeId) {
@@ -777,6 +779,7 @@ export function editNode(state, nodeId, field, value) {
   if (!["title", "body"].includes(field)) return state;
   const node = findNode(state, nodeId);
   if (!node || node.readOnly || !node.editableFields.includes(field)) return state;
+  if (node[field] === String(value)) return state;
   const next = clone(state);
   const target = findNode(next, nodeId);
   target[field] = String(value);
@@ -864,30 +867,71 @@ export function addEdge(state, from, to, kind = "sequence") {
     (edge) => edge.from === from && edge.to === to,
   );
   if (existing) {
+    if (existing.kind === edgeKind) return state;
     existing.kind = edgeKind;
+    existing.confidence = {
+      level: "explicit",
+      rule_id: "managed.v1",
+      reason: "Edge changed in Workflow Studio.",
+    };
+    existing.provenance = "managed";
+    delete existing.source_provenance;
+    delete existing.source_confidence;
     return markChanged(next, `Changed edge to ${edgeKind}.`, {
       structural: true,
     });
   }
   next.edges.push({
-    id: uniqueEdgeId(next.edges),
+    id: uniqueEdgeId(next.edges, String(from), String(to)),
     from: String(from),
     to: String(to),
     kind: edgeKind,
+    confidence: {
+      level: "explicit",
+      rule_id: "managed.v1",
+      reason: "Edge created in Workflow Studio.",
+    },
+    provenance: "managed",
   });
   return markChanged(next, `Added ${edgeKind} edge.`, { structural: true });
 }
 
 export function changeEdge(state, edgeId, patch) {
   if (structuralEditBlockReason(state)) return state;
+  const current = state.edges.find((candidate) => candidate.id === edgeId);
+  if (!current) return state;
   const next = clone(state);
   const edge = next.edges.find((candidate) => candidate.id === edgeId);
-  if (!edge) return state;
   if (patch.from !== undefined) edge.from = String(patch.from);
   if (patch.to !== undefined) edge.to = String(patch.to);
   if (patch.kind !== undefined && EDGE_KINDS.has(patch.kind)) {
     edge.kind = patch.kind;
   }
+  if (
+    edge.from === current.from &&
+    edge.to === current.to &&
+    edge.kind === current.kind
+  ) {
+    return state;
+  }
+  if (
+    next.edges.some(
+      (candidate) =>
+        candidate.id !== edge.id &&
+        candidate.from === edge.from &&
+        candidate.to === edge.to,
+    )
+  ) {
+    return state;
+  }
+  edge.confidence = {
+    level: "explicit",
+    rule_id: "managed.v1",
+    reason: "Edge changed in Workflow Studio.",
+  };
+  edge.provenance = "managed";
+  delete edge.source_provenance;
+  delete edge.source_confidence;
   return markChanged(next, `Changed edge ${edgeId}.`, { structural: true });
 }
 

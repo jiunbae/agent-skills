@@ -61,14 +61,16 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
-[tabindex]:focus-visible {
+[tabindex]:focus-visible,
+.react-flow__element:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 
-button:disabled {
+button:disabled,
+fieldset:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 button.primary {
@@ -88,7 +90,7 @@ button.danger {
 
 .skip-link {
   position: fixed;
-  z-index: 50;
+  z-index: 100;
   top: 0.5rem;
   left: 0.5rem;
   padding: 0.65rem 0.85rem;
@@ -111,7 +113,8 @@ button.danger {
 }
 
 .masthead h1,
-.section-heading h2 {
+.section-heading h2,
+.drawer-header h2 {
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
   font-weight: 600;
@@ -135,7 +138,10 @@ button.danger {
 .artifact-state,
 .download-actions,
 .plan-actions,
-.trace-actions {
+.trace-actions,
+.canvas-toolbar,
+.drawer-tabs,
+.review-context {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -166,7 +172,7 @@ button.danger {
   gap: 1rem;
   align-items: end;
   padding: 0.8rem clamp(1rem, 3vw, 2.5rem);
-  background: rgb(255 253 248 / 70%);
+  background: rgb(255 253 248 / 72%);
 }
 
 .source-strip strong {
@@ -186,7 +192,7 @@ button.danger {
 }
 
 .view-tabs button {
-  min-width: 5.5rem;
+  min-width: 6rem;
   border: 0;
   border-bottom: 3px solid transparent;
   border-radius: 0.45rem 0.45rem 0 0;
@@ -209,20 +215,18 @@ button.danger {
   padding-top: 1rem;
 }
 
-.graph-layout {
+.workspace-shell {
   display: grid;
-  grid-template-columns: minmax(21rem, 1.35fr) minmax(17rem, 0.8fr) minmax(18rem, 0.8fr);
+  grid-template-columns: minmax(28rem, 1fr) minmax(20rem, 24rem);
   gap: 1rem;
   align-items: start;
 }
 
 .graph-card,
-.outline-card,
 .inspector,
-.edge-editor,
-.text-view,
 .plan-view,
-.trace-view {
+.trace-view,
+.review-drawer {
   border: 1px solid var(--line);
   border-radius: 0.85rem;
   background: var(--surface);
@@ -230,18 +234,20 @@ button.danger {
 }
 
 .graph-card,
-.outline-card,
-.inspector,
-.edge-editor {
+.inspector {
   min-width: 0;
   padding: 1rem;
 }
 
-.edge-editor {
-  grid-column: 1 / -1;
+.inspector {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 7rem);
+  overflow: auto;
 }
 
-.section-heading {
+.section-heading,
+.drawer-header {
   display: flex;
   align-items: start;
   justify-content: space-between;
@@ -249,71 +255,167 @@ button.danger {
   margin-bottom: 0.9rem;
 }
 
-.section-heading h2 {
+.section-heading h2,
+.drawer-header h2 {
   font-size: 1.35rem;
 }
 
 .legend,
-.supporting-copy {
+.supporting-copy,
+.field-hint {
   margin: 0;
   color: var(--muted);
   font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.canvas-toolbar {
+  margin-bottom: 0.7rem;
+}
+
+.canvas-toolbar button {
+  min-height: 2.25rem;
+  padding: 0.42rem 0.65rem;
+  font-size: 0.82rem;
+}
+
+.toolbar-separator {
+  align-self: stretch;
+  width: 1px;
+  background: var(--line);
+}
+
+.toolbar-spacer {
+  flex: 1;
 }
 
 .graph-canvas {
+  position: relative;
+  height: clamp(28rem, 62vh, 46rem);
   min-height: 28rem;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 0.65rem;
-  background:
-    linear-gradient(rgb(23 32 28 / 4%) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(23 32 28 / 4%) 1px, transparent 1px),
-    #fafaf5;
-  background-size: 24px 24px;
+  background: #fafaf5;
 }
 
-.graph-canvas svg {
-  display: block;
-  min-width: 100%;
+.graph-canvas > .react-flow {
+  width: 100%;
+  height: 100%;
 }
 
-.graph-node {
-  cursor: pointer;
+.react-flow__node-workflow {
+  width: 14.75rem;
+  border: 0;
+  background: transparent;
 }
 
-.graph-node rect {
-  fill: var(--surface);
-  stroke: #708078;
-  stroke-width: 1.5;
+.workflow-flow-node {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 6.5rem;
+  padding: 0.8rem 0.95rem;
+  border: 2px solid #708078;
+  border-radius: 0.75rem;
+  background: var(--surface);
+  box-shadow: 0 7px 18px rgb(23 32 28 / 10%);
 }
 
-.graph-node[data-selected="true"] rect {
-  fill: var(--accent-soft);
-  stroke: var(--accent);
-  stroke-width: 3;
+.react-flow__node.selected .workflow-flow-node {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px rgb(15 107 85 / 15%);
 }
 
-.graph-node:focus rect {
+.workflow-flow-node__kind {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.workflow-flow-node__title {
+  overflow: hidden;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-flow-node__summary {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.react-flow__handle {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid white;
+  background: var(--accent);
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
   stroke: var(--focus);
   stroke-width: 4;
 }
 
-.graph-node text {
-  fill: var(--ink);
-  font-size: 13px;
-  pointer-events: none;
+.react-flow__edge-text {
+  fill: var(--muted);
+  font-size: 0.68rem;
 }
 
-.graph-edge {
-  fill: none;
-  stroke: #66726c;
-  stroke-width: 2;
-  marker-end: url("#arrowhead");
+.react-flow__controls button {
+  min-height: 0;
+  border-radius: 0;
 }
 
-.graph-edge.parallel {
-  stroke: #946122;
-  stroke-dasharray: 7 5;
+.large-graph-fallback {
+  min-height: 22rem;
+  padding: clamp(2rem, 7vw, 5rem);
+  border: 1px dashed var(--warning);
+  border-radius: 0.65rem;
+  background: var(--warning-soft);
+}
+
+.large-graph-fallback h3 {
+  margin-top: 0;
+}
+
+.outline-companion {
+  margin-top: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+}
+
+.outline-companion > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.summary-count {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.outline-companion > .supporting-copy {
+  padding: 0 0.8rem;
+}
+
+.outline-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  padding: 0.8rem;
+}
+
+.outline-columns h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
 }
 
 .workflow-outline,
@@ -324,23 +426,26 @@ button.danger {
   padding-left: 1.4rem;
 }
 
-.workflow-outline {
-  max-height: 28rem;
+.workflow-outline,
+.edge-list {
+  max-height: 20rem;
   overflow: auto;
 }
 
-.workflow-outline li {
-  margin-bottom: 0.55rem;
-  padding-left: 0.2rem;
+.workflow-outline li,
+.edge-list li {
+  margin-bottom: 0.45rem;
 }
 
-.outline-select {
+.outline-select,
+.edge-select {
   width: 100%;
   min-height: 3.25rem;
   text-align: left;
 }
 
-.outline-select[aria-current="step"] {
+.outline-select[aria-current="step"],
+.edge-select[aria-pressed="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -350,12 +455,18 @@ button.danger {
   margin-top: 0.18rem;
   color: var(--muted);
   font-size: 0.72rem;
+  font-weight: 500;
 }
 
-.edge-provenance {
+.edge-route {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.bounded-note {
+  padding: 0.6rem;
   color: var(--muted);
   font-size: 0.78rem;
-  font-weight: 750;
 }
 
 .form-stack,
@@ -386,12 +497,24 @@ textarea {
   background: white;
 }
 
+[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
 textarea {
   resize: vertical;
   line-height: 1.45;
 }
 
 fieldset {
+  display: grid;
+  gap: 0.7rem;
   margin: 0;
   padding: 0.75rem;
   border: 1px solid var(--line);
@@ -427,8 +550,8 @@ fieldset {
 
 .metadata-list dd {
   margin: 0;
-  font-size: 0.78rem;
   overflow-wrap: anywhere;
+  font-size: 0.78rem;
 }
 
 .notice {
@@ -442,8 +565,8 @@ fieldset {
 
 .notice.warning {
   border-left-color: var(--warning);
-  background: var(--warning-soft);
   color: var(--warning);
+  background: var(--warning-soft);
 }
 
 .empty-state {
@@ -452,52 +575,19 @@ fieldset {
   text-align: center;
 }
 
-.edge-form {
-  display: grid;
-  grid-template-columns: 1fr 1fr 0.8fr auto;
-  gap: 0.7rem;
-  align-items: end;
-}
-
-.edge-list {
-  display: grid;
-  gap: 0.6rem;
-  margin-top: 1rem;
-  list-style: none;
-}
-
-.edge-row {
-  display: grid;
-  grid-template-columns: minmax(12rem, 1fr) minmax(8rem, 0.45fr) auto;
-  gap: 0.65rem;
-  align-items: center;
-}
-
-.edge-route {
-  overflow-wrap: anywhere;
-}
-
-.edge-row-readonly {
-  grid-template-columns: minmax(12rem, 1fr) auto auto;
-}
-
-.edge-kind {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 750;
-  text-transform: capitalize;
-}
-
-.text-view,
 .plan-view,
 .trace-view {
   padding: clamp(1rem, 3vw, 1.6rem);
 }
 
-.supporting-copy {
-  max-width: 72ch;
-  margin-bottom: 1rem;
-  line-height: 1.5;
+.plan-grid {
+  grid-template-columns: 1fr 1.5fr 1fr;
+  margin: 1rem 0 1.25rem;
+}
+
+.plan-prompt,
+.plan-actions {
+  grid-column: 1 / -1;
 }
 
 .code-panel {
@@ -522,16 +612,6 @@ fieldset {
   color: #f2eee4;
 }
 
-.plan-grid {
-  grid-template-columns: 1fr 1.5fr 1fr;
-  margin: 1rem 0 1.25rem;
-}
-
-.plan-prompt,
-.plan-actions {
-  grid-column: 1 / -1;
-}
-
 .draft-panel {
   margin-top: 1.25rem;
   padding-top: 1rem;
@@ -550,7 +630,8 @@ fieldset {
   margin: 1rem 0;
 }
 
-.summary-tile {
+.summary-tile,
+.trace-item {
   padding: 0.8rem;
   border: 1px solid var(--line);
   border-radius: 0.55rem;
@@ -561,7 +642,8 @@ fieldset {
   display: block;
 }
 
-.summary-tile span {
+.summary-tile span,
+.trace-item p {
   margin-top: 0.18rem;
   color: var(--muted);
   font-size: 0.75rem;
@@ -570,18 +652,6 @@ fieldset {
 .trace-list {
   display: grid;
   gap: 0.7rem;
-  list-style: decimal;
-}
-
-.trace-item {
-  padding: 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: 0.55rem;
-}
-
-.trace-item p {
-  margin: 0.35rem 0 0;
-  color: var(--muted);
 }
 
 .provenance {
@@ -601,9 +671,46 @@ fieldset {
   color: var(--warning);
 }
 
+.review-drawer {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(46rem, 58vw);
+  padding: clamp(1rem, 3vw, 1.5rem);
+  overflow: auto;
+  border-radius: 0;
+  box-shadow: -14px 0 42px rgb(23 32 28 / 18%);
+}
+
+.drawer-header {
+  position: sticky;
+  z-index: 1;
+  top: -1.5rem;
+  padding: 1rem 0 0.8rem;
+  background: var(--surface);
+}
+
+.drawer-tabs {
+  margin-bottom: 0.8rem;
+}
+
+.drawer-tabs button[aria-selected="true"] {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  font-weight: 750;
+}
+
+.review-context {
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
 .status-dock {
   position: fixed;
-  z-index: 20;
+  z-index: 30;
   right: 0;
   bottom: 0;
   left: 0;
@@ -635,7 +742,11 @@ fieldset {
   display: none !important;
 }
 
-@media (max-width: 68rem) {
+@media (max-width: 76rem) {
+  .workspace-shell {
+    grid-template-columns: minmax(24rem, 1fr) minmax(18rem, 21rem);
+  }
+
   .source-strip {
     grid-template-columns: 1fr auto auto;
   }
@@ -643,33 +754,42 @@ fieldset {
   .download-actions {
     grid-column: 1 / -1;
   }
+}
 
-  .graph-layout {
-    grid-template-columns: minmax(18rem, 1fr) minmax(17rem, 0.8fr);
+@media (max-width: 58rem) {
+  .workspace-shell {
+    grid-template-columns: 1fr;
   }
 
   .inspector {
-    grid-column: 1 / -1;
+    position: static;
+    max-height: none;
+  }
+
+  .review-drawer {
+    width: min(100%, 42rem);
   }
 }
 
 @media (max-width: 46rem) {
   .masthead,
   .source-strip,
-  .section-heading {
+  .section-heading,
+  .drawer-header {
     align-items: stretch;
   }
 
   .masthead,
-  .section-heading {
+  .section-heading,
+  .drawer-header {
     flex-direction: column;
   }
 
   .source-strip,
-  .graph-layout,
   .plan-grid,
   .trace-summary,
-  .status-dock {
+  .status-dock,
+  .outline-columns {
     grid-template-columns: 1fr;
   }
 
@@ -677,16 +797,22 @@ fieldset {
     max-width: 90vw;
   }
 
-  .graph-card,
-  .outline-card,
-  .inspector,
-  .edge-editor {
-    grid-column: 1;
+  .canvas-toolbar {
+    align-items: stretch;
   }
 
-  .edge-form,
-  .edge-row {
-    grid-template-columns: 1fr;
+  .canvas-toolbar button {
+    flex: 1 1 8rem;
+  }
+
+  .toolbar-separator,
+  .toolbar-spacer {
+    display: none;
+  }
+
+  .graph-canvas {
+    height: 30rem;
+    min-height: 24rem;
   }
 
   .button-grid {
@@ -697,8 +823,31 @@ fieldset {
     grid-column: 1;
   }
 
+  .review-drawer {
+    width: 100%;
+  }
+
   #workspace {
     padding-bottom: 11rem;
+  }
+}
+
+@media (max-width: 24rem) {
+  .source-strip,
+  #workspace,
+  .view-tabs,
+  .masthead {
+    padding-right: 0.7rem;
+    padding-left: 0.7rem;
+  }
+
+  .graph-card,
+  .inspector {
+    padding: 0.7rem;
+  }
+
+  .metadata-list div {
+    grid-template-columns: 1fr;
   }
 }
 

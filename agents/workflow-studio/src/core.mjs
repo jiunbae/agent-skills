@@ -518,6 +518,14 @@ function deriveCandidates(headings, byteLength) {
 
 function candidateSourceMap(candidate) {
   const heading = candidate.heading;
+  const semanticTitle = cleanTitle(heading.text);
+  const semanticTitleOffset = heading.text.lastIndexOf(semanticTitle);
+  const semanticTitleStart =
+    heading.titleStart +
+    Buffer.byteLength(
+      heading.text.slice(0, Math.max(0, semanticTitleOffset)),
+      "utf8",
+    );
   return {
     span: { start_byte: heading.start, end_byte: candidate.end },
     heading: {
@@ -525,7 +533,7 @@ function candidateSourceMap(candidate) {
       end_byte: heading.headingEnd,
     },
     title: {
-      start_byte: heading.titleStart,
+      start_byte: semanticTitleStart,
       end_byte: heading.titleEnd,
     },
     body: {
@@ -597,9 +605,11 @@ function managedPayloadGraph(payload) {
   }
   if (nodes.some((node, index) => node.order !== index)) return null;
   const edgeIds = new Set();
+  const edgePairs = new Set();
   for (const edge of edges) {
     const hasSourceProvenance = Object.hasOwn(edge ?? {}, "source_provenance");
     const hasSourceConfidence = Object.hasOwn(edge ?? {}, "source_confidence");
+    const pair = `${edge?.from ?? ""}\0${edge?.to ?? ""}`;
     if (
       !edge ||
       typeof edge !== "object" ||
@@ -619,11 +629,13 @@ function managedPayloadGraph(payload) {
           typeof edge.source_confidence !== "number" ||
           edge.source_confidence < 0 ||
           edge.source_confidence > 1)) ||
-      edgeIds.has(edge.id)
+      edgeIds.has(edge.id) ||
+      edgePairs.has(pair)
     ) {
       return null;
     }
     edgeIds.add(edge.id);
+    edgePairs.add(pair);
   }
   if (
     hasCycle(
@@ -1299,13 +1311,16 @@ function validateWorkflow(artifact) {
     validateConfidence(node.confidence, node.id);
   }
   const edgeIds = new Set();
+  const edgePairs = new Set();
   for (const edge of edges) {
     const hasSourceProvenance = Object.hasOwn(edge ?? {}, "source_provenance");
     const hasSourceConfidence = Object.hasOwn(edge ?? {}, "source_confidence");
+    const pair = `${edge?.from ?? ""}\0${edge?.to ?? ""}`;
     if (
       !edge ||
       typeof edge.id !== "string" ||
       edgeIds.has(edge.id) ||
+      edgePairs.has(pair) ||
       !ids.has(edge.from) ||
       !ids.has(edge.to) ||
       edge.from === edge.to ||
@@ -1322,6 +1337,7 @@ function validateWorkflow(artifact) {
       throw workflowError("INVALID_EDGE", `Invalid graph edge: ${edge?.id ?? "?"}`);
     }
     edgeIds.add(edge.id);
+    edgePairs.add(pair);
     validateConfidence(edge.confidence, edge.id);
   }
   if (hasCycle(nodes, edges)) {
@@ -1988,8 +2004,25 @@ export function applyOperation(input, operation) {
       if (!nodes.some((node) => node.id === operation.to)) {
         throw workflowError("NODE_NOT_FOUND", operation.to);
       }
-      assertContiguousStructuralSource(input);
       const kind = operation.kind ?? "sequence";
+      const existing = edges.find(
+        (edge) => edge.from === operation.from && edge.to === operation.to,
+      );
+      if (existing) {
+        if (existing.kind === kind) return workflow;
+        assertContiguousStructuralSource(input);
+        existing.kind = kind;
+        existing.confidence = confidence(
+          "explicit",
+          "managed.v1",
+          "Edge changed in Workflow Studio.",
+        );
+        existing.provenance = "managed";
+        delete existing.source_provenance;
+        delete existing.source_confidence;
+        return refreshed(workflow, true);
+      }
+      assertContiguousStructuralSource(input);
       workflow.graph.edges.push({
         id: operation.id ?? nextEdgeId(workflow, operation.from, operation.to),
         from: operation.from,
@@ -2051,7 +2084,6 @@ export function applyOperation(input, operation) {
           "change-edge kind must be sequence or parallel.",
         );
       }
-      assertContiguousStructuralSource(input);
       let changed = false;
       for (const field of ["from", "to", "kind"]) {
         if (Object.hasOwn(operation, field)) {
@@ -2060,6 +2092,20 @@ export function applyOperation(input, operation) {
         }
       }
       if (!changed) return workflow;
+      if (
+        edges.some(
+          (candidate) =>
+            candidate.id !== edge.id &&
+            candidate.from === edge.from &&
+            candidate.to === edge.to,
+        )
+      ) {
+        throw workflowError(
+          "DUPLICATE_EDGE",
+          `An edge from ${edge.from} to ${edge.to} already exists.`,
+        );
+      }
+      assertContiguousStructuralSource(input);
       edge.confidence = confidence(
         "explicit",
         "managed.v1",

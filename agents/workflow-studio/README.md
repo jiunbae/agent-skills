@@ -1,9 +1,11 @@
 # Workflow Studio V1
 
-Workflow Studio is a dependency-free local tool that maps an Agent Skill
+Workflow Studio is a self-contained local tool that maps an Agent Skill
 `SKILL.md` to versioned Workflow IR, displays and edits its declared flow, and
-exports compatible Markdown. It also adds an explicit approval gate around
-native Codex or Claude CLI runs and records only the observable post-run trace.
+exports compatible Markdown. Its browser workspace uses a checked-in React
+Flow bundle; running the distributed tool does not require `npm install` or a
+CDN. Workflow Studio also adds an explicit approval gate around native Codex or
+Claude CLI runs and records only the observable post-run trace.
 
 `SKILL.md` remains the executable/distributable artifact:
 
@@ -32,18 +34,48 @@ node scripts/workflow-studio.mjs --help
 mkdir -p /tmp/workflow-studio-demo
 
 node scripts/workflow-studio.mjs import \
-  ../../security/security-auditor/SKILL.md \
+  ../background-implementer/SKILL.md \
   --out /tmp/workflow-studio-demo/workflow.json
 
 node scripts/workflow-studio.mjs studio \
   /tmp/workflow-studio-demo/workflow.json
 ```
 
-Open the printed loopback URL. Select a node in the SVG or keyboard-operable
-ordered outline, edit its title/body, add/remove/reorder steps or edges, and
-review the full Markdown diff. **Download IR** saves the edited workflow JSON;
-**Download Markdown draft** exports directly in the browser. The HTTP server
-has no file-write or agent-run endpoint.
+Open the printed loopback URL. The **Workflow** workspace keeps the interactive
+React Flow canvas, semantic outline, and selection inspector together:
+
+- select a step or dependency on the canvas or keyboard-operable outline;
+- edit the selected step or dependency in the inspector;
+- connect handles to add a sequence dependency, reconnect an existing edge, or
+  delete selected graph elements;
+- add/remove/reorder steps and create an outgoing dependency from the selected
+  step;
+- move nodes to organize the current view, fit or reset the local layout, and
+  undo/redo semantic edits; and
+- open **Review source** or **Review diff** in the side drawer without leaving
+  the graph.
+
+Canvas positions are view state and are not written into Workflow IR. **Download
+IR** saves the edited workflow JSON; **Download Markdown draft** exports
+directly in the browser. The HTTP server has no file-write or agent-run
+endpoint.
+
+To open Studio from another device on the same IPv4 network, bind explicitly
+to all interfaces:
+
+```bash
+node scripts/workflow-studio.mjs studio \
+  /tmp/workflow-studio-demo/workflow.json \
+  --host 0.0.0.0
+```
+
+Keep the printed port and token, but replace `0.0.0.0` with this machine's LAN
+address in the remote browser, for example
+`http://<LAN-IP>:PORT/?token=TOKEN`. The default remains loopback.
+`0.0.0.0` exposes the read-only Studio to reachable IPv4 networks, so keep the
+token URL private, use a trusted network/firewall, and stop the process when
+the review is finished. Never paste a real session token into documentation,
+issues, or chat logs.
 
 To export a downloaded edited IR through the no-overwrite CLI:
 
@@ -54,10 +86,10 @@ node scripts/workflow-studio.mjs export \
 ```
 
 Without semantic edits, the exported bytes are identical to the imported
-source. Portable V1 does not support in-place export because dependency-free
-Node cannot atomically replace a pathname only if its imported hash still
-matches. Always choose a new `--out` path; `--in-place` and an `--out` path
-that resolves to the imported source are explicitly refused.
+source. Portable V1 does not support in-place export because the Node runtime
+cannot atomically replace a pathname only if its imported hash still matches.
+Always choose a new `--out` path; `--in-place` and an `--out` path that resolves
+to the imported source are explicitly refused.
 
 ## Prompt → approved plan → native run → trace
 
@@ -98,9 +130,12 @@ Review the plan before approval. Approval binds the exact prompt and skill
 bytes, graph revision, canonical working directory, provider-specific safety
 profile, and fixed command. Any change invalidates it.
 
-The Plan view can edit those inputs. After an edit, approve and download that
-exact plan in the browser for `run`, or recreate the CLI plan with the corrected
-inputs and approve its new output. Do not run the pre-edit file.
+The Plan view can edit those inputs. **Browser review current plan** hashes the
+reviewed browser payload and marks it **Browser reviewed**; it does not grant
+native execution authority. Download that exact plan and pass it through
+`workflow-studio approve` for the separate **CLI approval required** gate, or
+recreate the CLI plan with the corrected inputs and approve its new output. Do
+not run the pre-edit file.
 
 `read-only` is the default. `workspace-write` must be selected explicitly.
 Codex maps these intents to its OS sandbox. Claude maps them to `plan` or
@@ -150,6 +185,30 @@ is reported instead of guessed.
 Artifacts use `ir_version: "1.0"` and `kind: workflow`, `plan`, or `trace`.
 Unknown major versions are rejected without writing.
 
+## Browser UI build and distribution
+
+The source island is `ui/graph-canvas.jsx`. Browser dependencies and the build
+tool are exact-pinned in the component-local `package.json` and
+`package-lock.json`: React Flow `12.11.2`, React/React DOM `19.2.8`, and esbuild
+`0.28.1`. To reproduce or change the checked-in browser bundle:
+
+```bash
+npm ci --ignore-scripts
+npm run build
+npm run check:generated
+```
+
+Run those commands from `agents/workflow-studio`. Commit both files in
+`assets/generated/` whenever their source or lockfile changes, and keep
+`THIRD_PARTY_NOTICES.md` synchronized with the production bundle. The local
+server serves only these checked-in JavaScript and CSS assets; it never fetches
+runtime code from a package registry or CDN.
+
+Repository copy installers intentionally omit directories named
+`node_modules`. The checked-in generated assets, source, lockfile, and notices
+are retained, so an installed copy can run offline without carrying the build
+dependency tree.
+
 ## Outputs and safety
 
 All artifact and draft destinations are explicit `--out` paths, except that
@@ -162,12 +221,14 @@ All artifact and draft destinations are explicit `--out` paths, except that
 - `export`: new, no-overwrite Markdown file
 - `promote`: new skill-draft directory
 
-The studio binds an ephemeral loopback port and serves bundled assets plus the
-selected in-memory artifact. Source-bearing reads require a random session
-token and validated `Host`; CORS, telemetry, write endpoints, and run endpoints
-are absent. The serialized UTF-8 artifact response has an explicit 32 MiB
+The studio binds an ephemeral loopback port by default. Explicit
+`--host 0.0.0.0` binds all IPv4 interfaces for LAN access and accepts only
+IPv4-literal `Host` headers on the selected port. It serves bundled assets plus
+the selected in-memory artifact. Source-bearing reads require a random session
+token; CORS, telemetry, write endpoints, and run endpoints are absent. The
+serialized UTF-8 artifact response has an explicit 32 MiB
 (33,554,432-byte) ceiling; this admits the canonical 30,000-node/29,999-edge
-fixture (26,145,304 bytes), while larger artifacts fail before the server
+fixture (26,145,305 bytes), while larger artifacts fail before the server
 listens. Browser exports are local client downloads.
 
 ## Limitations
@@ -178,9 +239,10 @@ listens. Browser exports are local client downloads.
   sequence edges. They do not expose hidden model reasoning or causal truth.
 - Provider event formats and safety behavior differ and can change. Raw unknown
   events are retained rather than silently normalized away.
-- To keep browser rendering bounded, per-edge endpoint controls are available
-  only while `steps × (edges + 1) ≤ 4096`. Above that budget, Studio keeps the
-  complete semantic edge list visible but read-only.
+- The interactive React Flow canvas is mounted only when the artifact has at
+  most 1,000 nodes and at most 1,000 edges. Above either limit it is not
+  mounted; the bounded fallback shows the first 100 step rows and first 100
+  dependency rows while full-artifact downloads remain available.
 - Only Codex CLI and Claude Code CLI adapters exist in V1.
 - No global install, remote execution, shared server, or managed orchestration.
 - V1 was tested on macOS with Node 26.5.0, Codex CLI 0.144.6, and Claude Code

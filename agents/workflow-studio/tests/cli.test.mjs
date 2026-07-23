@@ -234,13 +234,13 @@ test("real import, edit, diff, and export preserve a no-op byte-for-byte", async
   ]));
   const diff = success(await invoke(["diff", editedPath])).stdout;
   assert.match(diff, /^--- a\/SKILL\.md/mu);
-  assert.match(diff, /\+### Inspect request/u);
+  assert.match(diff, /\+### Step 1: Inspect request/u);
   assert.match(diff, /workflow-studio:v1/u);
 
   const editedExport = join(item.directory, "SKILL.edited.md");
   success(await invoke(["export", editedPath, "--out", editedExport]));
   const editedMarkdown = await readFile(editedExport, "utf8");
-  assert.match(editedMarkdown, /### Inspect request/u);
+  assert.match(editedMarkdown, /### Step 1: Inspect request/u);
   assert.match(editedMarkdown, /opaque: keep-me/u);
   assert.match(editedMarkdown, /Opaque text must survive\./u);
 });
@@ -886,12 +886,13 @@ test("missing, unknown, and unsafe arguments fail with JSON diagnostics", async 
   failure(await invoke(["import", "SKILL.md"]), "MISSING_OPTION");
   failure(await invoke(["diff", "missing.json", "--force", "yes"]), "UNKNOWN_OPTION");
   failure(
-    await invoke(["studio", "missing.json", "--host", "0.0.0.0"]),
+    await invoke(["studio", "missing.json", "--host", "192.168.32.55"]),
     "INVALID_HOST",
   );
   const help = success(await invoke(["--help"])).stdout;
   assert.match(help, /workflow-studio import SKILL --out IR/u);
   assert.match(help, /workflow-studio run APPROVED --trace TRACE/u);
+  assert.match(help, /0\.0\.0\.0/u);
   assert.doesNotMatch(help, /dangerously|bypass-approvals/u);
 });
 

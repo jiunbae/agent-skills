@@ -1,0 +1,17 @@
+{
+  "name": "@agt/workflow-studio-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-ui.mjs",
+    "build:ui": "node scripts/build-ui.mjs",
+    "check:generated": "node scripts/build-ui.mjs --check"
+  },
+  "devDependencies": {
+    "@xyflow/react": "12.11.2",
+    "esbuild": "0.28.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

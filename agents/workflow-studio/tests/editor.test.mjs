@@ -39,6 +39,7 @@ import {
   verifyPlanApproval,
 } from "../src/adapters.mjs";
 import {
+  applyOperation,
   importSkillBytes,
   renderWorkflow,
   validateArtifact,
@@ -243,7 +244,7 @@ test("mapped Unicode title/body edits patch only those byte spans", () => {
   state = editNode(state, "step-2", "body", "Build safely.");
   const candidate = buildCandidateMarkdown(state);
 
-  assert.match(candidate, /### 리서치/);
+  assert.match(candidate, /### Step 1: 리서치/);
   assert.match(candidate, /Build safely\./);
   assert.match(candidate, /Build safely\.\n## Appendix/);
   assert.match(candidate, /Opaque <script>alert\('xss'\)<\/script> content\./);
@@ -365,6 +366,133 @@ test("downloaded browser artifacts survive canonical validation and rendering", 
     renderWorkflow(structuralArtifact).toString(),
     /Opaque <script>alert\('xss'\)<\/script> content\./,
   );
+});
+
+test("real background implementer browser edits match core title, body, and edge contracts", async () => {
+  const sourcePath = "agents/background-implementer/SKILL.md";
+  const raw = await readFile(
+    new URL("../../background-implementer/SKILL.md", import.meta.url),
+  );
+  const workflow = importSkillBytes(raw, { sourcePath });
+  const [first] = workflow.graph.nodes;
+
+  let coreEdited = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: first.id,
+    title: "Decompose work into a task DAG",
+  });
+  coreEdited = applyOperation(coreEdited, {
+    type: "edit-node",
+    node_id: first.id,
+    body: first.body.replace(
+      "extract independent units",
+      "extract bounded independent units",
+    ),
+  });
+
+  let browserEdited = createEditorState(workflow);
+  assert.strictEqual(
+    editNode(browserEdited, first.id, "title", first.title),
+    browserEdited,
+    "semantic node no-ops stay clean",
+  );
+  browserEdited = editNode(
+    browserEdited,
+    first.id,
+    "title",
+    "Decompose work into a task DAG",
+  );
+  browserEdited = editNode(
+    browserEdited,
+    first.id,
+    "body",
+    first.body.replace(
+      "extract independent units",
+      "extract bounded independent units",
+    ),
+  );
+
+  const browserArtifact = buildWorkflowArtifact(browserEdited);
+  const browserBytes = Buffer.from(buildCandidateBytes(browserEdited));
+  assert.equal(canDownloadArtifact(browserEdited), true);
+  assert.equal(validateArtifact(browserArtifact), true);
+  assert.deepEqual(browserBytes, renderWorkflow(coreEdited));
+  assert.deepEqual(renderWorkflow(browserArtifact), browserBytes);
+  assert.match(browserBytes.toString("utf8"), /^## 1\. Decompose work into a task DAG$/mu);
+
+  const reimported = importSkillBytes(browserBytes, { sourcePath });
+  assert.equal(validateArtifact(reimported), true);
+  assert.equal(reimported.graph.nodes.length, 5);
+  assert.equal(reimported.graph.nodes[0].title, "Decompose work into a task DAG");
+  assert.match(reimported.graph.nodes[0].body, /bounded independent units/u);
+
+  const originalEdge = workflow.graph.edges[0];
+  const coreNoop = applyOperation(workflow, {
+    type: "add-edge",
+    from: originalEdge.from,
+    to: originalEdge.to,
+    kind: originalEdge.kind,
+  });
+  assert.deepEqual(coreNoop, workflow);
+
+  const initialBrowser = createEditorState(workflow);
+  assert.strictEqual(
+    addEdge(
+      initialBrowser,
+      originalEdge.from,
+      originalEdge.to,
+      originalEdge.kind,
+    ),
+    initialBrowser,
+    "same endpoint and kind is a semantic no-op",
+  );
+
+  const coreEdge = applyOperation(workflow, {
+    type: "add-edge",
+    from: originalEdge.from,
+    to: originalEdge.to,
+    kind: "parallel",
+  });
+  const browserEdge = addEdge(
+    initialBrowser,
+    originalEdge.from,
+    originalEdge.to,
+    "parallel",
+  );
+  const changedCoreEdge = coreEdge.graph.edges[0];
+  const changedBrowserEdge = browserEdge.edges[0];
+  assert.equal(changedBrowserEdge.id, originalEdge.id);
+  assert.deepEqual(
+    {
+      id: changedBrowserEdge.id,
+      from: changedBrowserEdge.from,
+      to: changedBrowserEdge.to,
+      kind: changedBrowserEdge.kind,
+      confidence: changedBrowserEdge.confidence,
+      provenance: changedBrowserEdge.provenance,
+    },
+    {
+      id: changedCoreEdge.id,
+      from: changedCoreEdge.from,
+      to: changedCoreEdge.to,
+      kind: changedCoreEdge.kind,
+      confidence: changedCoreEdge.confidence,
+      provenance: changedCoreEdge.provenance,
+    },
+  );
+  assert.equal(changedBrowserEdge.provenance, "managed");
+  assert.equal(changedBrowserEdge.confidence.level, "explicit");
+  assert.equal(changedBrowserEdge.confidence.rule_id, "managed.v1");
+
+  const browserEdgeArtifact = buildWorkflowArtifact(browserEdge);
+  assert.equal(validateArtifact(browserEdgeArtifact), true);
+  const browserEdgeBytes = Buffer.from(buildCandidateBytes(browserEdge));
+  assert.deepEqual(browserEdgeBytes, renderWorkflow(coreEdge));
+  const edgeReimport = importSkillBytes(browserEdgeBytes, { sourcePath });
+  assert.equal(edgeReimport.graph.edges[0].id, originalEdge.id);
+  assert.equal(edgeReimport.graph.edges[0].kind, "parallel");
+  assert.equal(edgeReimport.graph.edges[0].provenance, "managed");
+  assert.equal(edgeReimport.graph.edges[0].confidence.level, "explicit");
 });
 
 test("disjoint mapped regions reject structural UI edits and preserve opaque bytes", () => {
@@ -1132,12 +1260,17 @@ test("generic downloads are workflow-only and validate the exact built artifact"
 
 test("browser code keeps untrusted data out of HTML parsing sinks", async () => {
   const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  const graph = await readFile(
+    new URL("../ui/graph-canvas.jsx", ASSET_ROOT),
+    "utf8",
+  );
   const model = await readFile(new URL("editor-model.mjs", ASSET_ROOT), "utf8");
   assert.doesNotMatch(editor, /\.innerHTML\b/);
   assert.doesNotMatch(editor, /\.outerHTML\b/);
   assert.doesNotMatch(editor, /insertAdjacentHTML/);
+  assert.doesNotMatch(graph, /\.innerHTML\b/);
   assert.match(editor, /\.textContent\s*=/);
-  assert.match(editor, /createElementNS/);
+  assert.match(editor, /mountGraphCanvas/);
   assert.match(editor, /\/api\/artifact\?token=/);
   assert.doesNotMatch(editor, /fetch\(\s*["']https?:/);
   assert.doesNotMatch(
@@ -1145,25 +1278,26 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
     /state\.(?:dirty|structuralDirty)\s*=\s*false/,
     "downloading must not mark the in-memory candidate as saved",
   );
-  assert.match(editor, /downloadIr"\)\.disabled = !downloadAllowed/);
-  assert.match(editor, /downloadMarkdown"\)\.disabled = !downloadAllowed/);
+  assert.match(editor, /downloadIr"\)\.disabled = !downloadCache\.allowed/);
+  assert.match(editor, /downloadMarkdown"\)\.disabled = !downloadCache\.allowed/);
   assert.match(editor, /promotePlan"\)\.disabled =\s*!canPreparePlan \|\| !state\.validation\.valid/);
   assert.match(editor, /promoteTrace"\)\.disabled =\s*!isTrace \|\| !state\.nodes\.length \|\| !state\.validation\.valid/);
   assert.match(editor, /setStatus\(validationAnnouncement\(state\)\)/);
-  assert.match(editor, /applyChange\(fromSelect\.id\)/);
-  assert.match(editor, /applyChange\(toSelect\.id\)/);
-  assert.match(editor, /applyChange\(kindSelect\.id\)/);
   assert.match(editor, /const approvalSource = state/);
-  assert.match(editor, /acceptApprovalResult\(state, approvalSource, approved\)/);
+  assert.match(editor, /acceptApprovalResult\(state, approvalSource, reviewed\)/);
   assert.match(editor, /"addFirst"/);
-  assert.match(editor, /next\.selectedId \? `outline-\$\{next\.selectedId\}` : "addFirst"/);
+  assert.match(editor, /MAX_INTERACTIVE_NODES = 1_000/);
+  assert.match(editor, /MAX_INTERACTIVE_EDGES = 1_000/);
+  assert.match(editor, /MAX_FALLBACK_ROWS = 100/);
+  assert.match(editor, /HISTORY_LIMIT = 50/);
+  assert.match(editor, /history\.redo\.length = 0/);
+  assert.match(editor, /state = clearApproval\(cloneState\(snapshot\.state\)\)/);
+  assert.match(editor, /reviewReturnFocus/);
+  assert.match(editor, /approvalEpoch/);
   assert.match(editor, /traceSummaryMetrics\(state\)/);
   assert.match(editor, /`\$\{name\} \$\{unit\}`/);
-  assert.match(editor, /"Inferred order"/);
   assert.match(editor, /not causality/);
   assert.match(editor, /const controls = edgeControlPolicy\(state\)/);
-  assert.match(editor, /if \(!controls\.editable\)/);
-  assert.match(editor, /element\("edgeFrom"\)\.replaceChildren\(\)/);
   assert.match(editor, /const nodesById = new Map\(state\.nodes\.map/);
   assert.doesNotMatch(
     editor,
@@ -1174,10 +1308,15 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   assert.match(editor, /element\("planForm"\)\.hidden = !canPreparePlan/);
   assert.match(editor, /markApprovedPlanDownloaded\(state\)/);
   assert.match(editor, /markPromotedDraftDownloaded\(state\)/);
-  assert.match(
-    editor,
-    /mutate\(selectNode\(state, node\.id\), `outline-\$\{node\.id\}`\)/,
-  );
+  assert.match(graph, /onConnect/);
+  assert.match(graph, /onReconnect/);
+  assert.match(graph, /onEdgesDelete/);
+  assert.match(graph, /onNodesDelete/);
+  assert.match(graph, /onEdgesChange/);
+  assert.match(graph, /change\.type === "select" && change\.selected/);
+  assert.match(graph, /focusedFlowElement/);
+  assert.match(graph, /focus\(\{ preventScroll: true \}\)/);
+  assert.match(graph, /onlyRenderVisibleElements/);
   assert.match(model, /state\.kind === "workflow"/);
   assert.match(model, /artifact\.revision = \{/);
   assert.match(model, /artifact\.opaque_spans = opaqueCoverage\(state\)/);
@@ -1200,10 +1339,18 @@ test("static editor exposes semantic views, live status, and labeled controls", 
     "edgeKind",
     "edgeControlNotice",
     "viewGraph",
-    "viewSource",
-    "viewDiff",
     "viewPlan",
     "viewTrace",
+    "reviewDrawer",
+    "reviewSourcePanel",
+    "reviewDiffPanel",
+    "undoEdit",
+    "redoEdit",
+    "selectedEdgeFrom",
+    "selectedEdgeTo",
+    "selectedEdgeKind",
+    "removeSelectedEdge",
+    "largeGraphFallback",
     "statusMessage",
     "planNotice",
     "planPayloadPanel",
@@ -1216,22 +1363,27 @@ test("static editor exposes semantic views, live status, and labeled controls", 
   assert.match(html, /aria-live="polite"/);
   assert.match(html, /aria-atomic="true"/);
   assert.match(html, /<ol id="workflowOutline"/);
+  assert.match(html, /<details id="outlineDetails"/);
   assert.match(html, /<label for="nodeTitle">/);
   assert.match(html, /<label for="planPrompt">/);
-  assert.match(html, /type="button" class="primary">\s*Approve current plan/);
+  assert.match(html, /type="button" class="primary">\s*Browser review current plan/);
+  assert.match(html, /CLI approval required/);
   assert.match(html, /id="structuralEditNotice"/);
   assert.match(html, /id="addEdge"/);
   assert.match(html, /id="graphEyebrow"/);
-  assert.match(html, /id="edgeEyebrow"/);
   assert.match(html, />Add first step</);
+  assert.match(html, /rel="icon"\s+href="data:image\/svg\+xml/);
+  assert.match(html, /\/generated\/graph-canvas\.css/);
   assert.doesNotMatch(html, /structural browser edits remain in the/);
   assert.doesNotMatch(html, /<script(?! type="module" src="\/editor\.mjs")/);
 });
 
-test("component documentation states the finite browser edge-control budget", async () => {
-  const readme = await readFile(new URL("../README.md", ASSET_ROOT), "utf8");
-  assert.match(readme, /steps × \(edges \+ 1\) ≤ 4096/);
-  assert.match(readme, /complete semantic edge list visible but read-only/);
+test("browser canvas documents its bounded React Flow fallback", async () => {
+  const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  assert.match(editor, /MAX_INTERACTIVE_NODES = 1_000/);
+  assert.match(editor, /MAX_INTERACTIVE_EDGES = 1_000/);
+  assert.match(editor, /exceed the interactive.*canvas limit/);
+  assert.match(editor, /React Flow is not mounted/);
 });
 
 test("custom focus color exceeds 3:1 against adjacent editor surfaces", async () => {

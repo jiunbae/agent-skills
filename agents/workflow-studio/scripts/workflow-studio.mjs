@@ -31,7 +31,7 @@ Usage:
   workflow-studio edit IR --operation JSON|@file --out IR
   workflow-studio diff IR
   workflow-studio export IR --out PATH
-  workflow-studio studio SKILL|ARTIFACT [--host loopback|127.0.0.1|::1] [--port N]
+  workflow-studio studio SKILL|ARTIFACT [--host loopback|127.0.0.1|::1|0.0.0.0] [--port N]
   workflow-studio plan IR (--prompt TEXT | --prompt-file FILE) --agent codex|claude
                        --cwd DIR --safety read-only|workspace-write --out PLAN
   workflow-studio approve PLAN --out APPROVED
@@ -45,8 +45,10 @@ Notes:
   explicitly refused. Output files and promoted directories must not already
   exist. There is no force-overwrite, arbitrary argument passthrough, or
   permission-bypass mode.
-  "studio" serves a read-only loopback UI, prints its token URL, and stays open
-  until SIGINT or SIGTERM.
+  "studio" serves a local browser editor, prints its token URL, and stays open
+  until SIGINT or SIGTERM. Edits remain client-side until downloaded. The
+  default is loopback; explicit 0.0.0.0 exposes it to IPv4 networks, so keep
+  the token URL private.
 `;
 
 function cliError(code, message, details) {
@@ -410,10 +412,16 @@ async function readStudioArtifact(path) {
 
 function studioHost(value) {
   if (value === undefined || value === "loopback") return "127.0.0.1";
-  if (value === "127.0.0.1" || value === "::1") return value;
+  if (
+    value === "127.0.0.1" ||
+    value === "::1" ||
+    value === "0.0.0.0"
+  ) {
+    return value;
+  }
   throw cliError(
     "INVALID_HOST",
-    'Studio host must be "loopback", "127.0.0.1", or "::1".',
+    'Studio host must be "loopback", "127.0.0.1", "::1", or "0.0.0.0".',
   );
 }
 

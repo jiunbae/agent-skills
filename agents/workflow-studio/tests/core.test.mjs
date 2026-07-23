@@ -130,6 +130,63 @@ test("imports representative workflow skills deterministically and ignores fence
   validateArtifact(planner);
 });
 
+test("real background implementer mapped edits preserve numbered H2 tokens and opaque bytes", async () => {
+  const sourcePath = "agents/background-implementer/SKILL.md";
+  const raw = await readFile(join(ROOT, sourcePath));
+  const workflow = importSkillBytes(raw, { sourcePath });
+  assert.equal(workflow.graph.nodes.length, 5);
+  assert.equal(workflow.graph.edges.length, 4);
+
+  const first = workflow.graph.nodes[0];
+  assert.equal(
+    raw.subarray(
+      first.source_map.title.start_byte,
+      first.source_map.title.end_byte,
+    ).toString("utf8"),
+    "Decompose into a task DAG",
+  );
+  assert.equal(
+    raw.subarray(
+      first.source_map.title.start_byte - Buffer.byteLength("1. "),
+      first.source_map.title.start_byte,
+    ).toString("utf8"),
+    "1. ",
+  );
+
+  let edited = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: first.id,
+    title: "Decompose work into a task DAG",
+  });
+  edited = applyOperation(edited, {
+    type: "edit-node",
+    node_id: first.id,
+    body: first.body.replace(
+      "extract independent units",
+      "extract bounded independent units",
+    ),
+  });
+  assert.equal(validateArtifact(edited), true);
+
+  const rendered = renderWorkflow(edited);
+  assert.match(rendered.toString("utf8"), /^## 1\. Decompose work into a task DAG$/mu);
+  assert.match(rendered.toString("utf8"), /extract bounded independent units/u);
+  for (const span of workflow.opaque_spans) {
+    const opaque = raw.subarray(span.start_byte, span.end_byte);
+    assert.notEqual(
+      rendered.indexOf(opaque),
+      -1,
+      `opaque bytes ${span.start_byte}:${span.end_byte} must remain exact`,
+    );
+  }
+
+  const reimported = importSkillBytes(rendered, { sourcePath });
+  assert.equal(validateArtifact(reimported), true);
+  assert.equal(reimported.graph.nodes.length, 5);
+  assert.equal(reimported.graph.nodes[0].title, "Decompose work into a task DAG");
+  assert.match(reimported.graph.nodes[0].body, /bounded independent units/u);
+});
+
 test("no-op render is byte-identical for real, CRLF, unicode, and no-final-newline skills", async () => {
   for (const path of [
     "security/security-auditor/SKILL.md",
@@ -227,7 +284,7 @@ Keep body two.
   });
   const editedBytes = renderWorkflow(changed);
   const edited = editedBytes.toString("utf8");
-  assert.match(edited, /### Renamed/u);
+  assert.match(edited, /### Step 1: Renamed/u);
   assert.match(
     edited,
     /Edited body without a trailing newline\.\n### Step 2: Second/u,
@@ -469,7 +526,10 @@ Second body.
   const managedIds = edited.graph.nodes.map((node) => node.id);
   const rendered = renderWorkflow(edited).toString("utf8");
   const external = Buffer.from(
-    rendered.replace("### Renamed", "### Externally changed"),
+    rendered.replace(
+      "### Step 1: Renamed",
+      "### Step 1: Externally changed",
+    ),
   );
   const reimported = importSkillBytes(external, {
     sourcePath: "managed-conflict/SKILL.md",
@@ -577,7 +637,7 @@ Keep F sharp.
     title: "Renamed",
   });
   const mappedText = renderWorkflow(mapped).toString("utf8");
-  assert.match(mappedText, /###   Renamed\n/u);
+  assert.match(mappedText, /###   Step 1: Renamed\n/u);
   assert.doesNotMatch(mappedText, /Renamed(?:al|l)\n/u);
 
   const structural = applyOperation(workflow, {
@@ -1333,6 +1393,14 @@ B
   const duplicate = structuredClone(workflow);
   duplicate.graph.nodes[1].id = duplicate.graph.nodes[0].id;
   assert.throws(() => validateArtifact(duplicate), { code: "DUPLICATE_NODE" });
+
+  const duplicatePair = structuredClone(workflow);
+  duplicatePair.graph.edges.push({
+    ...structuredClone(duplicatePair.graph.edges[0]),
+    id: "duplicate-endpoint-pair",
+    kind: "parallel",
+  });
+  assert.throws(() => validateArtifact(duplicatePair), { code: "INVALID_EDGE" });
 
   assert.throws(
     () =>

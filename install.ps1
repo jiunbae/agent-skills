@@ -274,6 +274,30 @@ function List-Skills {
     }
 }
 
+function Copy-SkillTree {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    foreach ($item in Get-ChildItem -LiteralPath $Source -Force) {
+        if ($item.Name -eq 'node_modules') {
+            continue
+        }
+
+        $destinationItem = Join-Path $Destination $item.Name
+        if (
+            $item.PSIsContainer -and
+            -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+        ) {
+            Copy-SkillTree -Source $item.FullName -Destination $destinationItem
+        } else {
+            Copy-Item -LiteralPath $item.FullName -Destination $destinationItem -Force
+        }
+    }
+}
+
 function Install-Skill {
     param(
         [string]$Group,
@@ -313,7 +337,7 @@ function Install-Skill {
     }
 
     if ($CopyMode) {
-        Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Recurse -Force
+        Copy-SkillTree -Source $sourcePath -Destination $targetPath
         Write-Success "Copied ${Group}/${Skill} -> $targetName"
     } else {
         try {

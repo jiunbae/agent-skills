@@ -205,7 +205,7 @@ test("edited workflow plans record and deliver exact rendered Skill bytes", (t) 
 
   assert.deepEqual(recorded, rendered);
   assert.deepEqual(stdin.subarray(startOffset, endOffset), rendered);
-  assert.match(recorded.toString("utf8"), /### Reviewed candidate/u);
+  assert.match(recorded.toString("utf8"), /### Step 1: Reviewed candidate/u);
   assert.notDeepEqual(recorded, Buffer.from(workflow.source.raw_base64, "base64"));
 });
 
