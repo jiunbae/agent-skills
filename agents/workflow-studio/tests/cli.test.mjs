@@ -133,6 +133,16 @@ test("real import, edit, diff, and export preserve a no-op byte-for-byte", async
   const noOpExport = join(item.directory, "SKILL.no-op.md");
   success(await invoke(["export", importedPath, "--out", noOpExport]));
   assert.deepEqual(await readFile(noOpExport), item.bytes);
+  for (const sourceSpelling of [
+    item.skill,
+    join(item.directory, "not-created", "..", "SKILL.md"),
+  ]) {
+    failure(
+      await invoke(["export", importedPath, "--out", sourceSpelling]),
+      "IN_PLACE_REQUIRED",
+    );
+    assert.deepEqual(await readFile(item.skill), item.bytes);
+  }
 
   const imported = JSON.parse(await readFile(importedPath, "utf8"));
   const editedPath = join(item.directory, "edited.json");
@@ -181,6 +191,7 @@ test("plan approval is explicit and both approval and run reject mutation", asyn
     "--out",
     planPath,
   ]));
+  success(await invoke(["validate", planPath]));
   const plan = JSON.parse(await readFile(planPath, "utf8"));
   assert.equal(plan.approval, undefined);
 
@@ -305,10 +316,31 @@ test("run exits nonzero for missing and non-complete CLIs while preserving trace
     assert.equal(diagnostic.details.artifact, tracePath);
     const trace = JSON.parse(await readFile(tracePath, "utf8"));
     assert.equal(trace.status, itemCase.expectedStatus);
+    success(await invoke(["validate", tracePath]));
     if (itemCase.expectedFailure) {
       assert.equal(trace.failure.kind, itemCase.expectedFailure);
     }
   }
+});
+
+test("validate rejects bare plan, bare trace, and invalid workflow entries", async () => {
+  const item = await fixture();
+  for (const [name, artifact, expectedCode] of [
+    ["bare-plan.json", { ir_version: "1.0", kind: "plan" }, "INVALID_PLAN"],
+    ["bare-trace.json", { ir_version: "1.0", kind: "trace" }, "INVALID_TRACE"],
+  ]) {
+    const path = join(item.directory, name);
+    await writeFile(path, JSON.stringify(artifact));
+    failure(await invoke(["validate", path]), expectedCode);
+  }
+
+  const workflowPath = join(item.directory, "workflow.json");
+  success(await invoke(["import", item.skill, "--out", workflowPath]));
+  const workflow = JSON.parse(await readFile(workflowPath, "utf8"));
+  workflow.graph.entry_node_ids = ["missing"];
+  const invalidEntryPath = join(item.directory, "invalid-entry.json");
+  await writeFile(invalidEntryPath, JSON.stringify(workflow));
+  failure(await invoke(["validate", invalidEntryPath]), "INVALID_ENTRY_NODES");
 });
 
 test("run reserves the trace output before invoking the native agent", async () => {

@@ -24,6 +24,7 @@ const CONFIDENCE_LEVELS = new Set([
   "heuristic",
   "unknown",
 ]);
+const MAX_MANAGED_ITEMS = 1_000;
 
 function workflowError(code, message, details) {
   const error = new Error(message);
@@ -184,36 +185,67 @@ function parseFrontmatter(lines, diagnostics) {
   return { endByte: lines[closing].end, values };
 }
 
+function advanceFence(fence, text) {
+  if (fence) {
+    const closing = text.match(/^ {0,3}(`+|~+)[ \t]*$/u);
+    if (
+      closing &&
+      closing[1][0] === fence.char &&
+      closing[1].length >= fence.length
+    ) {
+      return { fence: null, boundary: "close" };
+    }
+    return { fence, boundary: null };
+  }
+  const opening = text.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+  if (
+    !opening ||
+    (opening[1][0] === "`" && opening[2].includes("`"))
+  ) {
+    return { fence: null, boundary: null };
+  }
+  return {
+    fence: { char: opening[1][0], length: opening[1].length },
+    boundary: "open",
+  };
+}
+
+function atxHeading(line) {
+  const match = line.text.match(/^(#{2,6})([ \t]+)(.*)$/u);
+  if (!match) return null;
+  const withoutClosing = match[3].replace(/[ \t]+#+[ \t]*$/u, "");
+  const title = withoutClosing.replace(/[ \t]+$/u, "");
+  if (title.length === 0) return null;
+  const prefixBytes = Buffer.byteLength(`${match[1]}${match[2]}`, "utf8");
+  const titleBytes = Buffer.byteLength(title, "utf8");
+  return {
+    level: match[1].length,
+    text: title,
+    start: line.start,
+    headingEnd: line.contentEnd,
+    titleStart: line.start + prefixBytes,
+    titleEnd: line.start + prefixBytes + titleBytes,
+    bodyStart: line.end,
+  };
+}
+
 function scanHeadings(lines, frontmatterEnd) {
   const headings = [];
   let fence = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (line.start < frontmatterEnd) continue;
-    const fenceMatch = line.text.match(/^ {0,3}(`{3,}|~{3,})/u);
-    if (fenceMatch) {
-      const token = fenceMatch[1];
-      if (!fence) {
-        fence = { char: token[0], length: token.length };
-      } else if (token[0] === fence.char && token.length >= fence.length) {
-        fence = null;
-      }
+    const transition = advanceFence(fence, line.text);
+    if (transition.boundary) {
+      fence = transition.fence;
       continue;
     }
     if (fence) continue;
-    const match = line.text.match(/^(#{2,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/u);
-    if (!match) continue;
-    const prefixBytes = Buffer.byteLength(`${match[1]} `, "utf8");
-    const titleBytes = Buffer.byteLength(match[2], "utf8");
+    const heading = atxHeading(line);
+    if (!heading) continue;
     headings.push({
+      ...heading,
       lineIndex: index,
-      level: match[1].length,
-      text: match[2],
-      start: line.start,
-      headingEnd: line.contentEnd,
-      titleStart: line.start + prefixBytes,
-      titleEnd: line.start + prefixBytes + titleBytes,
-      bodyStart: line.end,
     });
   }
   return headings;
@@ -225,15 +257,13 @@ function fencedByteRanges(lines, frontmatterEnd) {
   let rangeStart = null;
   for (const line of lines) {
     if (line.start < frontmatterEnd) continue;
-    const fenceMatch = line.text.match(/^ {0,3}(`{3,}|~{3,})/u);
-    if (!fenceMatch) continue;
-    const token = fenceMatch[1];
-    if (!fence) {
-      fence = { char: token[0], length: token.length };
+    const transition = advanceFence(fence, line.text);
+    if (transition.boundary === "open") {
+      fence = transition.fence;
       rangeStart = line.start;
-    } else if (token[0] === fence.char && token.length >= fence.length) {
+    } else if (transition.boundary === "close") {
       ranges.push({ start_byte: rangeStart, end_byte: line.end });
-      fence = null;
+      fence = transition.fence;
       rangeStart = null;
     }
   }
@@ -420,21 +450,101 @@ function titleFingerprint(title) {
   return sha256(Buffer.from(title, "utf8"));
 }
 
-function applyManagedGraph(nodes, edges, managed, diagnostics) {
-  const payload = managed?.payload;
-  if (!payload || payload.ir_version !== IR_VERSION) return { nodes, edges };
-  const managedNodes = Array.isArray(payload.nodes)
+function managedPayloadGraph(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  if (payload.ir_version !== IR_VERSION) return null;
+  const nodes = Array.isArray(payload.nodes)
     ? payload.nodes
     : Array.isArray(payload.graph?.nodes)
       ? payload.graph.nodes
       : null;
-  const managedEdges = Array.isArray(payload.edges)
+  const edges = Array.isArray(payload.edges)
     ? payload.edges
     : Array.isArray(payload.graph?.edges)
       ? payload.graph.edges
       : null;
+  if (
+    !nodes ||
+    !edges ||
+    nodes.length > MAX_MANAGED_ITEMS ||
+    edges.length > MAX_MANAGED_ITEMS
+  ) {
+    return null;
+  }
+  const ids = new Set();
+  const orders = new Set();
+  for (const node of nodes) {
+    if (
+      !node ||
+      typeof node !== "object" ||
+      Array.isArray(node) ||
+      typeof node.id !== "string" ||
+      node.id.length === 0 ||
+      node.id.length > 4096 ||
+      !Number.isInteger(node.order) ||
+      node.order < 0 ||
+      node.order >= nodes.length ||
+      typeof node.title_sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(node.title_sha256) ||
+      ids.has(node.id) ||
+      orders.has(node.order)
+    ) {
+      return null;
+    }
+    ids.add(node.id);
+    orders.add(node.order);
+  }
+  if (nodes.some((node, index) => node.order !== index)) return null;
+  const edgeIds = new Set();
+  for (const edge of edges) {
+    if (
+      !edge ||
+      typeof edge !== "object" ||
+      Array.isArray(edge) ||
+      typeof edge.id !== "string" ||
+      edge.id.length === 0 ||
+      edge.id.length > 4096 ||
+      typeof edge.from !== "string" ||
+      typeof edge.to !== "string" ||
+      !ids.has(edge.from) ||
+      !ids.has(edge.to) ||
+      edge.from === edge.to ||
+      !EDGE_KINDS.has(edge.kind) ||
+      edgeIds.has(edge.id)
+    ) {
+      return null;
+    }
+    edgeIds.add(edge.id);
+  }
+  if (
+    hasCycle(
+      nodes.map((node) => ({ id: node.id })),
+      edges,
+    )
+  ) {
+    return null;
+  }
+  return { nodes, edges };
+}
+
+function applyManagedGraph(nodes, edges, managed, diagnostics) {
+  const payload = managed?.payload;
+  if (!managed) return { nodes, edges };
+  const graph = managedPayloadGraph(payload);
+  if (!graph) {
+    diagnostics.push({
+      severity: "error",
+      code: "managed.invalid",
+      message: "Workflow Studio metadata has an invalid graph and was ignored.",
+    });
+    return { nodes, edges };
+  }
+  const managedNodes = graph.nodes;
+  const managedEdges = graph.edges;
   const structureMatches =
-    managedNodes?.length === nodes.length &&
+    managedNodes.length === nodes.length &&
     managedNodes.every(
       (managedNode, index) =>
         managedNode?.order === index &&
@@ -459,28 +569,31 @@ function applyManagedGraph(nodes, edges, managed, diagnostics) {
     provenance: "managed",
   }));
   const ids = new Set(replaced.map((node) => node.id));
-  const restoredEdges = managedEdges
-    ? managedEdges
-        .filter(
-          (edge) =>
-            ids.has(edge.from) &&
-            ids.has(edge.to) &&
-            EDGE_KINDS.has(edge.kind ?? "sequence"),
-        )
-        .map((edge, index) => ({
-          id: String(edge.id ?? `edge-managed-${index + 1}`),
-          from: edge.from,
-          to: edge.to,
-          kind: edge.kind ?? "sequence",
-          confidence: confidence(
-            "explicit",
-            "managed.v1",
-            "Edge restored from Workflow Studio metadata.",
-          ),
-          provenance: "managed",
-          editable: true,
-        }))
-    : edges;
+  const restoredEdges = managedEdges.map((edge) => ({
+    id: edge.id,
+    from: edge.from,
+    to: edge.to,
+    kind: edge.kind,
+    confidence: confidence(
+      "explicit",
+      "managed.v1",
+      "Edge restored from Workflow Studio metadata.",
+    ),
+    provenance: "managed",
+    editable: true,
+  }));
+  if (
+    restoredEdges.some(
+      (edge) => !ids.has(edge.from) || !ids.has(edge.to),
+    )
+  ) {
+    diagnostics.push({
+      severity: "error",
+      code: "managed.invalid",
+      message: "Workflow Studio metadata has invalid edge endpoints and was ignored.",
+    });
+    return { nodes, edges };
+  }
   return { nodes: replaced, edges: restoredEdges };
 }
 
@@ -680,6 +793,116 @@ function sameByteRange(left, right) {
   );
 }
 
+function plainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function requireText(value, label, code = "INVALID_ARTIFACT") {
+  if (typeof value !== "string" || value.length === 0) {
+    throw workflowError(code, `${label} must be non-empty text.`);
+  }
+  return value;
+}
+
+function requireSha256(value, label, code = "INVALID_ARTIFACT") {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+    throw workflowError(code, `${label} must be a lowercase SHA-256 digest.`);
+  }
+  return value;
+}
+
+function validateStepTitle(value, label = "node title") {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value !== value.trim() ||
+    /[\r\n]/u.test(value)
+  ) {
+    throw workflowError(
+      "INVALID_TITLE",
+      `${label} must be non-empty single-line text without surrounding whitespace.`,
+    );
+  }
+}
+
+function validateConfidence(value, label) {
+  if (
+    !plainRecord(value) ||
+    !CONFIDENCE_LEVELS.has(value.level) ||
+    typeof value.rule_id !== "string" ||
+    value.rule_id.length === 0 ||
+    typeof value.reason !== "string" ||
+    value.reason.length === 0
+  ) {
+    throw workflowError("INVALID_CONFIDENCE", `Invalid confidence on ${label}.`);
+  }
+}
+
+function validateByteRecord(record, label, code) {
+  if (
+    !plainRecord(record) ||
+    record.encoding !== "base64" ||
+    !Number.isInteger(record.byte_length) ||
+    record.byte_length < 0
+  ) {
+    throw workflowError(code, `${label} byte record is invalid.`);
+  }
+  const encoded = record.bytes_base64;
+  if (typeof encoded !== "string") {
+    throw workflowError(code, `${label}.bytes_base64 is required.`);
+  }
+  const compact = encoded.replace(/\s+/gu, "");
+  if (
+    compact.length % 4 === 1 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/u.test(compact)
+  ) {
+    throw workflowError(code, `${label}.bytes_base64 is invalid.`);
+  }
+  const bytes = Buffer.from(compact, "base64");
+  if (
+    bytes.toString("base64").replace(/=+$/u, "") !==
+    compact.replace(/=+$/u, "")
+  ) {
+    throw workflowError(code, `${label}.bytes_base64 is invalid.`);
+  }
+  if (
+    bytes.length !== record.byte_length ||
+    record.sha256 !== sha256(bytes)
+  ) {
+    throw workflowError(code, `${label} bytes, length, or digest do not match.`);
+  }
+  return bytes;
+}
+
+function validateSafetyProfile(agent, safety, code) {
+  if (
+    !plainRecord(safety) ||
+    !["read-only", "workspace-write"].includes(safety.intent) ||
+    safety.provider !== agent
+  ) {
+    throw workflowError(code, "Provider safety profile is invalid.");
+  }
+  if (agent === "codex") {
+    const expectedSandbox =
+      safety.intent === "read-only" ? "read-only" : "workspace-write";
+    if (
+      safety.boundary !== "os-sandbox" ||
+      safety.sandbox !== expectedSandbox
+    ) {
+      throw workflowError(code, "Codex safety profile is invalid.");
+    }
+  } else {
+    const expectedMode =
+      safety.intent === "read-only" ? "plan" : "acceptEdits";
+    if (
+      safety.boundary !== "tool-permission-policy-not-os-sandbox" ||
+      safety.permission_mode !== expectedMode
+    ) {
+      throw workflowError(code, "Claude safety profile is invalid.");
+    }
+  }
+}
+
 function validateMappedSources(bytes, nodes) {
   const trusted = scanWorkflowCandidates(bytes).candidates.map(candidateSourceMap);
   const used = new Set();
@@ -707,6 +930,24 @@ function validateMappedSources(bytes, nodes) {
 }
 
 function validateWorkflow(artifact) {
+  if (!plainRecord(artifact.source)) {
+    throw workflowError("INVALID_ARTIFACT", "workflow.source is required.");
+  }
+  requireText(artifact.artifact_id, "workflow.artifact_id");
+  requireText(artifact.source.path, "workflow.source.path");
+  requireSha256(artifact.source.sha256, "workflow.source.sha256");
+  if (
+    !Number.isInteger(artifact.source.byte_length) ||
+    artifact.source.byte_length < 0 ||
+    artifact.source.encoding !== "utf-8" ||
+    !["lf", "crlf", "mixed"].includes(artifact.source.newline) ||
+    typeof artifact.source.final_newline !== "boolean"
+  ) {
+    throw workflowError(
+      "INVALID_ARTIFACT",
+      "Workflow source metadata is incomplete or invalid.",
+    );
+  }
   const bytes = sourceBytes(artifact);
   if (sha256(bytes) !== artifact.source.sha256) {
     throw workflowError(
@@ -722,21 +963,35 @@ function validateWorkflow(artifact) {
   }
   const nodes = artifact.graph?.nodes;
   const edges = artifact.graph?.edges;
-  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+  const entries = artifact.graph?.entry_node_ids;
+  if (!Array.isArray(nodes) || !Array.isArray(edges) || !Array.isArray(entries)) {
     throw workflowError("INVALID_GRAPH", "graph nodes and edges are required.");
   }
   const ids = new Set();
   for (const node of nodes) {
-    if (!node || node.kind !== "step" || typeof node.id !== "string") {
+    if (
+      !plainRecord(node) ||
+      node.kind !== "step" ||
+      typeof node.id !== "string" ||
+      node.id.length === 0
+    ) {
       throw workflowError("INVALID_NODE", "Every node must be a named step.");
     }
     if (ids.has(node.id)) {
       throw workflowError("DUPLICATE_NODE", `Duplicate node id: ${node.id}`);
     }
     ids.add(node.id);
-    if (!CONFIDENCE_LEVELS.has(node.confidence?.level)) {
-      throw workflowError("INVALID_CONFIDENCE", `Invalid confidence on ${node.id}`);
+    validateStepTitle(node.title, `title on ${node.id}`);
+    if (typeof node.body !== "string") {
+      throw workflowError("INVALID_NODE", `Body on ${node.id} must be text.`);
     }
+    if (node.source_map !== null && !plainRecord(node.source_map)) {
+      throw workflowError(
+        "INVALID_NODE",
+        `Source mapping on ${node.id} must be an object or null.`,
+      );
+    }
+    validateConfidence(node.confidence, node.id);
   }
   const edgeIds = new Set();
   for (const edge of edges) {
@@ -752,9 +1007,26 @@ function validateWorkflow(artifact) {
       throw workflowError("INVALID_EDGE", `Invalid graph edge: ${edge?.id ?? "?"}`);
     }
     edgeIds.add(edge.id);
+    validateConfidence(edge.confidence, edge.id);
   }
   if (hasCycle(nodes, edges)) {
     throw workflowError("GRAPH_CYCLE", "Workflow graph must be acyclic.");
+  }
+  const expectedEntries = entryIds(nodes, edges);
+  if (
+    entries.length !== expectedEntries.length ||
+    new Set(entries).size !== entries.length ||
+    entries.some(
+      (entry, index) =>
+        typeof entry !== "string" ||
+        !ids.has(entry) ||
+        entry !== expectedEntries[index],
+    )
+  ) {
+    throw workflowError(
+      "INVALID_ENTRY_NODES",
+      "graph.entry_node_ids must exactly identify every node without inbound edges.",
+    );
   }
   validateMappedSources(bytes, nodes);
   if (!Array.isArray(artifact.opaque_spans)) {
@@ -776,6 +1048,9 @@ function validateWorkflow(artifact) {
         "OPAQUE_HASH_MISMATCH",
         "Opaque span hash does not match the authoritative source bytes.",
       );
+    }
+    if (typeof span.reason !== "string" || span.reason.length === 0) {
+      throw workflowError("INVALID_COVERAGE", "Opaque span reason is required.");
     }
   }
   const coverage = [];
@@ -806,6 +1081,247 @@ function validateWorkflow(artifact) {
       "Mapped and opaque byte spans do not cover the complete source.",
     );
   }
+  if (
+    !Array.isArray(artifact.diagnostics) ||
+    !plainRecord(artifact.revision) ||
+    artifact.revision.original_sha256 !== artifact.source.sha256 ||
+    typeof artifact.revision.dirty !== "boolean" ||
+    typeof artifact.revision.structural_dirty !== "boolean"
+  ) {
+    throw workflowError(
+      "INVALID_REVISION",
+      "Workflow diagnostics and revision metadata are required.",
+    );
+  }
+  requireSha256(
+    artifact.revision.current_sha256,
+    "workflow.revision.current_sha256",
+    "INVALID_REVISION",
+  );
+  if (!artifact.revision.dirty) {
+    if (
+      artifact.revision.structural_dirty ||
+      artifact.revision.current_sha256 !== artifact.source.sha256
+    ) {
+      throw workflowError(
+        "INVALID_REVISION",
+        "A clean workflow revision must match its source snapshot.",
+      );
+    }
+  } else {
+    const hashable = clone(artifact);
+    delete hashable.revision.current_sha256;
+    if (artifact.revision.current_sha256 !== artifactHash(hashable)) {
+      throw workflowError(
+        "INVALID_REVISION",
+        "Dirty workflow revision digest does not match the artifact.",
+      );
+    }
+  }
+  return true;
+}
+
+function validatePlan(artifact) {
+  const code = "INVALID_PLAN";
+  if (!["codex", "claude"].includes(artifact.agent)) {
+    throw workflowError(code, "Plan agent must be codex or claude.");
+  }
+  requireText(artifact.cwd, "plan.cwd", code);
+  validateSafetyProfile(artifact.agent, artifact.safety, code);
+  if (!plainRecord(artifact.workflow) || artifact.workflow.kind !== "workflow") {
+    throw workflowError(code, "Plan workflow snapshot is required.");
+  }
+  validateVersion(artifact.workflow);
+  validateWorkflow(artifact.workflow);
+  if (artifact.workflow_revision !== artifactHash(artifact.workflow)) {
+    throw workflowError(
+      code,
+      "Plan workflow_revision does not match its workflow snapshot.",
+    );
+  }
+  validateByteRecord(artifact.prompt, "plan.prompt", code);
+  validateByteRecord(artifact.skill, "plan.skill", code);
+  if (
+    artifact.skill.delivery !== "prompt-context" ||
+    !(
+      artifact.skill.source_path === null ||
+      typeof artifact.skill.source_path === "string"
+    )
+  ) {
+    throw workflowError(code, "Plan Skill delivery metadata is invalid.");
+  }
+  if (
+    artifact.execution_mode !== "native-cli-prompt-context" ||
+    !Array.isArray(artifact.warnings) ||
+    artifact.warnings.some((warning) => typeof warning !== "string")
+  ) {
+    throw workflowError(code, "Plan execution metadata is invalid.");
+  }
+  const expectedArgv =
+    artifact.agent === "codex"
+      ? [
+          "exec",
+          "--json",
+          "--ephemeral",
+          "--sandbox",
+          artifact.safety.sandbox,
+          "-C",
+          artifact.cwd,
+          "-",
+        ]
+      : [
+          "-p",
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--no-session-persistence",
+          "--permission-mode",
+          artifact.safety.permission_mode,
+        ];
+  const command = artifact.command;
+  if (
+    !plainRecord(command) ||
+    command.executable !== artifact.agent ||
+    command.stdin !== "approved-prompt-context" ||
+    command.shell !== false ||
+    stableStringify(command.argv) !== stableStringify(expectedArgv)
+  ) {
+    throw workflowError(code, "Plan command is not the fixed safe adapter command.");
+  }
+  if (artifact.approval !== undefined) {
+    const semantics = {
+      algorithm: "sha256",
+      scope: "exact-native-run-envelope",
+      statement: "plan approved for native execution; graph not enforced",
+    };
+    const approval = artifact.approval;
+    if (
+      !plainRecord(approval) ||
+      approval.algorithm !== semantics.algorithm ||
+      approval.scope !== semantics.scope ||
+      approval.statement !== semantics.statement
+    ) {
+      throw workflowError(code, "Plan approval metadata is invalid.");
+    }
+    requireSha256(approval.digest, "plan.approval.digest", code);
+  }
+  return true;
+}
+
+function validateTrace(artifact) {
+  const code = "INVALID_TRACE";
+  requireText(artifact.run_id, "trace.run_id", code);
+  requireSha256(artifact.plan_hash, "trace.plan_hash", code);
+  requireSha256(
+    artifact.workflow_revision,
+    "trace.workflow_revision",
+    code,
+  );
+  if (!["codex", "claude"].includes(artifact.agent)) {
+    throw workflowError(code, "Trace agent must be codex or claude.");
+  }
+  requireText(artifact.cwd, "trace.cwd", code);
+  validateSafetyProfile(artifact.agent, artifact.safety, code);
+  if (
+    !plainRecord(artifact.adapter) ||
+    typeof artifact.adapter.executable !== "string" ||
+    artifact.adapter.executable.length === 0 ||
+    !(
+      artifact.adapter.version === null ||
+      typeof artifact.adapter.version === "string"
+    )
+  ) {
+    throw workflowError(code, "Trace adapter metadata is invalid.");
+  }
+  if (
+    !Array.isArray(artifact.events) ||
+    !Array.isArray(artifact.inferred_edges) ||
+    !Array.isArray(artifact.diagnostics)
+  ) {
+    throw workflowError(code, "Trace events, edges, and diagnostics are required.");
+  }
+  const sequences = new Set();
+  for (const event of artifact.events) {
+    if (
+      !plainRecord(event) ||
+      !Number.isInteger(event.sequence) ||
+      event.sequence < 0 ||
+      sequences.has(event.sequence) ||
+      event.provider !== artifact.agent ||
+      typeof event.kind !== "string" ||
+      event.kind.length === 0 ||
+      typeof event.status !== "string" ||
+      event.status.length === 0 ||
+      event.provenance !== "observed" ||
+      !plainRecord(event.source) ||
+      typeof event.summary !== "string"
+    ) {
+      throw workflowError(code, "Trace contains an invalid observed event.");
+    }
+    sequences.add(event.sequence);
+  }
+  for (const edge of artifact.inferred_edges) {
+    if (
+      !plainRecord(edge) ||
+      !Number.isInteger(edge.from_sequence) ||
+      !Number.isInteger(edge.to_sequence) ||
+      !sequences.has(edge.from_sequence) ||
+      !sequences.has(edge.to_sequence) ||
+      edge.from_sequence >= edge.to_sequence ||
+      edge.kind !== "sequence" ||
+      edge.provenance !== "inferred" ||
+      typeof edge.confidence !== "number" ||
+      edge.confidence < 0 ||
+      edge.confidence > 1
+    ) {
+      throw workflowError(code, "Trace contains an invalid inferred edge.");
+    }
+  }
+  const processRecord = artifact.process;
+  if (
+    !plainRecord(processRecord) ||
+    !(
+      processRecord.exit_code === null ||
+      Number.isInteger(processRecord.exit_code)
+    ) ||
+    !(
+      processRecord.signal === null ||
+      typeof processRecord.signal === "string"
+    ) ||
+    typeof processRecord.stderr !== "string" ||
+    !Number.isInteger(processRecord.stderr_bytes) ||
+    processRecord.stderr_bytes < 0 ||
+    !Number.isInteger(processRecord.stdout_bytes) ||
+    processRecord.stdout_bytes < 0
+  ) {
+    throw workflowError(code, "Trace process evidence is invalid.");
+  }
+  if (
+    !["completed", "failed", "cancelled", "protocol-error", "truncated"].includes(
+      artifact.status,
+    ) ||
+    !["complete", "partial"].includes(artifact.completeness) ||
+    (artifact.status === "completed" && artifact.completeness !== "complete") ||
+    (artifact.status !== "completed" && artifact.completeness !== "partial")
+  ) {
+    throw workflowError(code, "Trace terminal status is invalid.");
+  }
+  if (
+    !plainRecord(artifact.provenance) ||
+    artifact.provenance.events !== "observed" ||
+    artifact.provenance.sequence_edges !== "inferred" ||
+    artifact.provenance.hidden_reasoning_recovered !== false
+  ) {
+    throw workflowError(code, "Trace provenance is invalid.");
+  }
+  if (
+    artifact.status !== "completed" &&
+    (!plainRecord(artifact.failure) ||
+      typeof artifact.failure.kind !== "string" ||
+      artifact.failure.kind.length === 0)
+  ) {
+    throw workflowError(code, "A non-complete trace requires failure evidence.");
+  }
   return true;
 }
 
@@ -816,7 +1332,8 @@ export function validateArtifact(artifact) {
     throw workflowError("INVALID_ARTIFACT", `Unknown artifact kind: ${artifact.kind}`);
   }
   if (artifact.kind === "workflow") return validateWorkflow(artifact);
-  return true;
+  if (artifact.kind === "plan") return validatePlan(artifact);
+  return validateTrace(artifact);
 }
 
 function nextNodeId(workflow) {
@@ -833,6 +1350,25 @@ function nextEdgeId(workflow, from, to) {
   let index = 2;
   while (used.has(`${base}-${index}`)) index += 1;
   return `${base}-${index}`;
+}
+
+function assertContiguousStructuralSource(workflow) {
+  const spans = scanWorkflowCandidates(sourceBytes(workflow))
+    .candidates.map(candidateSourceMap)
+    .map((mapping) => mapping.span)
+    .sort((left, right) => left.start_byte - right.start_byte);
+  for (let index = 1; index < spans.length; index += 1) {
+    if (spans[index].start_byte > spans[index - 1].end_byte) {
+      throw workflowError(
+        "DISJOINT_SOURCE_REGIONS",
+        "Structural edits across separate mapped Markdown regions are read-only in V1.",
+        {
+          left_end_byte: spans[index - 1].end_byte,
+          right_start_byte: spans[index].start_byte,
+        },
+      );
+    }
+  }
 }
 
 function refreshed(workflow, structural) {
@@ -875,6 +1411,9 @@ export function applyOperation(input, operation) {
           if (typeof operation[field] !== "string") {
             throw workflowError("INVALID_OPERATION", `${field} must be text.`);
           }
+          if (field === "title") {
+            validateStepTitle(operation[field], "title");
+          }
           nodes[index][field] = operation[field];
         }
       }
@@ -887,11 +1426,17 @@ export function applyOperation(input, operation) {
       if (operation.reference_id && reference < 0) {
         throw workflowError("NODE_NOT_FOUND", operation.reference_id);
       }
+      assertContiguousStructuralSource(input);
+      const title = operation.title ?? "New step";
+      if (typeof title !== "string") {
+        throw workflowError("INVALID_OPERATION", "title must be text.");
+      }
+      validateStepTitle(title, "title");
       const position = operation.position === "before" ? reference : reference + 1;
       nodes.splice(Math.max(0, position), 0, {
         id: operation.id ?? nextNodeId(workflow),
         kind: "step",
-        title: String(operation.title ?? "New step"),
+        title,
         body: String(operation.body ?? ""),
         mode: "sequence",
         order: 0,
@@ -909,6 +1454,7 @@ export function applyOperation(input, operation) {
     }
     case "delete-node": {
       if (index < 0) throw workflowError("NODE_NOT_FOUND", operation.node_id);
+      assertContiguousStructuralSource(input);
       nodes.splice(index, 1);
       workflow.graph.edges = edges.filter(
         (edge) => edge.from !== operation.node_id && edge.to !== operation.node_id,
@@ -919,6 +1465,7 @@ export function applyOperation(input, operation) {
       if (index < 0) throw workflowError("NODE_NOT_FOUND", operation.node_id);
       const target = operation.direction === "up" ? index - 1 : index + 1;
       if (target < 0 || target >= nodes.length) return workflow;
+      assertContiguousStructuralSource(input);
       const [node] = nodes.splice(index, 1);
       nodes.splice(target, 0, node);
       return refreshed(workflow, true);
@@ -930,6 +1477,7 @@ export function applyOperation(input, operation) {
       if (!nodes.some((node) => node.id === operation.to)) {
         throw workflowError("NODE_NOT_FOUND", operation.to);
       }
+      assertContiguousStructuralSource(input);
       const kind = operation.kind ?? "sequence";
       workflow.graph.edges.push({
         id: operation.id ?? nextEdgeId(workflow, operation.from, operation.to),
@@ -952,11 +1500,13 @@ export function applyOperation(input, operation) {
       if (workflow.graph.edges.length === before) {
         throw workflowError("EDGE_NOT_FOUND", operation.edge_id);
       }
+      assertContiguousStructuralSource(input);
       return refreshed(workflow, true);
     }
     case "change-edge": {
       const edge = edges.find((item) => item.id === operation.edge_id);
       if (!edge) throw workflowError("EDGE_NOT_FOUND", operation.edge_id);
+      assertContiguousStructuralSource(input);
       for (const field of ["from", "to", "kind"]) {
         if (operation[field] !== undefined) edge[field] = operation[field];
       }
@@ -1003,10 +1553,24 @@ function bytePatches(workflow) {
       });
     }
     if (node.body !== originalNode.body) {
+      let bodyBytes = Buffer.from(node.body, "utf8");
+      if (
+        node.source_map.body.end_byte < original.length &&
+        bodyBytes.length > 0 &&
+        bodyBytes.at(-1) !== 0x0a
+      ) {
+        bodyBytes = Buffer.concat([
+          bodyBytes,
+          Buffer.from(
+            workflow.source.newline === "crlf" ? "\r\n" : "\n",
+            "utf8",
+          ),
+        ]);
+      }
       patches.push({
         start: node.source_map.body.start_byte,
         end: node.source_map.body.end_byte,
-        bytes: Buffer.from(node.body, "utf8"),
+        bytes: bodyBytes,
       });
     }
   }
@@ -1120,6 +1684,7 @@ export function renderWorkflow(workflow) {
   if (!dirty) return Buffer.from(original);
   let candidate;
   if (structuralDirty) {
+    assertContiguousStructuralSource(workflow);
     candidate = canonicalManagedRender(workflow, original);
   } else {
     candidate = applyPatches(original, bytePatches(workflow));
@@ -1194,7 +1759,13 @@ export async function writeWorkflow(
       "Provide outputPath or explicitly request inPlace export.",
     );
   }
-  const replacingSource = inPlace || target === sourcePath;
+  if (!inPlace && target === sourcePath) {
+    throw workflowError(
+      "IN_PLACE_REQUIRED",
+      "An output path resolving to the source requires explicit inPlace export.",
+    );
+  }
+  const replacingSource = inPlace;
   let sourceInfo = null;
   if (replacingSource) {
     sourceInfo = await assertRegularNonSymlink(sourcePath, "source");

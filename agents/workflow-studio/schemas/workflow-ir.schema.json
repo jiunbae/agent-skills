@@ -2,21 +2,100 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent-skills.local/workflow-studio/workflow-ir-1.0.schema.json",
   "title": "Workflow Studio Artifact 1.0",
-  "type": "object",
-  "required": ["ir_version", "kind"],
-  "properties": {
-    "ir_version": { "const": "1.0" },
-    "kind": { "enum": ["workflow", "plan", "trace"] },
-    "artifact_id": { "type": "string", "minLength": 1 },
-    "source": {
+  "oneOf": [
+    { "$ref": "#/$defs/workflow" },
+    { "$ref": "#/$defs/plan" },
+    { "$ref": "#/$defs/trace" }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "confidence": {
       "type": "object",
-      "required": ["path", "sha256", "byte_length", "raw_base64"],
+      "required": ["level", "rule_id", "reason"],
       "properties": {
-        "path": { "type": "string" },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "level": {
+          "enum": ["explicit", "structural", "heuristic", "unknown"]
+        },
+        "rule_id": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "byte_record": {
+      "type": "object",
+      "required": ["encoding", "bytes_base64", "byte_length", "sha256"],
+      "properties": {
+        "encoding": { "const": "base64" },
+        "bytes_base64": { "type": "string" },
         "byte_length": { "type": "integer", "minimum": 0 },
-        "raw_base64": { "type": "string" }
-      }
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": true
+    },
+    "safety": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["intent", "provider", "sandbox", "boundary"],
+          "properties": {
+            "intent": { "enum": ["read-only", "workspace-write"] },
+            "provider": { "const": "codex" },
+            "sandbox": { "enum": ["read-only", "workspace-write"] },
+            "boundary": { "const": "os-sandbox" }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "required": [
+            "intent",
+            "provider",
+            "permission_mode",
+            "boundary"
+          ],
+          "properties": {
+            "intent": { "enum": ["read-only", "workspace-write"] },
+            "provider": { "const": "claude" },
+            "permission_mode": { "enum": ["plan", "acceptEdits"] },
+            "boundary": {
+              "const": "tool-permission-policy-not-os-sandbox"
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "kind", "title", "body", "source_map", "confidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "step" },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?=\\S(?:.*\\S)?$)[^\\r\\n]+$"
+        },
+        "body": { "type": "string" },
+        "source_map": { "type": ["object", "null"] },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      },
+      "additionalProperties": true
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "kind", "confidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["sequence", "parallel"] },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      },
+      "additionalProperties": true
     },
     "graph": {
       "type": "object",
@@ -24,53 +103,318 @@
       "properties": {
         "entry_node_ids": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
         "nodes": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["id", "kind", "title", "body", "source_map", "confidence"],
-            "properties": {
-              "id": { "type": "string", "minLength": 1 },
-              "kind": { "const": "step" },
-              "title": { "type": "string" },
-              "body": { "type": "string" },
-              "source_map": { "type": ["object", "null"] },
-              "confidence": { "type": "object" }
-            }
-          }
+          "items": { "$ref": "#/$defs/node" }
         },
         "edges": {
           "type": "array",
+          "items": { "$ref": "#/$defs/edge" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "workflow": {
+      "type": "object",
+      "required": [
+        "ir_version",
+        "kind",
+        "artifact_id",
+        "source",
+        "graph",
+        "opaque_spans",
+        "diagnostics",
+        "revision"
+      ],
+      "properties": {
+        "ir_version": { "const": "1.0" },
+        "kind": { "const": "workflow" },
+        "artifact_id": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "byte_length",
+            "encoding",
+            "newline",
+            "final_newline",
+            "raw_base64"
+          ],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "byte_length": { "type": "integer", "minimum": 0 },
+            "encoding": { "const": "utf-8" },
+            "newline": { "enum": ["lf", "crlf", "mixed"] },
+            "final_newline": { "type": "boolean" },
+            "raw_base64": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        "graph": { "$ref": "#/$defs/graph" },
+        "opaque_spans": {
+          "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "from", "to", "kind", "confidence"],
+            "required": ["start_byte", "end_byte", "sha256", "reason"],
             "properties": {
-              "id": { "type": "string", "minLength": 1 },
-              "from": { "type": "string" },
-              "to": { "type": "string" },
-              "kind": { "enum": ["sequence", "parallel"] },
-              "confidence": { "type": "object" }
+              "start_byte": { "type": "integer", "minimum": 0 },
+              "end_byte": { "type": "integer", "minimum": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "reason": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": true
+          }
+        },
+        "diagnostics": { "type": "array" },
+        "revision": {
+          "type": "object",
+          "required": [
+            "original_sha256",
+            "current_sha256",
+            "dirty",
+            "structural_dirty"
+          ],
+          "properties": {
+            "original_sha256": { "$ref": "#/$defs/sha256" },
+            "current_sha256": { "$ref": "#/$defs/sha256" },
+            "dirty": { "type": "boolean" },
+            "structural_dirty": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "plan": {
+      "type": "object",
+      "required": [
+        "ir_version",
+        "kind",
+        "agent",
+        "cwd",
+        "safety",
+        "workflow",
+        "workflow_revision",
+        "prompt",
+        "skill",
+        "execution_mode",
+        "warnings",
+        "command"
+      ],
+      "properties": {
+        "ir_version": { "const": "1.0" },
+        "kind": { "const": "plan" },
+        "agent": { "enum": ["codex", "claude"] },
+        "cwd": { "type": "string", "minLength": 1 },
+        "safety": { "$ref": "#/$defs/safety" },
+        "workflow": { "$ref": "#/$defs/workflow" },
+        "workflow_revision": { "$ref": "#/$defs/sha256" },
+        "prompt": { "$ref": "#/$defs/byte_record" },
+        "skill": {
+          "allOf": [
+            { "$ref": "#/$defs/byte_record" },
+            {
+              "type": "object",
+              "required": ["source_path", "delivery"],
+              "properties": {
+                "source_path": { "type": ["string", "null"] },
+                "delivery": { "const": "prompt-context" }
+              }
             }
+          ]
+        },
+        "execution_mode": { "const": "native-cli-prompt-context" },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "command": {
+          "type": "object",
+          "required": ["executable", "argv", "stdin", "shell"],
+          "properties": {
+            "executable": { "enum": ["codex", "claude"] },
+            "argv": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "stdin": { "const": "approved-prompt-context" },
+            "shell": { "const": false }
+          },
+          "additionalProperties": true
+        },
+        "approval": {
+          "type": "object",
+          "required": ["algorithm", "digest", "scope", "statement"],
+          "properties": {
+            "algorithm": { "const": "sha256" },
+            "digest": { "$ref": "#/$defs/sha256" },
+            "scope": { "const": "exact-native-run-envelope" },
+            "statement": {
+              "const": "plan approved for native execution; graph not enforced"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "trace": {
+      "type": "object",
+      "required": [
+        "ir_version",
+        "kind",
+        "run_id",
+        "plan_hash",
+        "workflow_revision",
+        "agent",
+        "cwd",
+        "safety",
+        "adapter",
+        "events",
+        "inferred_edges",
+        "diagnostics",
+        "process",
+        "status",
+        "completeness",
+        "provenance"
+      ],
+      "properties": {
+        "ir_version": { "const": "1.0" },
+        "kind": { "const": "trace" },
+        "run_id": { "type": "string", "minLength": 1 },
+        "plan_hash": { "$ref": "#/$defs/sha256" },
+        "workflow_revision": { "$ref": "#/$defs/sha256" },
+        "agent": { "enum": ["codex", "claude"] },
+        "cwd": { "type": "string", "minLength": 1 },
+        "safety": { "$ref": "#/$defs/safety" },
+        "adapter": {
+          "type": "object",
+          "required": ["executable", "version"],
+          "properties": {
+            "executable": { "type": "string", "minLength": 1 },
+            "version": { "type": ["string", "null"] }
+          },
+          "additionalProperties": true
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sequence",
+              "provider",
+              "kind",
+              "status",
+              "provenance",
+              "source",
+              "summary"
+            ],
+            "properties": {
+              "sequence": { "type": "integer", "minimum": 0 },
+              "provider": { "enum": ["codex", "claude"] },
+              "kind": { "type": "string", "minLength": 1 },
+              "status": { "type": "string", "minLength": 1 },
+              "provenance": { "const": "observed" },
+              "source": { "type": "object" },
+              "summary": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "inferred_edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from_sequence",
+              "to_sequence",
+              "kind",
+              "provenance",
+              "confidence"
+            ],
+            "properties": {
+              "from_sequence": { "type": "integer", "minimum": 0 },
+              "to_sequence": { "type": "integer", "minimum": 0 },
+              "kind": { "const": "sequence" },
+              "provenance": { "const": "inferred" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            },
+            "additionalProperties": true
+          }
+        },
+        "diagnostics": { "type": "array" },
+        "process": {
+          "type": "object",
+          "required": [
+            "exit_code",
+            "signal",
+            "stderr",
+            "stderr_bytes",
+            "stdout_bytes"
+          ],
+          "properties": {
+            "exit_code": { "type": ["integer", "null"] },
+            "signal": { "type": ["string", "null"] },
+            "stderr": { "type": "string" },
+            "stderr_bytes": { "type": "integer", "minimum": 0 },
+            "stdout_bytes": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled",
+            "protocol-error",
+            "truncated"
+          ]
+        },
+        "completeness": { "enum": ["complete", "partial"] },
+        "provenance": {
+          "type": "object",
+          "required": [
+            "events",
+            "sequence_edges",
+            "hidden_reasoning_recovered"
+          ],
+          "properties": {
+            "events": { "const": "observed" },
+            "sequence_edges": { "const": "inferred" },
+            "hidden_reasoning_recovered": { "const": false }
+          },
+          "additionalProperties": true
+        },
+        "failure": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "completed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "completeness": { "const": "complete" } }
+          },
+          "else": {
+            "required": ["failure"],
+            "properties": { "completeness": { "const": "partial" } }
           }
         }
-      }
-    },
-    "opaque_spans": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["start_byte", "end_byte", "sha256", "reason"],
-        "properties": {
-          "start_byte": { "type": "integer", "minimum": 0 },
-          "end_byte": { "type": "integer", "minimum": 0 },
-          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "reason": { "type": "string" }
-        }
-      }
+      ],
+      "additionalProperties": true
     }
-  },
-  "additionalProperties": true
+  }
 }

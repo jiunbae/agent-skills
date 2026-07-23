@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
@@ -23,15 +22,16 @@ import {
   runApprovedPlan,
   verifyPlanApproval,
 } from "../src/adapters.mjs";
-import { importSkillBytes } from "../src/core.mjs";
+import {
+  applyOperation,
+  importSkillBytes,
+  renderWorkflow,
+  validateArtifact,
+} from "../src/core.mjs";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const fakeAgent = join(testDirectory, "fixtures", "fake-agent.mjs");
 chmodSync(fakeAgent, 0o755);
-
-function hash(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
 
 function workflowFixture() {
   const raw = Buffer.from(
@@ -51,45 +51,13 @@ function workflowFixture() {
       "",
     ].join("\n"),
   );
-  return {
-    ir_version: "1.0",
-    kind: "workflow",
-    artifact_id: "workflow-adapter-fixture",
-    source: {
-      path: "/virtual/adapter-fixture/SKILL.md",
-      raw_base64: raw.toString("base64"),
-      sha256: hash(raw),
-      byte_length: raw.length,
-    },
-    graph: {
-      entry_node_ids: ["step-inspect"],
-      nodes: [
-        {
-          id: "step-inspect",
-          kind: "step",
-          title: "Inspect",
-          body: "Inspect the request.",
-          source_map: null,
-          confidence: {
-            level: "explicit",
-            reason: "fixture",
-            rule_id: "fixture",
-            evidence_spans: [],
-          },
-          editable: { fields: ["title", "body"], structural: true, reason: null },
-        },
-      ],
-      edges: [],
-    },
-    opaque_spans: [],
-    diagnostics: [],
-    revision: {
-      base_sha256: hash(raw),
-      current_sha256: hash(raw),
-      operations: [],
-    },
-    extensions: {},
-  };
+  const workflow = importSkillBytes(raw, {
+    sourcePath: "/virtual/adapter-fixture/SKILL.md",
+  });
+  workflow.artifact_id = "workflow-adapter-fixture";
+  workflow.graph.nodes[0].id = "step-inspect";
+  workflow.graph.entry_node_ids = ["step-inspect"];
+  return workflow;
 }
 
 function makeTemporaryWorkspace(t) {
@@ -144,6 +112,10 @@ test("Codex uses fixed argv and sends prompt and Skill only through stdin", asyn
     "-",
   ]);
   assert.equal(audit.cwd, plan.cwd);
+  assert.deepEqual(
+    Buffer.from(plan.skill.bytes_base64, "base64"),
+    Buffer.from(plan.workflow.source.raw_base64, "base64"),
+  );
   assert.doesNotMatch(audit.argv.join(" "), /touch|pwned|adapter-fixture/u);
   assert.match(audit.stdin, /\$\(touch SHOULD_NOT_EXIST\); echo pwned/u);
   assert.match(audit.stdin, /name: adapter-fixture/u);
@@ -155,6 +127,33 @@ test("Codex uses fixed argv and sends prompt and Skill only through stdin", asyn
   assert.ok(
     trace.inferred_edges.every((edge) => edge.provenance === "inferred"),
   );
+});
+
+test("edited workflow plans record and deliver exact rendered Skill bytes", (t) => {
+  const workflow = applyOperation(workflowFixture(), {
+    type: "edit-node",
+    node_id: "step-inspect",
+    title: "Reviewed candidate",
+  });
+  const cwd = makeTemporaryWorkspace(t);
+  const plan = buildRunEnvelope({
+    workflow,
+    prompt: "Run the reviewed candidate.",
+    agent: "codex",
+    cwd,
+  });
+  const rendered = renderWorkflow(workflow);
+  const recorded = Buffer.from(plan.skill.bytes_base64, "base64");
+  const stdin = prepareAdapter(approvePlan(plan)).stdin;
+  const begin = Buffer.from("----- BEGIN SKILL MARKDOWN -----\n");
+  const end = Buffer.from("\n----- END SKILL MARKDOWN -----");
+  const startOffset = stdin.indexOf(begin) + begin.length;
+  const endOffset = stdin.indexOf(end, startOffset);
+
+  assert.deepEqual(recorded, rendered);
+  assert.deepEqual(stdin.subarray(startOffset, endOffset), rendered);
+  assert.match(recorded.toString("utf8"), /### Reviewed candidate/u);
+  assert.notDeepEqual(recorded, Buffer.from(workflow.source.raw_base64, "base64"));
 });
 
 test("Claude uses provider-specific fixed permission argv", async (t) => {
@@ -376,6 +375,52 @@ test("stdout lines, event count, and stderr retention are bounded", async (t) =>
   assert.equal(events.events.length, 2);
 });
 
+test("deep valid JSON events become bounded protocol diagnostics", async (t) => {
+  const plan = approvedFakePlan(t);
+  const trace = await runApprovedPlan(plan, {
+    env: fakeEnv(plan, { FAKE_AGENT_SCENARIO: "deep-event" }),
+  });
+  const rejected = trace.events.find(
+    (event) => event.source.raw_type === "normalization-rejected",
+  );
+
+  assert.equal(trace.status, "protocol-error");
+  assert.equal(trace.failure.kind, "event_normalization_rejected");
+  assert.equal(trace.failure.provider_terminal_observed, true);
+  assert.equal(validateArtifact(trace), true);
+  assert.equal(rejected.source.raw.omitted, true);
+  assert.equal(rejected.source.raw.reason, "EVENT_STRUCTURE_LIMIT");
+  assert.ok(Buffer.byteLength(rejected.source.raw.evidence) <= 2048);
+  assert.ok(
+    trace.diagnostics.some(
+      (diagnostic) => diagnostic.kind === "event-normalization-rejected",
+    ),
+  );
+
+  let deep = 0;
+  for (let index = 0; index < 12_000; index += 1) deep = [deep];
+  assert.throws(
+    () =>
+      normalizeProviderEvent(
+        "codex",
+        { type: "future.provider.event", deep },
+        0,
+      ),
+    (error) =>
+      error.code === "EVENT_STRUCTURE_LIMIT" && !(error instanceof RangeError),
+  );
+  assert.throws(
+    () =>
+      normalizeProviderEvent(
+        "codex",
+        { type: "future.provider.event", values: [1, 2, 3] },
+        0,
+        { maxDepth: 64, maxNodes: 3 },
+      ),
+    (error) => error.code === "EVENT_STRUCTURE_LIMIT",
+  );
+});
+
 test("AbortSignal cancellation is wrapper cancellation, not provider acknowledgement", async (t) => {
   const controller = new AbortController();
   const plan = approvedFakePlan(t);
@@ -455,7 +500,7 @@ test("provider tool errors normalize to explicit failed observable events", () =
   );
 });
 
-test("plan and trace promotion are deterministic and omit raw trace payloads", (t) => {
+test("plan and trace promotion are deterministic and omit raw trace payloads", async (t) => {
   const plan = approvedFakePlan(t);
   const first = promoteArtifact(plan, {
     name: "promoted-plan",
@@ -470,18 +515,10 @@ test("plan and trace promotion are deterministic and omit raw trace payloads", (
   assert.match(first.skill_markdown, /### Step 1: Inspect/u);
   assert.equal(first.derived_from.kind, "plan");
 
-  const trace = {
-    ir_version: "1.0",
-    kind: "trace",
-    events: [
-      normalizeProviderEvent(
-        "codex",
-        { type: "future.event", secret: "DO_NOT_PROMOTE_RAW" },
-        0,
-      ),
-      normalizeProviderEvent("codex", { type: "turn.completed" }, 1),
-    ],
-  };
+  const tracePlan = approvedFakePlan(t);
+  const trace = await runApprovedPlan(tracePlan, {
+    env: fakeEnv(tracePlan, { FAKE_AGENT_SCENARIO: "codex-unknown-secret" }),
+  });
   const promotedTrace = promoteArtifact(trace, {
     name: "promoted-trace",
     description: "Draft a workflow from selected observed behavior.",
@@ -493,34 +530,116 @@ test("plan and trace promotion are deterministic and omit raw trace payloads", (
   );
 });
 
-test("promotion writes core-compatible managed sequence and parallel edges", (t) => {
-  const plan = approvedFakePlan(t);
-  plan.workflow.graph.nodes.push(
-    {
-      ...structuredClone(plan.workflow.graph.nodes[0]),
-      id: "step-check",
-      title: "Check",
-    },
-    {
-      ...structuredClone(plan.workflow.graph.nodes[0]),
-      id: "step-report",
-      title: "Report",
-    },
+test("promotion rejects empty or structurally invalid plans and traces", async (t) => {
+  for (const kind of ["plan", "trace"]) {
+    assert.throws(
+      () =>
+        promoteArtifact(
+          { ir_version: "1.0", kind },
+          { name: `invalid-${kind}`, description: "Must fail." },
+        ),
+      (error) => error.code === "INVALID_ARTIFACT",
+    );
+  }
+
+  const emptyWorkflow = importSkillBytes(
+    Buffer.from(
+      "---\nname: empty-plan\ndescription: No recognized steps.\n---\n\n# Empty\n",
+    ),
   );
-  plan.workflow.graph.edges = [
-    {
-      id: "edge-parallel",
-      from: "step-inspect",
-      to: "step-check",
-      kind: "parallel",
-    },
-    {
-      id: "edge-sequence",
-      from: "step-check",
-      to: "step-report",
-      kind: "sequence",
-    },
-  ];
+  const emptyPlan = buildRunEnvelope({
+    workflow: emptyWorkflow,
+    prompt: "Review the empty workflow.",
+    agent: "codex",
+    cwd: makeTemporaryWorkspace(t),
+  });
+  assert.throws(
+    () =>
+      promoteArtifact(emptyPlan, {
+        name: "empty-plan",
+        description: "Must reject an empty workflow.",
+      }),
+    (error) => error.code === "INVALID_ARTIFACT",
+  );
+
+  const emptyTracePlan = approvedFakePlan(t);
+  const emptyTrace = await runApprovedPlan(emptyTracePlan, {
+    env: { PATH: makeTemporaryWorkspace(t) },
+  });
+  assert.equal(validateArtifact(emptyTrace), true);
+  assert.equal(emptyTrace.events.length, 0);
+  assert.throws(
+    () =>
+      promoteArtifact(emptyTrace, {
+        name: "empty-trace",
+        description: "Must reject a trace without promotable events.",
+      }),
+    (error) => error.code === "INVALID_ARTIFACT",
+  );
+
+  const invalidTracePlan = approvedFakePlan(t);
+  const invalidTrace = await runApprovedPlan(invalidTracePlan, {
+    env: fakeEnv(invalidTracePlan, { FAKE_AGENT_SCENARIO: "codex-complete" }),
+  });
+  invalidTrace.inferred_edges[0].to_sequence = 999;
+  assert.throws(
+    () =>
+      promoteArtifact(invalidTrace, {
+        name: "invalid-trace-edge",
+        description: "Must reject invalid trace topology.",
+      }),
+    (error) => error.code === "INVALID_ARTIFACT",
+  );
+
+  const multilineTitle = approvedFakePlan(t);
+  multilineTitle.workflow.graph.nodes[0].title = "Reviewed\n## Injected";
+  assert.throws(
+    () =>
+      promoteArtifact(multilineTitle, {
+        name: "invalid-title",
+        description: "Must reject heading-breaking titles.",
+      }),
+    (error) => error.code === "INVALID_ARTIFACT",
+  );
+});
+
+test("promotion writes core-compatible managed sequence and parallel edges", (t) => {
+  let workflow = applyOperation(workflowFixture(), {
+    type: "add-node",
+    id: "step-check",
+    reference_id: "step-inspect",
+    position: "after",
+    title: "Check",
+    body: "Check the inspected result.",
+  });
+  workflow = applyOperation(workflow, {
+    type: "add-node",
+    id: "step-report",
+    reference_id: "step-check",
+    position: "after",
+    title: "Report",
+    body: "Report the checked result.",
+  });
+  workflow = applyOperation(workflow, {
+    type: "add-edge",
+    id: "edge-parallel",
+    from: "step-inspect",
+    to: "step-check",
+    kind: "parallel",
+  });
+  workflow = applyOperation(workflow, {
+    type: "add-edge",
+    id: "edge-sequence",
+    from: "step-check",
+    to: "step-report",
+    kind: "sequence",
+  });
+  const plan = buildRunEnvelope({
+    workflow,
+    prompt: "Run the promoted workflow.",
+    agent: "codex",
+    cwd: makeTemporaryWorkspace(t),
+  });
   const promoted = promoteArtifact(plan, {
     name: "promoted-edges",
     description: "Preserve selected workflow edges.",

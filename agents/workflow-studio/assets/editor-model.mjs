@@ -209,13 +209,16 @@ function normalizeConfidence(node) {
   if (typeof candidate === "string") {
     return {
       level: CONFIDENCE_VALUES.has(candidate) ? candidate : "unknown",
+      rule_id: String(firstDefined(node.confidence_rule_id, "editor.v1")),
       reason: firstDefined(node.confidence_reason, ""),
     };
   }
   const value = asObject(candidate);
   const level = firstDefined(value.level, value.category, value.value, "unknown");
   return {
+    ...clone(value),
     level: CONFIDENCE_VALUES.has(level) ? level : "unknown",
+    rule_id: String(firstDefined(value.rule_id, node.confidence_rule_id, "editor.v1")),
     reason: String(firstDefined(value.reason, node.confidence_reason, "")),
   };
 }
@@ -302,10 +305,89 @@ function normalizeEdge(edge, index) {
     from,
     to,
     kind: EDGE_KINDS.has(kind) ? kind : "sequence",
+    provenance: String(firstDefined(edge.provenance, "declared")),
+    readOnly: Boolean(
+      firstDefined(edge.read_only, edge.readonly, edge.readOnly, false),
+    ),
   };
 }
 
+function traceEventNode(event, index) {
+  const sequence = Number.isInteger(event?.sequence) ? event.sequence : index;
+  const reference = {
+    sequence,
+    provider: firstDefined(event?.provider, null),
+    provider_event_id: firstDefined(event?.provider_event_id, null),
+    raw_type: firstDefined(event?.source?.raw_type, null),
+  };
+  return {
+    ...clone(asObject(event)),
+    id: `trace-event-${sequence}`,
+    type: String(firstDefined(event?.kind, "provider.unknown")),
+    title: String(firstDefined(event?.summary, event?.kind, `Event ${sequence}`)),
+    body: `Status: ${String(firstDefined(event?.status, "unknown"))}.`,
+    provenance: String(firstDefined(event?.provenance, "observed")),
+    confidence: {
+      level: "explicit",
+      rule_id: "trace.event",
+      reason: "Directly normalized from a provider event.",
+    },
+    event_ref: reference,
+    raw_event_ref: reference,
+    read_only: true,
+    read_only_reason: "Observed trace events are read-only evidence.",
+    editable: {
+      fields: [],
+      structural: false,
+      reason: "Observed trace events are read-only evidence.",
+    },
+  };
+}
+
+function traceGraph(artifact) {
+  const events = asArray(artifact.events);
+  const nodes = events.map(traceEventNode);
+  const bySequence = new Map(
+    nodes.map((node, index) => [
+      String(firstDefined(events[index]?.sequence, index)),
+      node.id,
+    ]),
+  );
+  const edges = asArray(artifact.inferred_edges)
+    .map((edge, index) => {
+      const fromSequence = String(
+        firstDefined(edge?.from_sequence, edge?.from, ""),
+      );
+      const toSequence = String(firstDefined(edge?.to_sequence, edge?.to, ""));
+      const from = bySequence.get(fromSequence);
+      const to = bySequence.get(toSequence);
+      if (!from || !to) return null;
+      return {
+        ...clone(asObject(edge)),
+        id: String(firstDefined(edge?.id, `trace-edge-${index + 1}`)),
+        from,
+        to,
+        kind: EDGE_KINDS.has(edge?.kind) ? edge.kind : "sequence",
+        provenance: "inferred",
+        read_only: true,
+        raw_edge_ref: {
+          from_sequence: Number(fromSequence),
+          to_sequence: Number(toSequence),
+        },
+      };
+    })
+    .filter(Boolean);
+  return { nodes, edges };
+}
+
 function artifactGraph(artifact) {
+  if (
+    artifact.kind === "trace" &&
+    Array.isArray(artifact.events) &&
+    !artifact.graph
+  ) {
+    return traceGraph(artifact);
+  }
   if (artifact.graph && typeof artifact.graph === "object") return artifact.graph;
   if (artifact.workflow && typeof artifact.workflow === "object") {
     return artifact.workflow.graph || artifact.workflow;
@@ -322,6 +404,30 @@ function artifactGraph(artifact) {
   return artifact;
 }
 
+function workflowArtifact(artifact) {
+  if (
+    artifact.kind === "plan" &&
+    artifact.workflow &&
+    typeof artifact.workflow === "object" &&
+    !Array.isArray(artifact.workflow)
+  ) {
+    return artifact.workflow;
+  }
+  return artifact.kind === "workflow" ? artifact : null;
+}
+
+function mappedOriginal(bytes, span, fallback) {
+  if (
+    !span ||
+    span.start < 0 ||
+    span.end < span.start ||
+    span.end > bytes.length
+  ) {
+    return fallback;
+  }
+  return UTF8_DECODER.decode(bytes.subarray(span.start, span.end));
+}
+
 export function normalizeArtifact(payload) {
   const artifact =
     payload && payload.artifact && typeof payload.artifact === "object"
@@ -333,13 +439,34 @@ export function normalizeArtifact(payload) {
   const graph = artifactGraph(artifact);
   const rawNodes = firstDefined(graph.nodes, artifact.nodes, []);
   const rawEdges = firstDefined(graph.edges, artifact.edges, []);
+  const bytes = sourceBytes(artifact);
+  const nodes = asArray(rawNodes).map(normalizeNode);
+  for (const node of nodes) {
+    const mappedTitle = mappedOriginal(
+      bytes,
+      node.sourceMap.title,
+      node.original.title,
+    );
+    if (
+      mappedTitle === node.original.title ||
+      !mappedTitle.endsWith(node.original.title)
+    ) {
+      node.original.title = mappedTitle;
+    }
+    node.original.body = mappedOriginal(
+      bytes,
+      node.sourceMap.body,
+      node.original.body,
+    );
+  }
   return {
     artifact: clone(artifact),
+    workflowArtifact: clone(workflowArtifact(artifact)),
     kind: String(firstDefined(artifact.kind, "workflow")),
     irVersion: String(firstDefined(artifact.ir_version, artifact.version, "1.0")),
-    nodes: asArray(rawNodes).map(normalizeNode),
+    nodes,
     edges: asArray(rawEdges).map(normalizeEdge),
-    sourceBytes: sourceBytes(artifact),
+    sourceBytes: bytes,
     sourcePath: String(
       firstDefined(
         artifact.source?.path,
@@ -390,6 +517,7 @@ function planPrompt(artifact, fallback) {
 export function createEditorState(payload) {
   const normalized = normalizeArtifact(payload);
   const selectedId = normalized.nodes[0]?.id || null;
+  const canonicalRevision = asObject(normalized.workflowArtifact?.revision);
   const cwd = String(
     firstDefined(
       normalized.artifact.cwd,
@@ -398,10 +526,14 @@ export function createEditorState(payload) {
     ),
   );
   const prompt = planPrompt(normalized.artifact, defaultPrompt(normalized));
+  const artifactAdapter =
+    typeof normalized.artifact.adapter === "string"
+      ? normalized.artifact.adapter
+      : undefined;
   const adapter = String(
     firstDefined(
-      normalized.artifact.adapter,
       normalized.artifact.agent,
+      artifactAdapter,
       normalized.artifact.plan?.adapter,
       normalized.artifact.plan?.agent,
       "codex",
@@ -426,11 +558,25 @@ export function createEditorState(payload) {
         : normalized.kind === "plan"
           ? "plan"
           : "graph",
-    dirty: false,
+    dirty: Boolean(
+      firstDefined(
+        canonicalRevision.dirty,
+        normalized.workflowArtifact?.editor?.dirty,
+        false,
+      ),
+    ),
     planDirty: false,
     draftDirty: false,
-    structuralDirty: false,
-    revision: 0,
+    structuralDirty: Boolean(
+      firstDefined(
+        canonicalRevision.structural_dirty,
+        normalized.workflowArtifact?.editor?.structural_dirty,
+        false,
+      ),
+    ),
+    revision: Number(
+      firstDefined(normalized.workflowArtifact?.editor?.revision, 0),
+    ),
     status: "Artifact loaded.",
     plan: {
       adapter,
@@ -464,6 +610,26 @@ function markChanged(state, status, { structural = false } = {}) {
 
 function findNode(state, nodeId) {
   return state.nodes.find((node) => node.id === nodeId);
+}
+
+function hasDisjointMappedRegions(state) {
+  const spans = state.nodes
+    .map(mappedNodeSpan)
+    .filter(Boolean)
+    .sort((left, right) => left.start - right.start);
+  return spans.some(
+    (span, index) => index > 0 && span.start > spans[index - 1].end,
+  );
+}
+
+export function structuralEditBlockReason(state) {
+  if (state.kind === "trace") {
+    return "Observed trace nodes and inferred edges are read-only evidence.";
+  }
+  if (hasDisjointMappedRegions(state)) {
+    return "Structural editing is unavailable because recognized steps span separate source regions with opaque Markdown between them.";
+  }
+  return "";
 }
 
 function uniqueNodeId(nodes) {
@@ -507,6 +673,7 @@ export function editNode(state, nodeId, field, value) {
 }
 
 export function addNode(state, referenceId, position = "after") {
+  if (structuralEditBlockReason(state)) return state;
   const reference = findNode(state, referenceId);
   if (reference && !reference.structuralEditable) return state;
   const next = clone(state);
@@ -526,6 +693,7 @@ export function addNode(state, referenceId, position = "after") {
       body: "",
       confidence: {
         level: "explicit",
+        rule_id: "editor.v1",
         reason: "Added in Workflow Studio.",
       },
       provenance: "declared",
@@ -541,6 +709,7 @@ export function addNode(state, referenceId, position = "after") {
 }
 
 export function deleteNode(state, nodeId) {
+  if (structuralEditBlockReason(state)) return state;
   const node = findNode(state, nodeId);
   if (!node || node.readOnly || !node.structuralEditable) return state;
   const next = clone(state);
@@ -557,6 +726,7 @@ export function deleteNode(state, nodeId) {
 }
 
 export function moveNode(state, nodeId, direction) {
+  if (structuralEditBlockReason(state)) return state;
   const index = state.nodes.findIndex((node) => node.id === nodeId);
   const target = direction === "up" ? index - 1 : index + 1;
   if (
@@ -576,6 +746,7 @@ export function moveNode(state, nodeId, direction) {
 }
 
 export function addEdge(state, from, to, kind = "sequence") {
+  if (structuralEditBlockReason(state)) return state;
   const next = clone(state);
   const edgeKind = EDGE_KINDS.has(kind) ? kind : "sequence";
   const existing = next.edges.find(
@@ -597,6 +768,7 @@ export function addEdge(state, from, to, kind = "sequence") {
 }
 
 export function changeEdge(state, edgeId, patch) {
+  if (structuralEditBlockReason(state)) return state;
   const next = clone(state);
   const edge = next.edges.find((candidate) => candidate.id === edgeId);
   if (!edge) return state;
@@ -609,6 +781,7 @@ export function changeEdge(state, edgeId, patch) {
 }
 
 export function removeEdge(state, edgeId) {
+  if (structuralEditBlockReason(state)) return state;
   if (!state.edges.some((edge) => edge.id === edgeId)) return state;
   const next = clone(state);
   next.edges = next.edges.filter((edge) => edge.id !== edgeId);
@@ -663,6 +836,9 @@ export function validateState(state) {
     if (ids.has(node.id)) errors.push(`Duplicate node ID: ${node.id}.`);
     ids.add(node.id);
     if (!node.title.trim()) errors.push(`Node ${node.id} needs a title.`);
+    if (/[\r\n]/u.test(node.title)) {
+      errors.push(`Node ${node.id} title must stay on one line.`);
+    }
     if (!node.sourceMap.title && node.title !== node.original.title) {
       warnings.push(
         `${node.id} has no title byte mapping; its edit is kept in managed metadata.`,
@@ -702,14 +878,87 @@ export function validateState(state) {
   }
   if (state.structuralDirty) {
     warnings.push(
-      "Structural edits rewrite the recognized workflow region and preserve stable IDs in managed metadata.",
+      "Structural edits rewrite the recognized workflow region and preserve stable IDs and edges in managed metadata.",
     );
   }
   return { valid: errors.length === 0, errors, warnings };
 }
 
+function validateDownloadWorkflow(artifact) {
+  if (
+    !artifact ||
+    artifact.kind !== "workflow" ||
+    artifact.ir_version !== "1.0"
+  ) {
+    return false;
+  }
+  try {
+    const bytes = decodeBase64(artifact.source?.raw_base64);
+    if (
+      artifact.source?.byte_length !== bytes.length ||
+      artifact.source?.sha256 !== sha256HexBytes(bytes)
+    ) {
+      return false;
+    }
+    const nodes = asArray(artifact.graph?.nodes);
+    const edges = asArray(artifact.graph?.edges);
+    if (!Array.isArray(artifact.graph?.nodes) || !Array.isArray(artifact.graph?.edges)) {
+      return false;
+    }
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const inbound = new Set(edges.map((edge) => edge.to));
+    const expectedEntries = nodes
+      .filter((node) => !inbound.has(node.id))
+      .map((node) => node.id);
+    if (
+      asArray(artifact.graph.entry_node_ids).join("\0") !==
+      expectedEntries.join("\0")
+    ) {
+      return false;
+    }
+    if (
+      edges.some(
+        (edge) =>
+          !nodeIds.has(edge.from) ||
+          !nodeIds.has(edge.to) ||
+          !EDGE_KINDS.has(edge.kind),
+      )
+    ) {
+      return false;
+    }
+    const coverage = [
+      ...nodes.map(mappedNodeSpan).filter(Boolean),
+      ...asArray(artifact.opaque_spans).map(spanFrom).filter(Boolean),
+    ].sort((left, right) => left.start - right.start);
+    let cursor = 0;
+    for (const span of coverage) {
+      if (span.start !== cursor || span.end < span.start || span.end > bytes.length) {
+        return false;
+      }
+      cursor = span.end;
+    }
+    if (cursor !== bytes.length) return false;
+    for (const opaque of asArray(artifact.opaque_spans)) {
+      const span = spanFrom(opaque);
+      if (
+        !span ||
+        opaque.sha256 !== sha256HexBytes(bytes.subarray(span.start, span.end))
+      ) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function canDownloadArtifact(state) {
-  return validateState(state).valid;
+  return (
+    state.kind === "workflow" &&
+    validateState(state).valid &&
+    validateDownloadWorkflow(buildWorkflowArtifact(state))
+  );
 }
 
 export function validationAnnouncement(state) {
@@ -802,6 +1051,11 @@ function concatBytes(parts) {
 }
 
 function canonicalStructuralBytes(state) {
+  if (hasDisjointMappedRegions(state)) {
+    throw new Error(
+      "Structural edits across separate mapped regions are not supported because opaque Markdown must remain byte-identical.",
+    );
+  }
   const original = new Uint8Array(state.sourceBytes);
   const originalGraph = artifactGraph(state.artifact);
   const spans = asArray(originalGraph.nodes)
@@ -917,22 +1171,24 @@ export function buildCandidateBytes(state) {
         patches.push({ ...node.sourceMap.title, value: node.title });
       }
       if (!node.added && node.sourceMap.body && node.body !== node.original.body) {
-        patches.push({ ...node.sourceMap.body, value: node.body });
+        const needsBoundaryNewline =
+          node.sourceMap.body.end < state.sourceBytes.length &&
+          UTF8.encode(node.body).length > 0 &&
+          !node.body.endsWith("\n");
+        const newline = state.sourceNewline === "crlf" ? "\r\n" : "\n";
+        patches.push({
+          ...node.sourceMap.body,
+          value: needsBoundaryNewline ? `${node.body}${newline}` : node.body,
+        });
       }
     }
     candidateBytes = applyBytePatches(state.sourceBytes, patches);
   }
   let candidate = UTF8_DECODER.decode(candidateBytes);
-  const needsManaged =
-    state.structuralDirty ||
-    state.nodes.some(
-      (node) =>
-        (node.title !== node.original.title && !node.sourceMap.title) ||
-        (node.body !== node.original.body && !node.sourceMap.body),
-  );
+  const needsManaged = state.dirty;
   if (needsManaged) {
     candidate = removeManagedBlock(candidate);
-    const json = JSON.stringify(managedPayload(state));
+    const json = canonicalJson(managedPayload(state));
     const encoded = bytesToBase64(UTF8.encode(json))
       .replaceAll("+", "-")
       .replaceAll("/", "_")
@@ -1049,8 +1305,41 @@ function graphSnapshot(state) {
   };
 }
 
+function opaqueCoverage(state) {
+  const bytes = new Uint8Array(state.sourceBytes);
+  const spans = state.nodes
+    .map(mappedNodeSpan)
+    .filter(Boolean)
+    .sort((left, right) => left.start - right.start);
+  const opaque = [];
+  let cursor = 0;
+  for (const span of spans) {
+    if (span.start > cursor) {
+      opaque.push({
+        start_byte: cursor,
+        end_byte: span.start,
+        sha256: sha256HexBytes(bytes.subarray(cursor, span.start)),
+        reason: "unparsed-or-unsupported-source",
+      });
+    }
+    cursor = Math.max(cursor, span.end);
+  }
+  if (cursor < bytes.length) {
+    opaque.push({
+      start_byte: cursor,
+      end_byte: bytes.length,
+      sha256: sha256HexBytes(bytes.subarray(cursor)),
+      reason: "unparsed-or-unsupported-source",
+    });
+  }
+  return opaque;
+}
+
 export function buildWorkflowArtifact(state) {
-  const artifact = clone(state.artifact);
+  if (!state.workflowArtifact) {
+    throw new Error("Only workflow and plan artifacts contain an exportable workflow.");
+  }
+  const artifact = clone(state.workflowArtifact);
   artifact.ir_version = state.irVersion;
   artifact.kind = "workflow";
   artifact.graph = graphSnapshot(state);
@@ -1059,12 +1348,29 @@ export function buildWorkflowArtifact(state) {
     path: state.sourcePath,
     sha256: state.sourceHash,
     raw_base64: bytesToBase64(state.sourceBytes),
+    byte_length: state.sourceBytes.length,
+  };
+  artifact.opaque_spans = opaqueCoverage(state);
+  artifact.revision = {
+    ...asObject(artifact.revision),
+    original_sha256: state.sourceHash,
+    dirty: state.dirty,
+    structural_dirty: state.structuralDirty,
   };
   artifact.editor = {
     dirty: state.dirty,
     structural_dirty: state.structuralDirty,
     revision: state.revision,
   };
+  if (state.dirty) {
+    const hashable = clone(artifact);
+    delete hashable.revision.current_sha256;
+    artifact.revision.current_sha256 = sha256HexBytes(
+      UTF8.encode(canonicalJson(hashable)),
+    );
+  } else {
+    artifact.revision.current_sha256 = state.sourceHash;
+  }
   return artifact;
 }
 
@@ -1072,12 +1378,6 @@ export function buildPlanArtifact(state) {
   const promptBytes = UTF8.encode(state.plan.prompt);
   const skillBytes = buildCandidateBytes(state);
   const workflow = buildWorkflowArtifact(state);
-  workflow.source = {
-    ...asObject(workflow.source),
-    raw_base64: bytesToBase64(skillBytes),
-    byte_length: skillBytes.length,
-    sha256: state.plan.inputHashes?.skill_sha256 ?? null,
-  };
   const safety =
     state.plan.adapter === "codex"
       ? {
@@ -1136,6 +1436,13 @@ export function buildPlanArtifact(state) {
       source_path: state.sourcePath,
       delivery: "prompt-context",
     },
+    execution_mode: "native-cli-prompt-context",
+    warnings: [
+      "The approved graph is supplied to the native CLI but is not enforced node by node.",
+      state.plan.adapter === "claude"
+        ? "Claude permission mode is a tool policy, not an OS sandbox; project customizations may be active."
+        : "Codex execution uses the selected sandbox profile and may load local agent configuration.",
+    ],
     command: {
       executable: state.plan.adapter,
       argv,
@@ -1236,15 +1543,40 @@ function yamlScalar(value) {
   return JSON.stringify(String(value));
 }
 
+function singleLineTitle(value, fallback) {
+  const title = String(value).replace(/[\r\n]+/gu, " ").trim();
+  return title || fallback;
+}
+
 export function promoteToSkillDraft(input) {
-  const source = input.plan
-    ? buildPlanArtifact(input)
-    : input.artifact && input.nodes
-      ? input.artifact
-      : input;
-  const kind = String(firstDefined(source.kind, "trace"));
-  const graph = artifactGraph(source);
-  const nodes = asArray(graph.nodes).map(normalizeNode);
+  const editorState =
+    input?.artifact && Array.isArray(input?.nodes) && Array.isArray(input?.edges)
+      ? input
+      : null;
+  const source = editorState
+    ? editorState.kind === "trace"
+      ? editorState.artifact
+      : buildPlanArtifact(editorState)
+    : input;
+  const kind = editorState
+    ? editorState.kind === "trace"
+      ? "trace"
+      : "plan"
+    : String(firstDefined(source?.kind, "trace"));
+  const graph = editorState ? editorState : artifactGraph(source);
+  const nodes = asArray(graph.nodes).map(normalizeNode).map((node, index) => ({
+    ...node,
+    title: singleLineTitle(node.title, `Step ${index + 1}`),
+  }));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = asArray(graph.edges)
+    .map(normalizeEdge)
+    .filter(
+      (edge) =>
+        nodeIds.has(edge.from) &&
+        nodeIds.has(edge.to) &&
+        edge.from !== edge.to,
+    );
   const title = `${kind} promotion draft`;
   const name = safeSkillName(`${kind}-promotion-draft`);
   const warnings = [
@@ -1256,7 +1588,8 @@ export function promoteToSkillDraft(input) {
         node.provenance === "inferred" ||
         node.provenance === "unknown" ||
         node.provenance === "unobserved",
-    )
+    ) ||
+    edges.some((edge) => edge.provenance === "inferred")
   ) {
     warnings.push(
       "Inferred or unobserved trace content is not asserted as execution fact.",
@@ -1275,10 +1608,6 @@ export function promoteToSkillDraft(input) {
     "",
     `# ${title}`,
     "",
-    "## Promotion warnings",
-    "",
-    ...warnings.map((warning) => `- ${warning}`),
-    "",
     "## Workflow",
     "",
   ];
@@ -1289,6 +1618,35 @@ export function promoteToSkillDraft(input) {
     }
     lines.push(node.body || "Review and complete this step.", "");
   });
+  lines.push(
+    "## Promotion warnings",
+    "",
+    ...warnings.map((warning) => `- ${warning}`),
+    "",
+  );
+  const managed = {
+    ir_version: "1.0",
+    nodes: nodes.map((node, order) => ({
+      id: node.id,
+      order,
+      title_sha256: sha256HexBytes(UTF8.encode(node.title)),
+    })),
+    edges: edges.map((edge) => ({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      kind: edge.kind,
+      source_provenance: edge.provenance,
+      ...(edge.provenance === "inferred"
+        ? { inference_label: "inferred-order-not-causality" }
+        : {}),
+    })),
+  };
+  const encoded = bytesToBase64(UTF8.encode(canonicalJson(managed)))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+  lines.push(`${MANAGED_INLINE_PREFIX}${encoded} -->`, "");
   return {
     kind: "skill-draft",
     derived_from: kind,

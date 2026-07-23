@@ -47,6 +47,16 @@ if (scenario === "cancel") {
   process.stdout.write('{"type":"turn.completed"}\n');
 } else if (scenario === "partial") {
   process.stdout.write('{"type":"thread.started"}\n{"type":"turn.comp');
+} else if (scenario === "deep-event") {
+  process.stdout.write(
+    `{"type":"future.provider.event","deep":${"[".repeat(12_000)}0${"]".repeat(12_000)}}\n`,
+  );
+  process.stdout.write('{"type":"turn.completed"}\n');
+} else if (scenario === "codex-unknown-secret") {
+  process.stdout.write(
+    '{"type":"future.provider.event","secret":"DO_NOT_PROMOTE_RAW"}\n',
+  );
+  process.stdout.write('{"type":"turn.completed"}\n');
 } else {
   const fixtureName = `events-${scenario}.jsonl`;
   process.stdout.write(readFileSync(join(fixtureDirectory, fixtureName)));

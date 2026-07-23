@@ -20,6 +20,7 @@ import {
   removeEdge,
   selectNode,
   setActiveView,
+  structuralEditBlockReason,
   traceProvenanceSummary,
   validationAnnouncement,
 } from "./editor-model.mjs";
@@ -93,6 +94,14 @@ function renderHeader() {
   const downloadAllowed = canDownloadArtifact(state);
   element("downloadIr").disabled = !downloadAllowed;
   element("downloadMarkdown").disabled = !downloadAllowed;
+  const downloadReason =
+    state.kind === "workflow"
+      ? downloadAllowed
+        ? ""
+        : "Fix the exact Workflow IR validation errors before downloading."
+      : "Header downloads are available only for canonical workflow artifacts.";
+  element("downloadIr").title = downloadReason;
+  element("downloadMarkdown").title = downloadReason;
 }
 
 function renderTabs() {
@@ -232,7 +241,7 @@ function renderOutline() {
     );
     button.append(title, metadata);
     button.addEventListener("click", () => {
-      mutate(selectNode(state, node.id));
+      mutate(selectNode(state, node.id), `outline-${node.id}`);
     });
     item.append(button);
     return item;
@@ -265,21 +274,29 @@ function renderInspector() {
     "Only fields with explicit editable mappings are available.";
 
   const index = state.nodes.findIndex((candidate) => candidate.id === node.id);
-  const structuralDisabled = !node.structuralEditable;
+  const structuralReason = structuralEditBlockReason(state);
+  const structuralDisabled = !node.structuralEditable || Boolean(structuralReason);
   element("addBefore").disabled = structuralDisabled;
   element("addAfter").disabled = structuralDisabled;
   element("deleteNode").disabled = structuralDisabled;
   element("moveUp").disabled = structuralDisabled || index <= 0;
   element("moveDown").disabled =
     structuralDisabled || index < 0 || index >= state.nodes.length - 1;
+  const structuralNotice = element("structuralEditNotice");
+  structuralNotice.hidden = !structuralReason;
+  structuralNotice.textContent = structuralReason;
 }
 
 function renderEdges() {
+  const structuralReason = structuralEditBlockReason(state);
   replaceOptions(element("edgeFrom"), element("edgeFrom").value || state.nodes[0]?.id);
   replaceOptions(
     element("edgeTo"),
     element("edgeTo").value || state.nodes[1]?.id || state.nodes[0]?.id,
   );
+  for (const id of ["edgeFrom", "edgeTo", "edgeKind", "addEdge"]) {
+    element(id).disabled = Boolean(structuralReason) || state.nodes.length === 0;
+  }
   const list = element("edgeList");
   if (!state.edges.length) {
     list.replaceChildren(create("li", "empty-state", "No dependency edges."));
@@ -305,6 +322,10 @@ function renderEdges() {
       option("sequence", "Sequence", edge.kind),
       option("parallel", "Parallel", edge.kind),
     );
+    const edgeReadOnly = Boolean(structuralReason || edge.readOnly);
+    fromSelect.disabled = edgeReadOnly;
+    toSelect.disabled = edgeReadOnly;
+    kindSelect.disabled = edgeReadOnly;
     const applyChange = (focusId) => {
       mutate(
         changeEdge(state, edge.id, {
@@ -321,6 +342,7 @@ function renderEdges() {
 
     const remove = create("button", "danger", "Remove edge");
     remove.type = "button";
+    remove.disabled = edgeReadOnly;
     remove.setAttribute("aria-label", `Remove edge ${edge.id}`);
     remove.addEventListener("click", () => {
       mutate(removeEdge(state, edge.id), "edgeFrom");
@@ -338,20 +360,25 @@ function renderSourceAndDiff() {
 }
 
 function renderPlan() {
+  const canPreparePlan = Boolean(state.workflowArtifact) && state.kind !== "trace";
   element("planAgent").value = state.plan.adapter;
   element("planCwd").value = state.plan.cwd;
   element("planSafety").value = state.plan.safety;
   element("planPrompt").value = state.plan.prompt;
-  element("planPreview").textContent = JSON.stringify(buildPlanArtifact(state), null, 2);
+  element("planPreview").textContent = canPreparePlan
+    ? JSON.stringify(buildPlanArtifact(state), null, 2)
+    : "Plan preparation is available only for workflow and plan artifacts.";
   const approval = state.plan.approval;
   element("approvalBadge").textContent = approval
     ? `Approved ${approval.digest.slice(0, 12)}`
     : "Not approved";
-  element("downloadPlan").disabled = !approval;
+  element("downloadPlan").disabled = !canPreparePlan || !approval;
   element("approvePlan").disabled =
+    !canPreparePlan ||
     !state.validation.valid ||
     !state.plan.cwd.startsWith("/") ||
     !state.plan.prompt.trim();
+  element("promotePlan").disabled = !canPreparePlan;
   renderDraft();
 }
 
@@ -587,7 +614,7 @@ function installHandlers() {
   });
   element("promoteTrace").addEventListener("click", () => {
     const next = setActiveView(state, "plan");
-    next.promotedDraft = promoteToSkillDraft(state.artifact);
+    next.promotedDraft = promoteToSkillDraft(state);
     next.draftDirty = true;
     next.status =
       "Created a trace-derived draft; review its provenance warnings before download.";

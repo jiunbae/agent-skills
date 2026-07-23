@@ -317,6 +317,15 @@ async function exportCommand(parsed) {
     );
   }
   const workflow = requireKind(await readJson(parsed.positionals[0]), "workflow");
+  if (
+    hasOut &&
+    resolve(option(parsed, "out")) === resolve(workflow.source.path)
+  ) {
+    throw cliError(
+      "IN_PLACE_REQUIRED",
+      "An --out path resolving to the source requires explicit --in-place.",
+    );
+  }
   const written = await writeWorkflow(workflow, {
     outputPath: hasOut ? option(parsed, "out") : undefined,
     inPlace,
@@ -444,13 +453,17 @@ async function approveCommand(parsed) {
 
 async function runCommand(parsed) {
   assertShape(parsed, { positionals: 1, required: ["trace"] });
-  const plan = requireKind(await readJson(parsed.positionals[0]), "plan");
+  const plan = await readJson(parsed.positionals[0]);
+  if (plan?.kind !== "plan" || plan?.ir_version !== "1.0") {
+    requireKind(plan, "plan");
+  }
   if (!verifyPlanApproval(plan)) {
     throw cliError(
       "APPROVAL_REQUIRED",
       "The plan is unapproved or changed since approval.",
     );
   }
+  validateArtifact(plan);
   const reservation = await reserveNewFile(option(parsed, "trace"));
   const controller = new AbortController();
   const abort = () => controller.abort();

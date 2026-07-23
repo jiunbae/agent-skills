@@ -118,6 +118,7 @@
                 </div>
               </dl>
               <p id="readOnlyReason" class="notice warning" hidden></p>
+              <p id="structuralEditNotice" class="notice warning" hidden></p>
               <fieldset>
                 <legend>Step position</legend>
                 <div class="button-grid">
@@ -156,7 +157,7 @@
                   <option value="parallel">Parallel</option>
                 </select>
               </div>
-              <button type="submit">Add or update edge</button>
+              <button id="addEdge" type="submit">Add or update edge</button>
             </form>
             <ul id="edgeList" class="edge-list" aria-label="Workflow edges"></ul>
           </section>
@@ -174,8 +175,9 @@
         </div>
         <p class="supporting-copy">
           Untouched source bytes are preserved. Mapped title and body changes
-          patch only their byte spans; structural browser edits remain in the
-          versioned managed metadata block.
+          patch only their byte spans. Supported structural edits rewrite the
+          recognized workflow region, while stable IDs and edges are retained
+          in versioned managed metadata.
         </p>
         <pre id="sourcePreview" class="code-panel" tabindex="0"></pre>
       </section>

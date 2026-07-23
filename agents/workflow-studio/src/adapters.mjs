@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { delimiter, join } from "node:path";
 import { spawn } from "node:child_process";
+import { renderWorkflow, validateArtifact } from "./core.mjs";
 
 const AGENTS = new Set(["codex", "claude"]);
 const SAFETY_INTENTS = new Set(["read-only", "workspace-write"]);
@@ -25,6 +26,8 @@ const TRACE_STATUSES = new Set([
 const DEFAULT_LIMITS = Object.freeze({
   maxLineBytes: 256 * 1024,
   maxEvents: 10_000,
+  maxEventDepth: 64,
+  maxEventNodes: 50_000,
   maxStderrBytes: 256 * 1024,
   cancellationGraceMs: 500,
   versionTimeoutMs: 2_000,
@@ -106,6 +109,88 @@ function cloneJson(value) {
   return JSON.parse(canonicalJson(value));
 }
 
+function assertEventBudget(
+  value,
+  {
+    maxDepth = DEFAULT_LIMITS.maxEventDepth,
+    maxNodes = DEFAULT_LIMITS.maxEventNodes,
+  } = {},
+) {
+  const active = new Set();
+  const stack = [{ value, depth: 0, exit: false }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const frame = stack.pop();
+    if (frame.exit) {
+      active.delete(frame.value);
+      continue;
+    }
+    nodes += 1;
+    if (nodes > maxNodes) {
+      throw adapterError(
+        "EVENT_STRUCTURE_LIMIT",
+        `Provider event exceeds the ${maxNodes}-node normalization budget.`,
+      );
+    }
+    if (frame.depth > maxDepth) {
+      throw adapterError(
+        "EVENT_STRUCTURE_LIMIT",
+        `Provider event exceeds the depth-${maxDepth} normalization budget.`,
+      );
+    }
+    const item = frame.value;
+    if (
+      item === null ||
+      typeof item === "string" ||
+      typeof item === "boolean"
+    ) {
+      continue;
+    }
+    if (typeof item === "number") {
+      if (!Number.isFinite(item)) {
+        throw adapterError(
+          "INVALID_PROVIDER_EVENT",
+          "Provider event contains a non-finite number.",
+        );
+      }
+      continue;
+    }
+    if (typeof item !== "object") {
+      throw adapterError(
+        "INVALID_PROVIDER_EVENT",
+        `Provider event contains a non-JSON ${typeof item} value.`,
+      );
+    }
+    if (active.has(item)) {
+      throw adapterError(
+        "INVALID_PROVIDER_EVENT",
+        "Provider event contains a cycle.",
+      );
+    }
+    if (
+      !Array.isArray(item) &&
+      ![Object.prototype, null].includes(Object.getPrototypeOf(item))
+    ) {
+      throw adapterError(
+        "INVALID_PROVIDER_EVENT",
+        "Provider event must contain only plain JSON objects.",
+      );
+    }
+    active.add(item);
+    stack.push({ value: item, depth: frame.depth, exit: true });
+    const children = Array.isArray(item)
+      ? item
+      : Object.keys(item).map((key) => item[key]);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({
+        value: children[index],
+        depth: frame.depth + 1,
+        exit: false,
+      });
+    }
+  }
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -175,35 +260,6 @@ function normalizeBase64(value, label) {
     throw adapterError("INVALID_ARTIFACT", `${label} is not valid base64.`);
   }
   return decoded;
-}
-
-function workflowSkillBytes(workflow) {
-  const candidates = [
-    ["workflow.source.raw_base64", workflow?.source?.raw_base64],
-    ["workflow.source.raw_bytes_base64", workflow?.source?.raw_bytes_base64],
-    ["workflow.source.snapshot_base64", workflow?.source?.snapshot_base64],
-    ["workflow.source.bytes_base64", workflow?.source?.bytes_base64],
-  ];
-  for (const [label, value] of candidates) {
-    if (value !== undefined) return normalizeBase64(value, label);
-  }
-  const textCandidates = [
-    ["workflow.source.raw", workflow?.source?.raw],
-    ["workflow.skill_markdown", workflow?.skill_markdown],
-    ["workflow.raw_skill", workflow?.raw_skill],
-  ];
-  for (const [label, value] of textCandidates) {
-    if (value !== undefined) {
-      if (typeof value !== "string") {
-        throw adapterError("INVALID_ARTIFACT", `${label} must be text.`);
-      }
-      return Buffer.from(value, "utf8");
-    }
-  }
-  throw adapterError(
-    "INVALID_ARTIFACT",
-    "Workflow does not contain an authoritative raw Skill snapshot.",
-  );
 }
 
 function canonicalCwd(cwd) {
@@ -297,15 +353,8 @@ function promptRecord(prompt) {
 }
 
 function skillRecord(workflow) {
-  const bytes = workflowSkillBytes(workflow);
-  const declaredHash = workflow?.source?.sha256;
+  const bytes = renderWorkflow(workflow);
   const actualHash = sha256(bytes);
-  if (declaredHash !== undefined && declaredHash !== actualHash) {
-    throw adapterError(
-      "INVALID_ARTIFACT",
-      "Workflow raw Skill snapshot does not match source.sha256.",
-    );
-  }
   return {
     encoding: "base64",
     bytes_base64: bytes.toString("base64"),
@@ -347,6 +396,7 @@ function validatePlan(plan) {
       'Expected a plan artifact with ir_version "1.0".',
     );
   }
+  validateArtifact(plan);
   validateApproval(plan.approval);
   assertAgent(plan.agent);
   if (canonicalCwd(plan.cwd) !== plan.cwd) {
@@ -363,7 +413,7 @@ function validatePlan(plan) {
     );
   }
   validateByteRecord(plan.prompt, "prompt");
-  validateByteRecord(plan.skill, "skill");
+  const skillBytes = validateByteRecord(plan.skill, "skill");
   if (
     !plan.workflow ||
     typeof plan.workflow !== "object" ||
@@ -376,6 +426,13 @@ function validatePlan(plan) {
     throw adapterError(
       "INVALID_PLAN",
       "Plan workflow_revision does not match the current workflow snapshot.",
+    );
+  }
+  const renderedSkill = renderWorkflow(plan.workflow);
+  if (!skillBytes.equals(renderedSkill)) {
+    throw adapterError(
+      "INVALID_PLAN",
+      "Plan Skill bytes do not match the rendered workflow candidate.",
     );
   }
   const expectedCommand = commandFor(plan.agent, plan.cwd, expectedSafety);
@@ -502,6 +559,18 @@ function normalizeLimits(limits = {}) {
       DEFAULT_LIMITS.maxEvents,
       1_000_000,
       "maxEvents",
+    ),
+    maxEventDepth: boundedPositiveInteger(
+      limits.maxEventDepth,
+      DEFAULT_LIMITS.maxEventDepth,
+      1_024,
+      "maxEventDepth",
+    ),
+    maxEventNodes: boundedPositiveInteger(
+      limits.maxEventNodes,
+      DEFAULT_LIMITS.maxEventNodes,
+      1_000_000,
+      "maxEventNodes",
     ),
     maxStderrBytes: boundedPositiveInteger(
       limits.maxStderrBytes,
@@ -871,7 +940,7 @@ export function prepareAdapter(plan, executableOverride) {
   };
 }
 
-export function normalizeProviderEvent(agent, event, sequence) {
+export function normalizeProviderEvent(agent, event, sequence, eventLimits) {
   assertAgent(agent);
   if (!Number.isInteger(sequence) || sequence < 0) {
     throw adapterError(
@@ -879,6 +948,7 @@ export function normalizeProviderEvent(agent, event, sequence) {
       "sequence must be a non-negative integer.",
     );
   }
+  assertEventBudget(event, eventLimits);
   const malformed =
     !event || typeof event !== "object" || Array.isArray(event);
   const [kind, status] = portableEvent(agent, event);
@@ -908,6 +978,38 @@ export function normalizeProviderEvent(agent, event, sequence) {
       ),
     },
     summary: eventSummary(kind),
+  };
+}
+
+function normalizationDiagnosticEvent(agent, line, sequence, error) {
+  const code =
+    typeof error?.code === "string"
+      ? error.code.slice(0, 64)
+      : "EVENT_NORMALIZATION_FAILED";
+  const message =
+    typeof error?.message === "string"
+      ? error.message.slice(0, 512)
+      : "Provider event normalization failed.";
+  return {
+    sequence,
+    provider: agent,
+    kind: "provider.unknown",
+    status: "observed",
+    provider_event_id: null,
+    parent_provider_event_id: null,
+    provenance: "observed",
+    source: {
+      raw_type: "normalization-rejected",
+      confidence: 0,
+      malformed: false,
+      raw: {
+        omitted: true,
+        reason: code,
+        evidence: line.subarray(0, 2048).toString("utf8"),
+      },
+    },
+    summary: "provider event rejected by bounded normalization",
+    diagnostic: { code, message },
   };
 }
 
@@ -1073,6 +1175,7 @@ export async function runApprovedPlan(
     let sequence = 0;
     let terminal = null;
     let protocolError = false;
+    let normalizationRejected = false;
     let truncated = false;
     let cancelled = false;
     let settled = false;
@@ -1118,7 +1221,31 @@ export async function runApprovedPlan(
         });
         return;
       }
-      const normalized = normalizeProviderEvent(plan.agent, event, sequence);
+      let normalized;
+      try {
+        normalized = normalizeProviderEvent(plan.agent, event, sequence, {
+          maxDepth: limits.maxEventDepth,
+          maxNodes: limits.maxEventNodes,
+        });
+      } catch (error) {
+        protocolError = true;
+        normalizationRejected = true;
+        normalized = normalizationDiagnosticEvent(
+          plan.agent,
+          line,
+          sequence,
+          error,
+        );
+        sequence += 1;
+        retainEvent(normalized);
+        trace.diagnostics.push({
+          kind: "event-normalization-rejected",
+          sequence: normalized.sequence,
+          code: normalized.diagnostic.code,
+          message: normalized.diagnostic.message,
+        });
+        return;
+      }
       sequence += 1;
       const evidence = terminalEvidence(normalized);
       if (evidence) terminal = evidence;
@@ -1269,7 +1396,11 @@ export async function runApprovedPlan(
       } else if (protocolError || terminal === null) {
         trace.status = "protocol-error";
         trace.failure = {
-          kind: protocolError ? "malformed_stream" : "incomplete_stream",
+          kind: normalizationRejected
+            ? "event_normalization_rejected"
+            : protocolError
+              ? "malformed_stream"
+              : "incomplete_stream",
           provider_terminal_observed: terminal !== null,
         };
       } else {
@@ -1449,6 +1580,39 @@ function promotionGraph(artifact) {
     : tracePromotionGraph(artifact);
 }
 
+function validatePromotableArtifact(artifact) {
+  try {
+    validateArtifact(artifact);
+    if (artifact.kind === "plan") {
+      validatePlan(artifact);
+      if (
+        artifact.approval !== undefined &&
+        artifact.approval.digest !== approvalDigest(artifact)
+      ) {
+        throw adapterError(
+          "INVALID_PLAN",
+          "Plan approval does not match the artifact selected for promotion.",
+        );
+      }
+    }
+  } catch (error) {
+    if (error?.code === "INVALID_ARTIFACT") throw error;
+    throw adapterError(
+      "INVALID_ARTIFACT",
+      `Artifact cannot be promoted: ${error?.message ?? "validation failed"}`,
+      { cause_code: error?.code ?? null },
+    );
+  }
+  const promoted = promotionGraph(artifact);
+  if (promoted.steps.length === 0) {
+    throw adapterError(
+      "INVALID_ARTIFACT",
+      `The ${artifact.kind} artifact contains no promotable workflow steps.`,
+    );
+  }
+  return promoted;
+}
+
 export function promoteArtifact(artifact, { name, description }) {
   if (
     !artifact ||
@@ -1462,6 +1626,7 @@ export function promoteArtifact(artifact, { name, description }) {
     );
   }
   assertJson(artifact);
+  const promoted = validatePromotableArtifact(artifact);
   validateSkillName(name);
   if (
     typeof description !== "string" ||
@@ -1480,16 +1645,7 @@ export function promoteArtifact(artifact, { name, description }) {
       ? "Observed sequence is not a recovered reasoning or causal graph."
       : "Native execution does not enforce the declared graph node by node.",
   ];
-  const promoted = promotionGraph(artifact);
   const { steps } = promoted;
-  if (steps.length === 0) {
-    steps.push({
-      id: "step-review-source-artifact",
-      title: "Review source artifact",
-      body: `Review the derived ${artifact.kind} artifact and define an explicit workflow before execution.`,
-    });
-    warnings.push("No portable workflow steps were available; a review step was added.");
-  }
   const metadataKey = `workflow-studio-${artifact.kind}-sha256`;
   const frontmatter = [
     "---",

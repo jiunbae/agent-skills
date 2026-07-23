@@ -5,10 +5,12 @@ import {
   addEdge,
   addNode,
   approvePlan,
+  approvedPlanArtifact,
   buildCandidateBytes,
   buildCandidateMarkdown,
   buildFullDiff,
   buildPlanArtifact,
+  buildWorkflowArtifact,
   canDownloadArtifact,
   changeEdge,
   createEditorState,
@@ -18,11 +20,17 @@ import {
   moveNode,
   promoteToSkillDraft,
   removeEdge,
+  structuralEditBlockReason,
+  traceProvenanceSummary,
   validationAnnouncement,
   validateState,
 } from "../assets/editor-model.mjs";
-import { verifyPlanApproval } from "../src/adapters.mjs";
-import { importSkillBytes } from "../src/core.mjs";
+import { normalizeProviderEvent, verifyPlanApproval } from "../src/adapters.mjs";
+import {
+  importSkillBytes,
+  renderWorkflow,
+  validateArtifact,
+} from "../src/core.mjs";
 
 const ASSET_ROOT = new URL("../assets/", import.meta.url);
 
@@ -67,76 +75,90 @@ function workflowArtifact() {
     "Opaque tail.",
     "",
   ].join("\n");
+  const artifact = importSkillBytes(Buffer.from(raw), {
+    sourcePath: "/tmp/demo/SKILL.md",
+  });
+  const [first, second] = artifact.graph.nodes;
+  const originalFirstId = first.id;
+  const originalSecondId = second.id;
+  first.id = "step-1";
+  second.id = "step-2";
+  second.confidence = {
+    level: "explicit",
+    reason: "Managed metadata",
+    rule_id: "managed.v1",
+  };
+  artifact.graph.edges = artifact.graph.edges.map((edge) => ({
+    ...edge,
+    id: "edge-1",
+    from: edge.from === originalFirstId ? "step-1" : "step-2",
+    to: edge.to === originalSecondId ? "step-2" : "step-1",
+  }));
+  artifact.graph.entry_node_ids = ["step-1"];
+  validateArtifact(artifact);
+  return artifact;
+}
+
+function disjointWorkflowArtifact() {
+  const raw = [
+    "---",
+    "name: disjoint-workflow",
+    'description: "Two mapped roots with opaque content between them."',
+    "---",
+    "",
+    "## Workflow",
+    "",
+    "### Step 1: First",
+    "First body.",
+    "",
+    "## Notes",
+    "",
+    "MUST PRESERVE THIS OPAQUE NOTE.",
+    "",
+    "## Workflow",
+    "",
+    "### Step 2: Second",
+    "Second body.",
+    "",
+  ].join("\n");
+  return importSkillBytes(Buffer.from(raw), {
+    sourcePath: "/tmp/disjoint/SKILL.md",
+  });
+}
+
+function productionTraceArtifact() {
+  const events = [
+    normalizeProviderEvent("codex", { type: "thread.started", thread_id: "t1" }, 0),
+    normalizeProviderEvent(
+      "codex",
+      { type: "item.completed", item: { id: "tool-1", type: "command_execution" } },
+      1,
+    ),
+    normalizeProviderEvent("codex", { type: "turn.completed" }, 2),
+  ];
   return {
     ir_version: "1.0",
-    kind: "workflow",
-    artifact_id: "fixture",
-    source: {
-      path: "/tmp/demo/SKILL.md",
-      sha256: "abc123",
-      raw_base64: Buffer.from(raw).toString("base64"),
-    },
-    graph: {
-      entry_node_ids: ["step-1"],
-      nodes: [
-        {
-          id: "step-1",
-          kind: "step",
-          title: "조사",
-          body: "본문 하나.",
-          source_map: {
-            span: byteSpan(raw, "### Step 1: 조사\n본문 하나.\n\n"),
-            title: byteSpan(raw, "조사"),
-            body: byteSpan(raw, "본문 하나."),
-          },
-          confidence: {
-            level: "structural",
-            reason: "Step heading",
-            rule_id: "step-heading",
-          },
-          editable: {
-            fields: ["title", "body"],
-            structural: true,
-            reason: "",
-          },
-        },
-        {
-          id: "step-2",
-          kind: "step",
-          title: "Build",
-          body: "Body two.",
-          source_map: {
-            span: byteSpan(raw, "### Step 2: Build\nBody two.\n\n"),
-            title: byteSpan(raw, "Build"),
-            body: byteSpan(raw, "Body two."),
-          },
-          confidence: {
-            level: "explicit",
-            reason: "Managed metadata",
-          },
-          editable: {
-            fields: ["title", "body"],
-            structural: true,
-            reason: "",
-          },
-        },
-      ],
-      edges: [
-        {
-          id: "edge-1",
-          kind: "sequence",
-          from: "step-1",
-          to: "step-2",
-        },
-      ],
-    },
-    opaque_spans: [byteSpan(raw, "Opaque <script>alert('xss')</script> content.")],
-    diagnostics: [],
-    revision: {
-      base_sha256: "abc123",
-      current_sha256: "abc123",
-      operations: [],
-    },
+    kind: "trace",
+    run_id: "run-editor-fixture",
+    status: "completed",
+    completeness: "complete",
+    events,
+    inferred_edges: [
+      {
+        from_sequence: 0,
+        to_sequence: 1,
+        kind: "sequence",
+        provenance: "inferred",
+        confidence: 0.5,
+      },
+      {
+        from_sequence: 1,
+        to_sequence: 2,
+        kind: "parallel",
+        provenance: "inferred",
+        confidence: 0.5,
+      },
+    ],
   };
 }
 
@@ -148,10 +170,14 @@ test("no-op candidate keeps the exact imported bytes", () => {
     Buffer.from(artifact.source.raw_base64, "base64"),
   );
   assert.equal(state.nodes[0].confidence.level, "structural");
-  assert.equal(state.nodes[0].sourceMap.title.start, byteSpan(
-    Buffer.from(artifact.source.raw_base64, "base64").toString(),
-    "조사",
-  ).start_byte);
+  const raw = Buffer.from(artifact.source.raw_base64, "base64");
+  assert.equal(
+    raw.subarray(
+      state.nodes[0].sourceMap.title.start,
+      state.nodes[0].sourceMap.title.end,
+    ).toString("utf8").endsWith("조사"),
+    true,
+  );
 });
 
 test("mapped Unicode title/body edits patch only those byte spans", () => {
@@ -161,14 +187,15 @@ test("mapped Unicode title/body edits patch only those byte spans", () => {
   state = editNode(state, "step-2", "body", "Build safely.");
   const candidate = buildCandidateMarkdown(state);
 
-  assert.match(candidate, /### Step 1: 리서치/);
+  assert.match(candidate, /### 리서치/);
   assert.match(candidate, /Build safely\./);
+  assert.match(candidate, /Build safely\.\n## Appendix/);
   assert.match(candidate, /Opaque <script>alert\('xss'\)<\/script> content\./);
   assert.match(candidate, /```md\n<!-- workflow-studio:v1 ZmFrZQ -->\n```/);
   assert.equal(
     [...candidate.matchAll(/workflow-studio:v1/gu)].length,
-    1,
-    "a non-structural edit must not append managed metadata",
+    2,
+    "a dirty workflow adds one canonical marker without altering the fenced example",
   );
   assert.equal(state.dirty, true);
   assert.equal(state.validation.valid, true);
@@ -241,6 +268,70 @@ test("structural add, delete, and reorder rewrite authoritative Markdown", () =>
   );
 });
 
+test("downloaded browser artifacts survive canonical validation and rendering", () => {
+  let mapped = createEditorState(workflowArtifact());
+  mapped = editNode(mapped, "step-1", "title", "Browser mapped edit");
+  mapped = editNode(mapped, "step-2", "body", "Browser body edit.");
+  const mappedArtifact = structuredClone(buildWorkflowArtifact(mapped));
+  assert.equal(mappedArtifact.revision.dirty, true);
+  assert.equal(mappedArtifact.revision.structural_dirty, false);
+  assert.equal(validateArtifact(mappedArtifact), true);
+  assert.deepEqual(
+    renderWorkflow(mappedArtifact),
+    Buffer.from(buildCandidateBytes(mapped)),
+  );
+  assert.match(renderWorkflow(mappedArtifact).toString(), /Browser mapped edit/);
+  assert.match(
+    renderWorkflow(mappedArtifact).toString(),
+    /Browser body edit\.\n## Appendix/,
+  );
+  const mappedReimport = importSkillBytes(renderWorkflow(mappedArtifact), {
+    sourcePath: "/tmp/browser-mapped/SKILL.md",
+  });
+  assert.match(mappedReimport.graph.nodes[1].body, /^Browser body edit\./);
+
+  let structural = createEditorState(workflowArtifact());
+  structural = addNode(structural, "step-2", "after");
+  structural = editNode(structural, structural.selectedId, "title", "Browser add");
+  structural = editNode(structural, structural.selectedId, "body", "Added body.");
+  const structuralArtifact = JSON.parse(
+    JSON.stringify(buildWorkflowArtifact(structural)),
+  );
+  assert.equal(structuralArtifact.revision.dirty, true);
+  assert.equal(structuralArtifact.revision.structural_dirty, true);
+  assert.equal(validateArtifact(structuralArtifact), true);
+  assert.deepEqual(
+    renderWorkflow(structuralArtifact),
+    Buffer.from(buildCandidateBytes(structural)),
+  );
+  assert.match(renderWorkflow(structuralArtifact).toString(), /Browser add/);
+  assert.match(
+    renderWorkflow(structuralArtifact).toString(),
+    /Opaque <script>alert\('xss'\)<\/script> content\./,
+  );
+});
+
+test("disjoint mapped regions reject structural UI edits and preserve opaque bytes", () => {
+  const initial = createEditorState(disjointWorkflowArtifact());
+  assert.match(structuralEditBlockReason(initial), /separate source regions/i);
+  assert.strictEqual(addNode(initial, initial.nodes[0].id, "after"), initial);
+  assert.strictEqual(deleteNode(initial, initial.nodes[0].id), initial);
+  assert.strictEqual(moveNode(initial, initial.nodes[0].id, "down"), initial);
+  assert.strictEqual(
+    addEdge(initial, initial.nodes[0].id, initial.nodes[1].id, "parallel"),
+    initial,
+  );
+  assert.strictEqual(removeEdge(initial, initial.edges[0]?.id ?? "missing"), initial);
+
+  const mapped = editNode(initial, initial.nodes[0].id, "title", "Edited safely");
+  const candidate = buildCandidateMarkdown(mapped);
+  assert.match(candidate, /Edited safely/);
+  assert.match(candidate, /MUST PRESERVE THIS OPAQUE NOTE\./);
+  const artifact = buildWorkflowArtifact(mapped);
+  assert.equal(validateArtifact(artifact), true);
+  assert.match(renderWorkflow(artifact).toString(), /MUST PRESERVE THIS OPAQUE NOTE\./);
+});
+
 test("edge add/change/remove validates endpoints, duplicates, and cycles", () => {
   let state = createEditorState(workflowArtifact());
   state = addNode(state, "step-2", "after");
@@ -286,6 +377,49 @@ test("approving hashes exact plan and every subsequent edit clears approval", as
   assert.equal(state.plan.approval, null);
 });
 
+test("reopened plans rebuild from workflow only without prompt or approval nesting", async () => {
+  let state = createEditorState(workflowArtifact());
+  state = editNode(state, "step-1", "title", "Reviewed graph");
+  state = editPlan(state, "cwd", process.cwd());
+  state = editPlan(state, "prompt", "FIRST-SUPERSEDED-PROMPT");
+  state = await approvePlan(state);
+  const first = approvedPlanArtifact(state);
+  assert.ok(first);
+
+  const sizes = [JSON.stringify(first).length];
+  for (const prompt of ["SECOND-REVIEWED--PROMPT", "THIRD--REVIEWED--PROMPT"]) {
+    state = createEditorState(first);
+    assert.equal(state.dirty, true);
+    assert.equal(state.nodes[0].title, "Reviewed graph");
+    state = editPlan(state, "prompt", prompt);
+    state = await approvePlan(state);
+    const reopened = approvedPlanArtifact(state);
+    assert.ok(reopened);
+    assert.equal(reopened.workflow.kind, "workflow");
+    assert.equal(reopened.workflow.workflow, undefined);
+    assert.equal(reopened.workflow.prompt, undefined);
+    assert.equal(reopened.workflow.approval, undefined);
+    assert.equal(verifyPlanApproval(reopened), true);
+    assert.equal(validateArtifact(reopened), true);
+    assert.deepEqual(
+      Buffer.from(reopened.skill.bytes_base64, "base64"),
+      renderWorkflow(reopened.workflow),
+    );
+    assert.doesNotMatch(JSON.stringify(reopened.workflow), /FIRST-SUPERSEDED-PROMPT/);
+    sizes.push(JSON.stringify(reopened).length);
+    first.workflow = reopened.workflow;
+    first.prompt = reopened.prompt;
+    first.skill = reopened.skill;
+    first.workflow_revision = reopened.workflow_revision;
+    first.command = reopened.command;
+    first.approval = reopened.approval;
+  }
+  assert.ok(
+    Math.max(...sizes) - Math.min(...sizes) < 160,
+    `reapproval artifacts unexpectedly grew: ${sizes.join(", ")}`,
+  );
+});
+
 test("approval rejects unsupported agent and safety enum values", async () => {
   let state = createEditorState(workflowArtifact());
   state = editPlan(state, "cwd", process.cwd());
@@ -314,39 +448,102 @@ test("full-file diff includes unchanged opaque context and both changed sides", 
   assert.match(diff, /^ end$/m);
 });
 
-test("trace promotion retains explicit inference warnings", () => {
-  const trace = {
-    ir_version: "1.0",
-    kind: "trace",
-    status: "completed",
-    graph: {
-      nodes: [
-        {
-          id: "observed-1",
-          title: "Tool completed",
-          body: "Exit code 0.",
-          provenance: "observed",
-        },
-        {
-          id: "inferred-1",
-          title: "Likely review",
-          body: "Not directly observed.",
-          provenance: "inferred",
-        },
-      ],
-      edges: [],
-    },
-  };
-  const draft = promoteToSkillDraft(trace);
+test("production trace events become read-only graph evidence and promote topology", () => {
+  const trace = productionTraceArtifact();
+  const state = createEditorState(trace);
+  assert.equal(state.validation.valid, true);
+  assert.equal(state.plan.adapter, "codex");
+  assert.equal(state.nodes.length, trace.events.length);
+  assert.equal(state.edges.length, trace.inferred_edges.length);
+  assert.ok(state.nodes.every((node) => node.readOnly));
+  assert.ok(state.nodes.every((node) => node.provenance === "observed"));
+  assert.ok(state.nodes.every((node) => node.raw_event_ref.sequence >= 0));
+  assert.ok(state.edges.every((edge) => edge.readOnly));
+  assert.ok(state.edges.every((edge) => edge.provenance === "inferred"));
+  assert.deepEqual(traceProvenanceSummary(state), {
+    observed: 3,
+    inferred: 0,
+    declared: 0,
+    unknown: 0,
+  });
+  assert.match(structuralEditBlockReason(state), /read-only evidence/i);
+  assert.strictEqual(
+    addEdge(state, state.nodes[0].id, state.nodes[2].id, "sequence"),
+    state,
+  );
+
+  const draft = promoteToSkillDraft(state);
   assert.equal(draft.derived_from, "trace");
   assert.match(draft.markdown, /Derived from a trace artifact/);
   assert.match(draft.markdown, /Inferred or unobserved/);
   assert.match(draft.markdown, /Provenance: `observed`/);
-  assert.match(draft.markdown, /Provenance: `inferred`/);
+  const reimported = importSkillBytes(Buffer.from(draft.markdown), {
+    sourcePath: "/tmp/promoted-trace/SKILL.md",
+  });
+  assert.deepEqual(
+    reimported.graph.edges.map((edge) => edge.kind),
+    ["sequence", "parallel"],
+  );
+  const marker = [...draft.markdown.matchAll(
+    /<!-- workflow-studio:v1 ([A-Za-z0-9_-]+) -->/gu,
+  )].at(-1);
+  const metadata = JSON.parse(
+    Buffer.from(marker[1], "base64url").toString("utf8"),
+  );
+  assert.ok(
+    metadata.edges.every(
+      (edge) =>
+        edge.source_provenance === "inferred" &&
+        edge.inference_label === "inferred-order-not-causality",
+    ),
+  );
+});
+
+test("browser plan promotion preserves sequence and parallel topology", () => {
+  let state = createEditorState(workflowArtifact());
+  state = addNode(state, "step-2", "after");
+  state = editNode(state, state.selectedId, "title", "Third");
+  state = editNode(state, state.selectedId, "body", "Third body.");
+  const third = state.selectedId;
+  state = changeEdge(state, "edge-1", { kind: "parallel" });
+  state = addEdge(state, "step-2", third, "sequence");
+  const draft = promoteToSkillDraft(state);
+  const reimported = importSkillBytes(Buffer.from(draft.markdown), {
+    sourcePath: "/tmp/promoted-plan/SKILL.md",
+  });
+  assert.deepEqual(
+    reimported.graph.edges.map(({ from, to, kind }) => ({ from, to, kind })),
+    [
+      { from: "step-1", to: "step-2", kind: "parallel" },
+      { from: "step-2", to: third, kind: "sequence" },
+    ],
+  );
+});
+
+test("generic downloads are workflow-only and validate the exact built artifact", () => {
+  const workflow = createEditorState(workflowArtifact());
+  assert.equal(canDownloadArtifact(workflow), true);
+
+  const corrupted = workflowArtifact();
+  corrupted.source.sha256 = "0".repeat(64);
+  assert.equal(canDownloadArtifact(createEditorState(corrupted)), false);
+
+  const plan = {
+    ir_version: "1.0",
+    kind: "plan",
+    workflow: workflowArtifact(),
+    agent: "codex",
+    cwd: process.cwd(),
+    safety: { intent: "read-only" },
+    prompt: "Review.",
+  };
+  assert.equal(canDownloadArtifact(createEditorState(plan)), false);
+  assert.equal(canDownloadArtifact(createEditorState(productionTraceArtifact())), false);
 });
 
 test("browser code keeps untrusted data out of HTML parsing sinks", async () => {
   const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  const model = await readFile(new URL("editor-model.mjs", ASSET_ROOT), "utf8");
   assert.doesNotMatch(editor, /\.innerHTML\b/);
   assert.doesNotMatch(editor, /\.outerHTML\b/);
   assert.doesNotMatch(editor, /insertAdjacentHTML/);
@@ -365,6 +562,13 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   assert.match(editor, /applyChange\(fromSelect\.id\)/);
   assert.match(editor, /applyChange\(toSelect\.id\)/);
   assert.match(editor, /applyChange\(kindSelect\.id\)/);
+  assert.match(
+    editor,
+    /mutate\(selectNode\(state, node\.id\), `outline-\$\{node\.id\}`\)/,
+  );
+  assert.match(model, /state\.kind === "workflow"/);
+  assert.match(model, /artifact\.revision = \{/);
+  assert.match(model, /artifact\.opaque_spans = opaqueCoverage\(state\)/);
 });
 
 test("static editor exposes semantic views, live status, and labeled controls", async () => {
@@ -399,5 +603,34 @@ test("static editor exposes semantic views, live status, and labeled controls", 
   assert.match(html, /<label for="nodeTitle">/);
   assert.match(html, /<label for="planPrompt">/);
   assert.match(html, /type="button" class="primary">\s*Approve current plan/);
+  assert.match(html, /id="structuralEditNotice"/);
+  assert.match(html, /id="addEdge"/);
+  assert.doesNotMatch(html, /structural browser edits remain in the/);
   assert.doesNotMatch(html, /<script(?! type="module" src="\/editor\.mjs")/);
+});
+
+test("custom focus color exceeds 3:1 against adjacent editor surfaces", async () => {
+  const css = await readFile(new URL("styles.css", ASSET_ROOT), "utf8");
+  const focus = css.match(/--focus:\s*(#[0-9a-f]{6})/iu)?.[1];
+  assert.ok(focus, "missing --focus color");
+  const luminance = (hex) => {
+    const channels = hex
+      .slice(1)
+      .match(/../gu)
+      .map((part) => Number.parseInt(part, 16) / 255)
+      .map((value) =>
+        value <= 0.04045
+          ? value / 12.92
+          : ((value + 0.055) / 1.055) ** 2.4,
+      );
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const contrast = (left, right) => {
+    const values = [luminance(left), luminance(right)].sort((a, b) => b - a);
+    return (values[0] + 0.05) / (values[1] + 0.05);
+  };
+  assert.ok(contrast(focus, "#fffdf8") >= 3);
+  assert.ok(contrast(focus, "#f5f3ec") >= 3);
+  assert.match(css, /outline:\s*3px solid var\(--focus\)/);
+  assert.match(css, /stroke:\s*var\(--focus\)/);
 });

@@ -111,14 +111,20 @@ Keep body two.
     type: "edit-node",
     node_id: imported.graph.nodes[0].id,
     title: "Renamed",
+    body: "Edited body without a trailing newline.",
   });
   const editedBytes = renderWorkflow(changed);
   const edited = editedBytes.toString("utf8");
   assert.match(edited, /### Renamed/u);
+  assert.match(
+    edited,
+    /Edited body without a trailing newline\.\n### Step 2: Second/u,
+  );
   assert.match(edited, /custom: keep-me/u);
   assert.match(edited, /\| keep \| this \|/u);
   assert.match(edited, /workflow-studio:v1/u);
   assert.match(diffText(raw, editedBytes), /^--- a\/SKILL\.md/mu);
+  assert.equal(importSkillBytes(editedBytes).graph.nodes.length, 2);
 
   const added = applyOperation(changed, {
     type: "add-node",
@@ -330,6 +336,274 @@ Second body.
   );
 });
 
+test("structural mutations and renders reject disjoint mapped source regions", () => {
+  const fixtures = [
+    Buffer.from(`---
+name: separate-workflows
+description: separate workflow roots
+---
+
+## Workflow
+### Step 1: One
+First.
+
+## Notes
+KEEP-ME
+
+## Workflow
+### Step 1: Two
+Second.
+`),
+    Buffer.from(`---
+name: separate-phases
+description: numbered phases with opaque content
+---
+
+## Phase 1: One
+First.
+
+## Notes
+KEEP-PHASE-NOTES
+
+## Phase 2: Two
+Second.
+`),
+  ];
+  for (const raw of fixtures) {
+    const workflow = importSkillBytes(raw);
+    assert.equal(workflow.graph.nodes.length, 2);
+    const [first, second] = workflow.graph.nodes;
+    for (const operation of [
+      {
+        type: "add-node",
+        reference_id: first.id,
+        position: "after",
+        title: "Inserted",
+      },
+      { type: "delete-node", node_id: second.id },
+      { type: "move-node", node_id: first.id, direction: "down" },
+    ]) {
+      assert.throws(() => applyOperation(workflow, operation), {
+        code: "DISJOINT_SOURCE_REGIONS",
+      });
+      assert.deepEqual(renderWorkflow(workflow), raw);
+    }
+
+    const externallyDirty = structuredClone(workflow);
+    externallyDirty.revision.dirty = true;
+    externallyDirty.revision.structural_dirty = true;
+    delete externallyDirty.revision.current_sha256;
+    externallyDirty.revision.current_sha256 = artifactHash(externallyDirty);
+    assert.throws(() => renderWorkflow(externallyDirty), {
+      code: "DISJOINT_SOURCE_REGIONS",
+    });
+  }
+});
+
+test("ATX delimiters, literal trailing hashes, and real fence closers round-trip", () => {
+  const raw = Buffer.from(`---
+name: markdown-boundaries
+description: exercise accepted markdown boundaries
+---
+
+## Workflow
+###   Step 1: Learn C#
+Keep C sharp.
+###\tStep 2: Use F#   ###
+Keep F sharp.
+`);
+  const workflow = importSkillBytes(raw);
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Learn C#", "Use F#"],
+  );
+
+  const mapped = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: workflow.graph.nodes[0].id,
+    title: "Renamed",
+  });
+  const mappedText = renderWorkflow(mapped).toString("utf8");
+  assert.match(mappedText, /###   Renamed\n/u);
+  assert.doesNotMatch(mappedText, /Renamed(?:al|l)\n/u);
+
+  const structural = applyOperation(workflow, {
+    type: "add-node",
+    reference_id: workflow.graph.nodes[0].id,
+    position: "after",
+    title: "Inserted",
+  });
+  const rendered = renderWorkflow(structural);
+  assert.match(rendered.toString("utf8"), /Step 1: Learn C#/u);
+  assert.match(rendered.toString("utf8"), /Step 3: Use F#/u);
+  const reimported = importSkillBytes(rendered);
+  assert.deepEqual(
+    reimported.graph.nodes.map((node) => node.title),
+    ["Learn C#", "Inserted", "Use F#"],
+  );
+
+  const fencedExample = `\`\`\`md
+\`\`\`not-a-close
+### Step 99: Fake
+<!-- workflow-studio:v1 e30 -->
+\`\`\`
+`;
+  const fencedRaw = Buffer.from(`---
+name: fence-boundary
+description: require a real closing fence
+---
+
+## Workflow
+### Step 1: One
+${fencedExample}
+### Step 2: Two
+Second.
+`);
+  const fenced = importSkillBytes(fencedRaw);
+  assert.deepEqual(
+    fenced.graph.nodes.map((node) => node.title),
+    ["One", "Two"],
+  );
+  assert.equal(fenced.extensions.managed_metadata, null);
+  const titleEdited = applyOperation(fenced, {
+    type: "edit-node",
+    node_id: fenced.graph.nodes[0].id,
+    title: "Renamed",
+  });
+  assert.ok(renderWorkflow(titleEdited).toString("utf8").includes(fencedExample));
+  const structurallyEdited = applyOperation(fenced, {
+    type: "add-node",
+    reference_id: fenced.graph.nodes[0].id,
+    position: "after",
+    title: "Inserted",
+  });
+  assert.ok(
+    renderWorkflow(structurallyEdited).toString("utf8").includes(fencedExample),
+  );
+});
+
+test("empty and multiline titles are rejected at mutation and validation boundaries", () => {
+  const workflow = importSkillBytes(
+    Buffer.from(`---
+name: title-grammar
+description: title grammar
+---
+
+## Workflow
+### Step 1: One
+Body.
+`),
+  );
+  for (const title of ["", "   ", "Changed\n## Injected", "Changed\rInjected"]) {
+    assert.throws(
+      () =>
+        applyOperation(workflow, {
+          type: "edit-node",
+          node_id: workflow.graph.nodes[0].id,
+          title,
+        }),
+      { code: "INVALID_TITLE" },
+    );
+    assert.throws(
+      () =>
+        applyOperation(workflow, {
+          type: "add-node",
+          reference_id: workflow.graph.nodes[0].id,
+          position: "after",
+          title,
+        }),
+      { code: "INVALID_TITLE" },
+    );
+  }
+  const invalid = structuredClone(workflow);
+  invalid.graph.nodes[0].title = "";
+  assert.throws(() => validateArtifact(invalid), { code: "INVALID_TITLE" });
+});
+
+test("malformed managed metadata is diagnosed and ignored as one unit", () => {
+  const source = `---
+name: malformed-managed
+description: malformed managed graphs
+---
+
+## Workflow
+### Step 1: One
+First.
+### Step 2: Two
+Second.
+`;
+  const fingerprint = (title) =>
+    createHash("sha256").update(title).digest("hex");
+  const validNodes = [
+    { id: "managed-one", order: 0, title_sha256: fingerprint("One") },
+    { id: "managed-two", order: 1, title_sha256: fingerprint("Two") },
+  ];
+  const invalidPayloads = [
+    null,
+    { ir_version: "1.0", nodes: "scalar", edges: [] },
+    {
+      ir_version: "1.0",
+      nodes: validNodes,
+      edges: [null],
+    },
+    {
+      ir_version: "1.0",
+      nodes: [
+        validNodes[0],
+        { ...validNodes[1], id: validNodes[0].id },
+      ],
+      edges: [],
+    },
+    {
+      ir_version: "1.0",
+      nodes: validNodes,
+      edges: [
+        {
+          id: "dangling",
+          from: "managed-one",
+          to: "missing",
+          kind: "sequence",
+        },
+      ],
+    },
+    {
+      ir_version: "1.0",
+      nodes: validNodes,
+      edges: [
+        {
+          id: "forward",
+          from: "managed-one",
+          to: "managed-two",
+          kind: "sequence",
+        },
+        {
+          id: "back",
+          from: "managed-two",
+          to: "managed-one",
+          kind: "sequence",
+        },
+      ],
+    },
+  ];
+  for (const payload of invalidPayloads) {
+    const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString(
+      "base64url",
+    );
+    const workflow = importSkillBytes(
+      Buffer.from(`${source}\n<!-- workflow-studio:v1 ${encoded} -->\n`),
+    );
+    assert.equal(
+      workflow.diagnostics.filter(
+        (diagnostic) => diagnostic.code === "managed.invalid",
+      ).length,
+      1,
+    );
+    assert.ok(
+      workflow.graph.nodes.every((node) => node.provenance === "imported"),
+    );
+  }
+});
+
 test("graph validation rejects unknown versions, duplicate IDs, dangling edges, and cycles", () => {
   const workflow = importSkillBytes(
     Buffer.from(`---
@@ -372,6 +646,25 @@ B
       }),
     { code: "GRAPH_CYCLE" },
   );
+
+  const missingEntry = structuredClone(workflow);
+  missingEntry.graph.entry_node_ids = ["missing"];
+  assert.throws(() => validateArtifact(missingEntry), {
+    code: "INVALID_ENTRY_NODES",
+  });
+
+  const missingBody = structuredClone(workflow);
+  delete missingBody.graph.nodes[0].body;
+  assert.throws(() => validateArtifact(missingBody), { code: "INVALID_NODE" });
+
+  assert.throws(
+    () => validateArtifact({ ir_version: "1.0", kind: "plan" }),
+    { code: "INVALID_PLAN" },
+  );
+  assert.throws(
+    () => validateArtifact({ ir_version: "1.0", kind: "trace" }),
+    { code: "INVALID_TRACE" },
+  );
 });
 
 test("writeWorkflow uses safe new output and compare-and-swap in-place export", async () => {
@@ -389,6 +682,16 @@ Do one.
 `);
   await writeFile(source, initial);
   const imported = await importSkillFile(source);
+  for (const sameSource of [
+    source,
+    join(directory, "not-created", "..", "SKILL.md"),
+  ]) {
+    await assert.rejects(
+      writeWorkflow(imported, { outputPath: sameSource }),
+      { code: "IN_PLACE_REQUIRED" },
+    );
+    assert.deepEqual(await readFile(source), initial);
+  }
   const result = await writeWorkflow(imported, { outputPath: output });
   assert.deepEqual(await readFile(output), initial);
   assert.equal(result.byte_length, initial.length);
