@@ -731,7 +731,14 @@ function portableEvent(agent, event) {
   if (agent === "codex") {
     if (type === "thread.started") return ["run.started", "running"];
     if (type === "turn.started") return ["turn.started", "running"];
-    if (type === "turn.completed") return ["turn.completed", "completed"];
+    if (type === "turn.completed") {
+      const failed =
+        event.is_error === true ||
+        event.error !== undefined ||
+        ["error", "failed"].includes(event.status) ||
+        event.exit_code > 0;
+      return ["turn.completed", failed ? "failed" : "completed"];
+    }
     if (type === "turn.failed" || type === "error") {
       return ["turn.failed", "failed"];
     }
@@ -1078,6 +1085,17 @@ function normalizationDiagnosticEvent(agent, line, sequence, error) {
 }
 
 function terminalEvidence(normalized) {
+  if (
+    normalized.status === "failed" &&
+    [
+      "turn.completed",
+      "run.completed",
+      "turn.failed",
+      "run.failed",
+    ].includes(normalized.kind)
+  ) {
+    return "failed";
+  }
   if (
     normalized.kind === "turn.completed" ||
     normalized.kind === "run.completed"

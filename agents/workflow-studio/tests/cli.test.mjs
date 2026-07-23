@@ -138,13 +138,19 @@ test("real import, edit, diff, and export preserve a no-op byte-for-byte", async
   const noOpExport = join(item.directory, "SKILL.no-op.md");
   success(await invoke(["export", importedPath, "--out", noOpExport]));
   assert.deepEqual(await readFile(noOpExport), item.bytes);
+  const inPlaceDiagnostic = failure(
+    await invoke(["export", importedPath, "--in-place"]),
+    "IN_PLACE_UNSUPPORTED",
+  );
+  assert.match(inPlaceDiagnostic.message, /use --out with a new path/u);
+  assert.deepEqual(await readFile(item.skill), item.bytes);
   for (const sourceSpelling of [
     item.skill,
     join(item.directory, "not-created", "..", "SKILL.md"),
   ]) {
     failure(
       await invoke(["export", importedPath, "--out", sourceSpelling]),
-      "IN_PLACE_REQUIRED",
+      "IN_PLACE_UNSUPPORTED",
     );
     assert.deepEqual(await readFile(item.skill), item.bytes);
   }

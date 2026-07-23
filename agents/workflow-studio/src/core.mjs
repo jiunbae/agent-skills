@@ -1,11 +1,9 @@
 import { createHash } from "node:crypto";
 import {
-  chmod,
   link,
   lstat,
   open,
   readFile,
-  rename,
   rm,
   stat,
 } from "node:fs/promises";
@@ -2336,64 +2334,39 @@ export function diffText(before, after, path = "SKILL.md") {
   return `${output.join("\n")}\n`;
 }
 
-async function assertRegularNonSymlink(path, code) {
-  const info = await lstat(path);
-  if (info.isSymbolicLink()) {
-    throw workflowError("SYMLINK_REFUSED", `Refusing symlink ${code}: ${path}`);
-  }
-  if (!info.isFile()) {
-    throw workflowError("INVALID_PATH", `${code} is not a file: ${path}`);
-  }
-  return info;
-}
-
 export async function writeWorkflow(
   workflow,
   { outputPath, inPlace = false } = {},
 ) {
-  validateArtifact(workflow);
-  if (inPlace && outputPath !== undefined) {
+  if (inPlace) {
     throw workflowError(
-      "OUTPUT_CONFLICT",
-      "outputPath and inPlace cannot be combined; in-place export only targets the imported source.",
+      "IN_PLACE_UNSUPPORTED",
+      "Portable V1 does not support in-place export; choose a new outputPath.",
+    );
+  }
+  validateArtifact(workflow);
+  if (!outputPath) {
+    throw workflowError(
+      "OUTPUT_REQUIRED",
+      "Provide a new outputPath for export.",
     );
   }
   const sourcePath = resolve(workflow.source.path);
-  const target = resolve(outputPath ?? (inPlace ? sourcePath : ""));
-  if (!outputPath && !inPlace) {
+  const target = resolve(outputPath);
+  if (target === sourcePath) {
     throw workflowError(
-      "OUTPUT_REQUIRED",
-      "Provide outputPath or explicitly request inPlace export.",
+      "IN_PLACE_UNSUPPORTED",
+      "Portable V1 cannot export over the imported source; choose a new outputPath.",
     );
   }
-  if (!inPlace && target === sourcePath) {
+  try {
+    await lstat(target);
     throw workflowError(
-      "IN_PLACE_REQUIRED",
-      "An output path resolving to the source requires explicit inPlace export.",
+      "OUTPUT_EXISTS",
+      `Output already exists; V1 does not force overwrite: ${target}`,
     );
-  }
-  const replacingSource = inPlace;
-  let sourceInfo = null;
-  if (replacingSource) {
-    sourceInfo = await assertRegularNonSymlink(sourcePath, "source");
-    const current = await readFile(sourcePath);
-    if (sha256(current) !== workflow.source.sha256) {
-      throw workflowError(
-        "SOURCE_CONFLICT",
-        `Source changed since import: ${sourcePath}`,
-        { expected: workflow.source.sha256, actual: sha256(current) },
-      );
-    }
-  } else {
-    try {
-      await lstat(target);
-      throw workflowError(
-        "OUTPUT_EXISTS",
-        `Output already exists; V1 does not force overwrite: ${target}`,
-      );
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
   }
   const parent = dirname(target);
   const parentInfo = await stat(parent);
@@ -2412,21 +2385,8 @@ export async function writeWorkflow(
     await handle.sync();
     await handle.close();
     handle = null;
-    if (replacingSource) {
-      const latest = await readFile(sourcePath);
-      if (sha256(latest) !== workflow.source.sha256) {
-        throw workflowError(
-          "SOURCE_CONFLICT",
-          `Source changed while export was being prepared: ${sourcePath}`,
-          { expected: workflow.source.sha256, actual: sha256(latest) },
-        );
-      }
-      await chmod(temporary, sourceInfo.mode & 0o777);
-      await rename(temporary, target);
-    } else {
-      await link(temporary, target);
-      await rm(temporary);
-    }
+    await link(temporary, target);
+    await rm(temporary);
     const directoryHandle = await open(parent, "r");
     try {
       await directoryHandle.sync();

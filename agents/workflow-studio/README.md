@@ -45,7 +45,7 @@ review the full Markdown diff. **Download IR** saves the edited workflow JSON;
 **Download Markdown draft** exports directly in the browser. The HTTP server
 has no file-write or agent-run endpoint.
 
-To export a downloaded edited IR through the conflict-safe CLI:
+To export a downloaded edited IR through the no-overwrite CLI:
 
 ```bash
 node scripts/workflow-studio.mjs export \
@@ -54,8 +54,10 @@ node scripts/workflow-studio.mjs export \
 ```
 
 Without semantic edits, the exported bytes are identical to the imported
-source. For in-place export, replace `--out ...` with `--in-place`; this is
-refused if the source changed after import or is a symlink.
+source. Portable V1 does not support in-place export because dependency-free
+Node cannot atomically replace a pathname only if its imported hash still
+matches. Always choose a new `--out` path; `--in-place` and an `--out` path
+that resolves to the imported source are explicitly refused.
 
 ## Prompt → approved plan → native run → trace
 
@@ -157,7 +159,7 @@ All artifact and draft destinations are explicit `--out` paths, except that
 - `plan`: unapproved plan JSON
 - `approve`: approved plan JSON
 - `run`: append-only trace JSON
-- `export`: new Markdown file, or explicit conflict-checked `--in-place`
+- `export`: new, no-overwrite Markdown file
 - `promote`: new skill-draft directory
 
 The studio binds an ephemeral loopback port and serves bundled assets plus the

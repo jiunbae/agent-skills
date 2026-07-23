@@ -400,7 +400,7 @@ test("managed EOF footer stays outside the last workflow body", () => {
   );
 });
 
-test("inPlace plus another output target rejects without overwriting either file", async (t) => {
+test("unsupported inPlace rejects without overwriting source or another output", async (t) => {
   const root = await temporaryRoot(t, "workflow-studio-r3-write-");
   const source = join(root, "SKILL.md");
   const victim = join(root, "victim.md");
@@ -426,7 +426,7 @@ test("inPlace plus another output target rejects without overwriting either file
 
   await assert.rejects(
     writeWorkflow(workflow, { inPlace: true, outputPath: victim }),
-    (error) => error.code === "OUTPUT_CONFLICT",
+    (error) => error.code === "IN_PLACE_UNSUPPORTED",
   );
   assert.deepEqual(await readFile(source), sourceBytes);
   assert.deepEqual(await readFile(victim), victimBytes);

@@ -4,7 +4,6 @@ import {
   mkdtemp,
   readFile,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1374,7 +1373,7 @@ B
   );
 });
 
-test("writeWorkflow uses safe new output and compare-and-swap in-place export", async (t) => {
+test("writeWorkflow refuses in-place export and safely writes only new output", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "workflow-studio-core-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const source = join(directory, "SKILL.md");
@@ -1397,16 +1396,22 @@ Do one.
       outputPath: victim,
       inPlace: true,
     }),
-    { code: "OUTPUT_CONFLICT" },
+    { code: "IN_PLACE_UNSUPPORTED" },
   );
   assert.equal(await readFile(victim, "utf8"), "IRREPLACEABLE VICTIM\n");
+  assert.deepEqual(await readFile(source), initial);
+  await assert.rejects(writeWorkflow(imported, { inPlace: true }), {
+    code: "IN_PLACE_UNSUPPORTED",
+    message: /choose a new outputPath/u,
+  });
+  assert.deepEqual(await readFile(source), initial);
   for (const sameSource of [
     source,
     join(directory, "not-created", "..", "SKILL.md"),
   ]) {
     await assert.rejects(
       writeWorkflow(imported, { outputPath: sameSource }),
-      { code: "IN_PLACE_REQUIRED" },
+      { code: "IN_PLACE_UNSUPPORTED" },
     );
     assert.deepEqual(await readFile(source), initial);
   }
@@ -1416,18 +1421,7 @@ Do one.
   await assert.rejects(writeWorkflow(imported, { outputPath: output }), {
     code: "OUTPUT_EXISTS",
   });
-
-  await writeFile(source, Buffer.concat([initial, Buffer.from("\nexternal\n")]));
-  await assert.rejects(writeWorkflow(imported, { inPlace: true }), {
-    code: "SOURCE_CONFLICT",
-  });
-
-  const link = join(directory, "linked.md");
-  await symlink(source, link);
-  const linked = importSkillBytes(initial, { sourcePath: link });
-  await assert.rejects(writeWorkflow(linked, { inPlace: true }), {
-    code: "SYMLINK_REFUSED",
-  });
+  assert.deepEqual(await readFile(source), initial);
 });
 
 test("stableStringify is key-order independent", () => {

@@ -543,6 +543,36 @@ test("failed terminal evidence cannot be erased by later provider success", asyn
   }
 });
 
+test("failure fields on a Codex completion produce a canonical failed trace", async (t) => {
+  const plan = approvedFakePlan(t);
+  const trace = await runApprovedPlan(plan, {
+    env: fakeEnv(plan, {
+      FAKE_AGENT_SCENARIO: "codex-completed-failure",
+    }),
+  });
+  const terminal = trace.events.at(-1);
+
+  assert.equal(trace.status, "failed");
+  assert.equal(trace.completeness, "partial");
+  assert.equal(trace.failure.kind, "agent_failed");
+  assert.equal(trace.failure.provider_terminal_observed, true);
+  assert.equal(terminal.kind, "turn.completed");
+  assert.equal(terminal.status, "failed");
+  assert.equal(terminal.source.raw_type, "turn.completed");
+  assert.deepEqual(terminal.source.raw.error, { message: "boom" });
+  assert.equal(
+    trace.events.some(
+      (event) =>
+        event.kind === "turn.completed" && event.status === "completed",
+    ),
+    false,
+  );
+  assert.ok(
+    trace.inferred_edges.every((edge) => edge.provenance === "inferred"),
+  );
+  assert.equal(validateArtifact(trace), true);
+});
+
 test("stdin delivery failure prevents terminal success from completing a run", async (t) => {
   const plan = approvedFakePlan(
     t,
@@ -767,6 +797,49 @@ test("provider tool errors normalize to explicit failed observable events", () =
   assert.deepEqual(
     { kind: claude.kind, status: claude.status },
     { kind: "tool.failed", status: "failed" },
+  );
+});
+
+test("Codex completion failure markers normalize monotonically", () => {
+  const failures = [
+    { status: "failed" },
+    { status: "error" },
+    { is_error: true },
+    { error: { message: "boom" } },
+    { exit_code: 1 },
+  ];
+  for (const [sequence, failure] of failures.entries()) {
+    const normalized = normalizeProviderEvent(
+      "codex",
+      { type: "turn.completed", ...failure },
+      sequence,
+    );
+    assert.deepEqual(
+      {
+        kind: normalized.kind,
+        status: normalized.status,
+        raw: normalized.source.raw,
+      },
+      {
+        kind: "turn.completed",
+        status: "failed",
+        raw: { type: "turn.completed", ...failure },
+      },
+    );
+  }
+
+  const successful = normalizeProviderEvent(
+    "codex",
+    {
+      type: "turn.completed",
+      status: "completed",
+      is_error: false,
+    },
+    failures.length,
+  );
+  assert.deepEqual(
+    { kind: successful.kind, status: successful.status },
+    { kind: "turn.completed", status: "completed" },
   );
 });
 

@@ -13,8 +13,8 @@ node scripts/workflow-studio.mjs --help
 ```
 
 Resolve `scripts/workflow-studio.mjs` relative to this skill directory. Do not
-install a global command or modify the source skill unless the user explicitly
-selects in-place export.
+install a global command or modify the source skill. Portable V1 exports
+Markdown only to a new path.
 
 ## 1. Choose the flow and disclose the boundary
 
@@ -57,11 +57,12 @@ node scripts/workflow-studio.mjs export /path/to/edited-workflow.json \
   --out /path/to/SKILL.draft.md
 ```
 
-Use `--in-place` only after explicit user approval. In-place export must pass
-the import-time SHA-256 conflict check; never bypass stale-source or symlink
-refusals. An unchanged import/export is byte-identical. Mapped edits patch the
-recognized byte spans; edited exports retain stable graph IDs in inert
-versioned metadata. All unsupported or opaque source content stays unchanged.
+Portable V1 rejects `--in-place` and any `--out` path that resolves to the
+imported source. Dependency-free Node cannot atomically replace a pathname
+only if its imported hash still matches, so always export to a new path. An
+unchanged import/export is byte-identical. Mapped edits patch the recognized
+byte spans; edited exports retain stable graph IDs in inert versioned metadata.
+All unsupported or opaque source content stays unchanged.
 
 ## 4. Prepare, approve, and run a native request
 

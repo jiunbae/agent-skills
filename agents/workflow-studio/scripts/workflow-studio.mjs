@@ -30,7 +30,7 @@ Usage:
   workflow-studio validate ARTIFACT
   workflow-studio edit IR --operation JSON|@file --out IR
   workflow-studio diff IR
-  workflow-studio export IR (--out PATH | --in-place)
+  workflow-studio export IR --out PATH
   workflow-studio studio SKILL|ARTIFACT [--host loopback|127.0.0.1|::1] [--port N]
   workflow-studio plan IR (--prompt TEXT | --prompt-file FILE) --agent codex|claude
                        --cwd DIR --safety read-only|workspace-write --out PLAN
@@ -41,8 +41,10 @@ Usage:
 Notes:
   SKILL.md remains the native execution artifact. A plan must be approved
   explicitly before "run", and any later mutation invalidates that approval.
-  Output files and promoted directories must not already exist. There is no
-  force-overwrite, arbitrary argument passthrough, or permission-bypass mode.
+  Markdown export writes only to a new path. The legacy --in-place option is
+  explicitly refused. Output files and promoted directories must not already
+  exist. There is no force-overwrite, arbitrary argument passthrough, or
+  permission-bypass mode.
   "studio" serves a read-only loopback UI, prints its token URL, and stays open
   until SIGINT or SIGTERM.
 `;
@@ -315,10 +317,16 @@ async function exportCommand(parsed) {
   });
   const hasOut = parsed.options.has("out");
   const inPlace = parsed.options.has("in-place");
-  if (hasOut === inPlace) {
+  if (inPlace) {
+    throw cliError(
+      "IN_PLACE_UNSUPPORTED",
+      "Portable V1 does not support in-place export; use --out with a new path.",
+    );
+  }
+  if (!hasOut) {
     throw cliError(
       "INVALID_ARGUMENT",
-      "export requires exactly one of --out or --in-place.",
+      "export requires --out with a new path.",
     );
   }
   const workflow = requireKind(await readJson(parsed.positionals[0]), "workflow");
@@ -327,13 +335,12 @@ async function exportCommand(parsed) {
     resolve(option(parsed, "out")) === resolve(workflow.source.path)
   ) {
     throw cliError(
-      "IN_PLACE_REQUIRED",
-      "An --out path resolving to the source requires explicit --in-place.",
+      "IN_PLACE_UNSUPPORTED",
+      "Portable V1 cannot export over the imported source; use --out with a new path.",
     );
   }
   const written = await writeWorkflow(workflow, {
-    outputPath: hasOut ? option(parsed, "out") : undefined,
-    inPlace,
+    outputPath: option(parsed, "out"),
   });
   result({ command: "export", ...written });
 }
