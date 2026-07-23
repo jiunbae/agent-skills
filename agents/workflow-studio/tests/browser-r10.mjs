@@ -410,6 +410,125 @@ test(
             })
             .getAttribute("data-id");
           assert.ok(firstNodeId && secondNodeId && thirdNodeId);
+
+          const selectedEdgeId = await page
+            .locator(".react-flow__edge.selected")
+            .getAttribute("data-id");
+          assert.ok(selectedEdgeId);
+          const dragHandle = async (updaterSelector, nodeTitle, handleClass) => {
+            const updater = page.locator(updaterSelector);
+            const target = page
+              .locator(".react-flow__node", { hasText: nodeTitle })
+              .locator(`.react-flow__handle.${handleClass}`);
+            await updater.waitFor({ state: "visible" });
+            const from = await updater.boundingBox();
+            const to = await target.boundingBox();
+            assert.ok(from && to);
+            await page.mouse.move(
+              from.x + from.width / 2,
+              from.y + from.height / 2,
+            );
+            await page.mouse.down();
+            await page.mouse.move(
+              to.x + to.width / 2,
+              to.y + to.height / 2,
+              { steps: 8 },
+            );
+            await page.mouse.up();
+          };
+
+          await dragHandle(
+            ".react-flow__edge.selected .react-flow__edgeupdater-target",
+            "Assign and isolate workers",
+            "target",
+          );
+          await expectValue(page, "#selectedEdgeFrom", String(firstNodeId));
+          await expectValue(page, "#selectedEdgeTo", String(thirdNodeId));
+          await expectText(page, "#statusMessage", "Changed edge");
+          await page.waitForFunction(
+            () => document.querySelectorAll(".react-flow__edge").length === 4,
+            null,
+            { timeout: 10_000 },
+          );
+          assert.equal(await page.locator(".react-flow__edge").count(), 4);
+          const validReconnectIrFile = await downloadFile(page, "#downloadIr");
+          const validReconnectIr = JSON.parse(
+            validReconnectIrFile.bytes.toString("utf8"),
+          );
+
+          await page.evaluate(() => {
+            const target = document.querySelector("#statusMessage");
+            const messages = [];
+            const observer = new MutationObserver(() => {
+              messages.push(target?.textContent || "");
+            });
+            observer.observe(target, {
+              childList: true,
+              characterData: true,
+              subtree: true,
+            });
+            window.__workflowStudioReconnectStatus = { messages, observer };
+          });
+          await dragHandle(
+            ".react-flow__edge.selected .react-flow__edgeupdater-source",
+            "Wave execution",
+            "source",
+          );
+          await expectValue(page, "#selectedEdgeFrom", String(firstNodeId));
+          await expectValue(page, "#selectedEdgeTo", String(thirdNodeId));
+          await expectText(page, "#statusMessage", "already exists");
+          await expectText(
+            page,
+            "#statusMessage",
+            "canonical endpoint values were restored",
+          );
+          await page.waitForFunction(
+            (edgeId) =>
+              document.activeElement?.matches(
+                `.react-flow__edge.selected[data-id="${edgeId}"]`,
+              ),
+            selectedEdgeId,
+            { timeout: 10_000 },
+          );
+          assert.equal(
+            await page.locator(".react-flow__edge.selected").count(),
+            1,
+          );
+          assert.equal(
+            await page
+              .locator(".react-flow__edge.selected")
+              .getAttribute("data-id"),
+            selectedEdgeId,
+          );
+          const refusalAnnouncements = await page.evaluate(() => {
+            const record = window.__workflowStudioReconnectStatus;
+            record.observer.disconnect();
+            return record.messages.filter((message) =>
+              message.includes("already exists"),
+            );
+          });
+          assert.equal(
+            refusalAnnouncements.length,
+            1,
+            "duplicate reconnect refusal must be announced once",
+          );
+          const refusedReconnectIrFile = await downloadFile(page, "#downloadIr");
+          const refusedReconnectIr = JSON.parse(
+            refusedReconnectIrFile.bytes.toString("utf8"),
+          );
+          const topology = (artifact) =>
+            artifact.graph.edges.map(({ id, from, to, kind }) => ({
+              id,
+              from,
+              to,
+              kind,
+            }));
+          assert.deepEqual(
+            topology(refusedReconnectIr),
+            topology(validReconnectIr),
+            "refused duplicate reconnect must not change downloaded topology",
+          );
+
           await page
             .locator("#selectedEdgeTo")
             .selectOption(String(thirdNodeId));

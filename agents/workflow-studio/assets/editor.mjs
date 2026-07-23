@@ -68,6 +68,19 @@ function setStatus(message) {
   element("statusMessage").textContent = String(message);
 }
 
+function focusGraphEdge(edgeId) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const target = [
+        ...element("graphCanvas").querySelectorAll(
+          ".react-flow__edge[data-id]",
+        ),
+      ].find((candidate) => candidate.getAttribute("data-id") === edgeId);
+      target?.focus({ preventScroll: true });
+    });
+  });
+}
+
 function cloneState(value) {
   return structuredClone(value);
 }
@@ -325,12 +338,37 @@ function graphOptions() {
     },
     onReconnect: (edgeId, connection) => {
       selection = { type: "edge", id: edgeId };
-      applyDomainMutation(
-        changeEdge(state, edgeId, {
-          from: connection.source,
-          to: connection.target,
-        }),
+      const attempted = {
+        from: connection.source,
+        to: connection.target,
+      };
+      const next = changeEdge(state, edgeId, attempted);
+      if (applyDomainMutation(next)) return;
+
+      const duplicate = state.edges.find(
+        (candidate) =>
+          candidate.id !== edgeId &&
+          candidate.from === attempted.from &&
+          candidate.to === attempted.to,
       );
+      render();
+      focusGraphEdge(edgeId);
+      if (duplicate) {
+        const from =
+          state.nodes.find((node) => node.id === attempted.from)?.title ||
+          attempted.from;
+        const to =
+          state.nodes.find((node) => node.id === attempted.to)?.title ||
+          attempted.to;
+        setStatus(
+          `Could not reconnect dependency: ${from} → ${to} already exists. ` +
+            "The canonical endpoint values were restored.",
+        );
+      } else {
+        setStatus(
+          "Could not reconnect dependency; the canonical endpoint values were restored.",
+        );
+      }
     },
     onDeleteEdge: (edgeId) => {
       selection = { type: "edge", id: edgeId };

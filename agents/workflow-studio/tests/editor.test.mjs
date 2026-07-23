@@ -665,6 +665,34 @@ test("edge add/change/remove validates endpoints, duplicates, and cycles", () =>
   );
 });
 
+test("duplicate edge reconnect preserves the canonical topology", () => {
+  let state = createEditorState(workflowArtifact());
+  state = addNode(state, "step-2", "after");
+  const step3 = state.selectedId;
+  state = addEdge(state, "step-1", step3, "sequence");
+  const before = state.edges.map(({ id, from, to, kind }) => ({
+    id,
+    from,
+    to,
+    kind,
+  }));
+
+  const refused = changeEdge(state, "edge-1", {
+    from: "step-1",
+    to: step3,
+  });
+
+  assert.strictEqual(refused, state);
+  assert.deepEqual(
+    refused.edges.map(({ id, from, to, kind }) => ({ id, from, to, kind })),
+    before,
+  );
+  assert.deepEqual(
+    refused.edges.find((edge) => edge.id === "edge-1"),
+    state.edges.find((edge) => edge.id === "edge-1"),
+  );
+});
+
 test("browser writable grammar rejects padded and ATX-closing titles and structural body headings", () => {
   const initial = createEditorState(workflowArtifact());
   for (const title of [" Padded", "Padded ", "Review ###"]) {
