@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"session-cancelled"}
+{"type":"assistant","message":{"id":"message-cancelled","content":[{"type":"text","text":"stopping"}]}}
+{"type":"result","subtype":"cancelled","status":"cancelled","is_error":false}

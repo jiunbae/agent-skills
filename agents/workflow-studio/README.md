@@ -165,7 +165,10 @@ All artifact and draft destinations are explicit `--out` paths, except that
 The studio binds an ephemeral loopback port and serves bundled assets plus the
 selected in-memory artifact. Source-bearing reads require a random session
 token and validated `Host`; CORS, telemetry, write endpoints, and run endpoints
-are absent. Browser exports are local client downloads.
+are absent. The serialized UTF-8 artifact response has an explicit 32 MiB
+(33,554,432-byte) ceiling; this admits the canonical 30,000-node/29,999-edge
+fixture (26,145,304 bytes), while larger artifacts fail before the server
+listens. Browser exports are local client downloads.
 
 ## Limitations
 

@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { isAbsolute, resolve } from "node:path";
 
 const DEFAULT_HOST = "127.0.0.1";
-const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 
 const ASSETS = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],

@@ -6,6 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  importSkillBytes,
+  validateArtifact,
+} from "../src/core.mjs";
+import {
   createStudioServer,
   studioServerLimits,
 } from "../src/server.mjs";
@@ -16,6 +20,22 @@ const ASSET_CONTENT = {
   "index.html": "<!doctype html><title>Workflow Studio</title>\n",
   "styles.css": "body { color: CanvasText; }\n",
 };
+
+function canonicalGraphLimitArtifact() {
+  const count = 30_000;
+  const steps = Array.from(
+    { length: count },
+    (_, index) => `### Step ${index + 1}: Item ${index + 1}\nBody ${index + 1}.\n`,
+  ).join("");
+  const bytes = Buffer.from(`---
+name: large-graph
+description: managed graph boundary
+---
+
+## Workflow
+${steps}`);
+  return importSkillBytes(bytes, { sourcePath: "large-graph/SKILL.md" });
+}
 
 async function fixtureAssets(t) {
   const directory = await mkdtemp(join(tmpdir(), "workflow-studio-server-"));
@@ -238,15 +258,46 @@ test("supports an IPv6 loopback listener with strict bracketed Host validation",
   }
 });
 
+test("serves the exact canonical 30,000-node fixture within the bounded response envelope", async (t) => {
+  const artifact = canonicalGraphLimitArtifact();
+  assert.equal(validateArtifact(artifact), true);
+  assert.equal(artifact.graph.nodes.length, 30_000);
+  assert.equal(artifact.graph.edges.length, 29_999);
+
+  const encoded = Buffer.from(JSON.stringify(artifact), "utf8");
+  assert.equal(encoded.byteLength, 26_145_304);
+  assert.equal(studioServerLimits.maxArtifactBytes, 32 * 1024 * 1024);
+  assert.ok(encoded.byteLength <= studioServerLimits.maxArtifactBytes);
+
+  await withServer(
+    t,
+    async ({ address, studio }) => {
+      const response = await httpRequest(address, {
+        path: `/api/artifact?token=${encodeURIComponent(studio.token)}`,
+      });
+      assert.equal(response.status, 200);
+      assert.equal(
+        response.headers["content-length"],
+        String(encoded.byteLength),
+      );
+      assert.deepEqual(response.body, encoded);
+    },
+    { artifact },
+  );
+});
+
 test("bounds artifact responses and rejects non-JSON artifacts", async (t) => {
   const assetsDir = await fixtureAssets(t);
+  const aboveCeiling = "x".repeat(studioServerLimits.maxArtifactBytes - 1);
   assert.throws(
     () =>
       createStudioServer({
-        artifact: "x".repeat(studioServerLimits.maxArtifactBytes + 1),
+        artifact: aboveCeiling,
         assetsDir,
       }),
-    /response limit/,
+    new RegExp(
+      `Studio artifact exceeds the ${studioServerLimits.maxArtifactBytes}-byte response limit`,
+    ),
   );
 
   const circular = {};

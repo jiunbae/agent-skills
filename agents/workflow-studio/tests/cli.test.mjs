@@ -79,6 +79,18 @@ async function fakeAgentEnv(item, agent, scenario) {
   };
 }
 
+async function restrictedFakeAgentEnv(item, agent, scenario) {
+  const bin = join(item.directory, `restricted-${agent}`);
+  await mkdir(bin);
+  await chmod(FAKE_AGENT, 0o755);
+  await symlink(process.execPath, join(bin, "node"));
+  await symlink(FAKE_AGENT, join(bin, agent));
+  return {
+    PATH: bin,
+    FAKE_AGENT_SCENARIO: scenario,
+  };
+}
+
 async function replacingAgentEnv(item, tracePath, {
   replaceOnVersion = false,
   runtimeCwd,
@@ -593,6 +605,52 @@ test("run exits nonzero for missing and non-complete CLIs while preserving trace
       assert.equal(trace.failure.kind, itemCase.expectedFailure);
     }
   }
+});
+
+test("CLI rejects explicit Claude cancellation and preserves its raw terminal evidence", async (t) => {
+  const item = await fixture(t);
+  const approvedPath = await approvedPlan(item, "claude");
+  const tracePath = join(item.directory, "claude-cancelled-trace.json");
+  const env = await restrictedFakeAgentEnv(
+    item,
+    "claude",
+    "claude-cancelled",
+  );
+  const diagnostic = failure(
+    await invoke(["run", approvedPath, "--trace", tracePath], { env }),
+    "RUN_FAILED",
+  );
+
+  assert.equal(diagnostic.details.artifact, tracePath);
+  success(await invoke(["validate", tracePath]));
+  const trace = JSON.parse(await readFile(tracePath, "utf8"));
+  const terminal = trace.events.at(-1);
+  assert.equal(trace.process.exit_code, 0);
+  assert.equal(trace.status, "failed");
+  assert.equal(trace.completeness, "partial");
+  assert.equal(trace.failure.kind, "agent_failed");
+  assert.equal(trace.failure.provider_terminal_observed, true);
+  assert.deepEqual(
+    {
+      kind: terminal.kind,
+      status: terminal.status,
+      provenance: terminal.provenance,
+      subtype: terminal.source.raw.subtype,
+      raw_status: terminal.source.raw.status,
+      is_error: terminal.source.raw.is_error,
+    },
+    {
+      kind: "run.failed",
+      status: "failed",
+      provenance: "observed",
+      subtype: "cancelled",
+      raw_status: "cancelled",
+      is_error: false,
+    },
+  );
+  assert.ok(
+    trace.inferred_edges.every((edge) => edge.provenance === "inferred"),
+  );
 });
 
 test("CLI accepts complete EOF JSON and saves stdin delivery failures canonically", async (t) => {

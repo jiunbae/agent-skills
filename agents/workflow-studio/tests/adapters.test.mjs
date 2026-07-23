@@ -101,6 +101,15 @@ function fakeEnv(plan, overrides = {}) {
   };
 }
 
+function restrictedFakeEnv(plan, overrides = {}) {
+  const nodePath = join(plan.cwd, "node");
+  if (!existsSync(nodePath)) symlinkSync(process.execPath, nodePath);
+  return {
+    PATH: plan.cwd,
+    ...overrides,
+  };
+}
+
 function manuallyApprovePlan(plan) {
   const semantics = {
     algorithm: "sha256",
@@ -602,6 +611,36 @@ test("explicit Codex terminal cancellation cannot become successful completion",
   assert.equal(validateArtifact(trace), true);
 });
 
+test("explicit Claude terminal non-success remains failed in a restricted native run", async (t) => {
+  for (const scenario of ["claude-cancelled", "claude-error-max-turns"]) {
+    const plan = approvedFakePlan(t, "claude");
+    const trace = await runApprovedPlan(plan, {
+      env: restrictedFakeEnv(plan, {
+        FAKE_AGENT_SCENARIO: scenario,
+      }),
+    });
+    const terminal = trace.events.at(-1);
+
+    assert.equal(trace.process.exit_code, 0);
+    assert.equal(trace.status, "failed");
+    assert.equal(trace.completeness, "partial");
+    assert.equal(trace.failure.kind, "agent_failed");
+    assert.equal(trace.failure.provider_terminal_observed, true);
+    assert.equal(terminal.kind, "run.failed");
+    assert.equal(terminal.status, "failed");
+    assert.equal(terminal.provenance, "observed");
+    assert.equal(terminal.source.raw_type, "result");
+    assert.equal(terminal.source.raw.is_error, false);
+    assert.ok(
+      ["cancelled", "error_max_turns"].includes(terminal.source.raw.subtype),
+    );
+    assert.ok(
+      trace.inferred_edges.every((edge) => edge.provenance === "inferred"),
+    );
+    assert.equal(validateArtifact(trace), true);
+  }
+});
+
 test("stdin delivery failure prevents terminal success from completing a run", async (t) => {
   const plan = approvedFakePlan(
     t,
@@ -886,6 +925,57 @@ test("Codex completion failure markers normalize monotonically", () => {
     },
     { kind: "turn.completed", status: "completed" },
   );
+});
+
+test("Claude result terminal failure markers normalize monotonically", () => {
+  const failures = [
+    { status: "cancelled", subtype: "success", is_error: false },
+    { status: "rejected", subtype: "success", is_error: false },
+    { subtype: "error_max_turns", is_error: false },
+    { subtype: "error_during_execution", is_error: false },
+    { status: null, subtype: "success", is_error: false },
+    { subtype: null, is_error: false },
+    { subtype: "success", error: { message: "boom" } },
+    { subtype: "success", exit_code: 1 },
+  ];
+  for (const [sequence, failure] of failures.entries()) {
+    const normalized = normalizeProviderEvent(
+      "claude",
+      { type: "result", ...failure },
+      sequence,
+    );
+    assert.deepEqual(
+      {
+        kind: normalized.kind,
+        status: normalized.status,
+        provenance: normalized.provenance,
+        raw: normalized.source.raw,
+      },
+      {
+        kind: "run.failed",
+        status: "failed",
+        provenance: "observed",
+        raw: { type: "result", ...failure },
+      },
+    );
+  }
+
+  for (const [sequence, success] of [
+    { subtype: "success", is_error: false },
+    { status: "completed", subtype: "success", is_error: false },
+    { status: "success", subtype: "success", is_error: false },
+    {},
+  ].entries()) {
+    const normalized = normalizeProviderEvent(
+      "claude",
+      { type: "result", ...success },
+      failures.length + sequence,
+    );
+    assert.deepEqual(
+      { kind: normalized.kind, status: normalized.status },
+      { kind: "run.completed", status: "completed" },
+    );
+  }
 });
 
 test("loaded plans hit canonical artifact bounds before adapter canonicalization", (t) => {

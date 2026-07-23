@@ -12,6 +12,7 @@ import { renderWorkflow, validateArtifact } from "./core.mjs";
 
 const AGENTS = new Set(["codex", "claude"]);
 const SAFETY_INTENTS = new Set(["read-only", "workspace-write"]);
+const CLAUDE_RESULT_SUCCESS_VALUES = new Set(["completed", "success"]);
 const APPROVAL_SEMANTICS = Object.freeze({
   algorithm: "sha256",
   scope: "exact-native-run-envelope",
@@ -789,10 +790,18 @@ function portableEvent(agent, event) {
       return ["run.started", "running"];
     }
     if (type === "result") {
+      const explicitNonSuccessStatus =
+        Object.hasOwn(event, "status") &&
+        !CLAUDE_RESULT_SUCCESS_VALUES.has(event.status);
+      const explicitNonSuccessSubtype =
+        Object.hasOwn(event, "subtype") &&
+        !CLAUDE_RESULT_SUCCESS_VALUES.has(event.subtype);
       const failed =
+        explicitNonSuccessStatus ||
+        explicitNonSuccessSubtype ||
         event.is_error === true ||
-        event.status === "failed" ||
-        ["error", "failed"].includes(event.subtype);
+        event.error !== undefined ||
+        event.exit_code > 0;
       return [failed ? "run.failed" : "run.completed", failed ? "failed" : "completed"];
     }
     if (type === "assistant") {
