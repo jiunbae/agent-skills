@@ -1,114 +1,112 @@
 ---
-name: planning-in-background
-description: Orchestrates multiple AI agents (Claude, Codex, Gemini) for parallel planning with saved outputs. Use only when the user explicitly requests background, parallel, or multi-agent planning, such as "백그라운드 기획", "bg plan", "병렬 기획", "멀티 AI 기획", or "N명이 기획". Do not trigger for ordinary planning or design requests.
-allowed-tools: Read, Bash, Grep, Glob, Task, Write, Edit, TodoWrite, AskUserQuestion
+name: background-planner
+description: Run bounded parallel planning with independent planner personas and optional multi-LLM workers, then synthesize a single plan via stance-steered consensus with explicit conflicts and open questions. Use only when the user explicitly requests background, parallel, or multi-agent planning, such as "백그라운드 기획", "bg plan", "병렬 기획", "멀티 AI 기획", or "N명이 기획". Do not trigger for ordinary planning or design requests.
+trigger-keywords: [bg plan, 백그라운드 기획, 병렬 기획, 멀티 AI 기획, parallel planning, N명이 기획]
+tags: [planning, parallel, multi-agent, persona]
 ---
 
 # Background Planner
 
-Multi-LLM parallel planning with context-safe auto-save.
+Produce independent planning perspectives in parallel, then synthesize one plan that
+names its trade-offs and open questions instead of averaging them away.
 
-## Quick Start
+Mechanics (worker invocation, provider recipes, `.context/` layout, persona modes, token
+discipline) live in `references/orchestration.md`. This file owns the workflow, the
+schema, and the synthesis rules.
 
-```bash
-# 1. Parse topic and perspectives
-# 2. Create: .context/plans/
-# 3. Determine round: R01, R02, ...
-# 4. Run agents in background → {round}-{agent}.md
-# 5. Wait for results and synthesize a merged plan
+## 1. Frame the problem
+
+Before delegating, pin down one planning target:
+
+- the goal and the definition of done
+- hard constraints (deadline, stack, compatibility, data, budget)
+- what is explicitly out of scope
+
+Persist to `.context/plans/` only when useful (repeated rounds, cross-tool workers, or a
+requested document). Use rounds `R01`, `R02`, … (see orchestration reference).
+
+## 2. Assign planner perspectives
+
+Run **2–4** independent planners, each with a distinct lens — do not send them each
+other's drafts. Draw lenses from the planning personas in `personas/*.md`:
+
+| Lens | Persona | Owns |
+|------|---------|------|
+| technical / decomposition | `technical-planner` | architecture, sequencing, dependencies, unknowns |
+| product / scope | `product-planner` | user value, MVP cut, prioritization, success metrics |
+| delivery / risk | `delivery-risk-planner` | failure modes, rollout, migration, reversibility |
+
+Add a domain reviewer persona as a planning lens when the work is domain-heavy (e.g.
+`security-reviewer` for an auth redesign, `database-reviewer` for a schema change).
+
+For diverse-model planning, run the same lens on a different provider (Claude / Codex /
+Gemini) per the orchestration reference — but keep total workers at 2–4.
+
+## 3. Plan schema
+
+Each planner returns this shape so synthesis is deterministic, not prose-matching:
+
+```yaml
+approach: one-line thesis of this plan
+steps:
+  - id: S1
+    do: concrete action
+    depends_on: []           # step ids this blocks on
+    effort: S | M | L
+    risk: low | med | high
+assumptions: [things taken as given]
+risks: [what could go wrong + mitigation]
+open_questions: [decisions this plan cannot make alone]
+success_criteria: [how "done" is verified]
 ```
 
-## Output Convention
+## 4. Synthesize by stance, not by average
 
-```
-.context/plans/
-├── R01-claude.md          # Round 1: Claude's plan
-├── R01-codex.md           # Round 1: Codex's plan
-├── R01-gemini.md          # Round 1: Gemini's plan
-├── R01-merged.md          # Round 1: merged plan
-├── R02-claude.md          # Round 2: refined after feedback
-└── R02-merged.md
-```
+Wait for every planner, then build `R0N-merged.md`. Do not blend plans into mush:
 
-**Round number** increments each planning iteration:
-```bash
-mkdir -p .context/plans
-ROUND=$(printf "R%02d" $(( $(ls .context/plans/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
-```
+- **Agreements** — steps/assumptions all planners share → high-confidence backbone.
+- **Conflicts** — where plans diverge, present each side's case *for* and *against*
+  (stance-steered), then recommend one with a reason. Surface the trade-off; do not hide it.
+- **Dependency order** — merge steps into one DAG; flag ordering the individual plans got
+  wrong.
+- **Open questions** — union of everything no plan could decide; these gate execution.
 
-## Provider Selection
+```markdown
+# Plan Synthesis (R01)
 
-| Provider | Best For | Command |
-|----------|----------|---------|
-| **Claude** | Complex analysis, architecture, deep codebase reading | `Task({ run_in_background: true })` |
-| **Codex** | Technical specs, code design | `codex exec --sandbox read-only -C {workdir} -o {output.md} - < prompt.md` |
-| **Gemini** | Creative ideas, UX design, long docs | `nohup gemini -p "prompt" -o text > {output.md} 2>/dev/null &` |
-| **Ollama** | Sensitive data, local | `ollama run llama3.2` |
-
-> **Gemini CLI**: Use `-p "prompt"` for non-interactive planning and `-o text` for clean output. Redirect stdout to the planned output file. Planning workers should not need automatic write approval.
-> **Codex CLI**: `codex exec` defaults to a read-only sandbox. Keep planning workers read-only, use `-C` to set the repository, and use `-o` to save the final response. Prefer explicit sandbox flags over the deprecated `--full-auto` compatibility flag. If the current orchestrator exposes native subagents, use those instead of launching nested CLI processes.
-
-## Workflow
-
-### Step 1: Setup
-
-```bash
-mkdir -p .context/plans
-ROUND=$(printf "R%02d" $(( $(ls .context/plans/R*-*.md 2>/dev/null | sed 's/.*\/R\([0-9]*\)-.*/\1/' | sort -rn | head -1 | sed 's/^0*//') + 1 )))
+## Recommended approach
+## Steps (dependency-ordered)
+| id | do | depends_on | effort | risk |
+## Agreements
+## Conflicts & trade-offs
+| topic | option A (for/against) | option B (for/against) | recommendation |
+## Assumptions
+## Open questions (must resolve before build)
+## Success criteria
 ```
 
-### Step 2: Run Agents
+## 5. Iterate (optional)
 
-**Claude:**
-```typescript
-Task({
-  subagent_type: "general-purpose",
-  prompt: `기획 주제: ${topic}
-관점: ${perspective}
-결과 저장: .context/plans/${ROUND}-claude.md`,
-  run_in_background: true
-})
-```
+If the user gives feedback or answers open questions, run `R02` — re-plan only the
+affected parts, keep resolved decisions fixed. Stop when the plan is executable (no
+blocking open questions), when feedback stops changing the plan, or at the user's bound.
 
-**Codex:**
-```bash
-nohup codex exec --sandbox read-only \
-  -C "$(pwd)" \
-  -o .context/plans/${ROUND}-codex.md \
-  "Plan ${topic} from a technical perspective. Return a structured Markdown plan." \
-  > .context/plans/${ROUND}-codex.log 2>&1 &
-```
+## Best practices
 
-**Gemini:**
-```bash
-nohup gemini -p "Plan ${topic} creatively. Output a well-structured markdown plan." \
-  -o text > .context/plans/${ROUND}-gemini.md 2>/dev/null &
-```
-> Note: Gemini `-p` runs non-interactively. `-o text` gives clean text output. Redirect stdout `>` to save to file.
+**Do**
+- Use 2–4 planners for genuinely different perspectives.
+- Let each planner return the schema; keep raw drafts in `.context/plans/`.
+- Name conflicts and open questions explicitly — an honest plan beats a confident one.
 
-### Step 3: Wait and Synthesize
+**Don't**
+- Tight-poll for completion (token waste; results arrive by notification).
+- Run 5+ planners (diminishing returns at ~15× single-agent cost).
+- Synthesize before all bounded planners finish, unless the user asked for fire-and-forget.
+- Average conflicting plans into a vague middle.
 
-Use the host's native wait/status mechanism for native agents. For external
-processes, record their process IDs and check them without tight polling. When
-all bounded planners finish, read their outputs and create
-`.context/plans/${ROUND}-merged.md` unless the user explicitly requested a
-fire-and-forget launch.
+## Version Notes
 
-### Step 4: Merge
-
-Read all `${ROUND}-*.md` plan files and create `.context/plans/${ROUND}-merged.md`:
-- Compare perspectives
-- Highlight agreements/conflicts
-- Synthesize final recommendation
-
-## Best Practices
-
-**DO:**
-- Use 2-4 agents for diverse perspectives
-- Let each agent save directly to file
-- Wait for bounded agents and merge their results in the same task
-
-**DON'T:**
-- Poll for completion (token waste)
-- Run 5+ agents (diminishing returns)
-- Merge before all bounded agents complete
+- Worker/provider recipes verified on 2026-07-23; re-check `--help` before trusting a
+  flag. See `references/orchestration.md`.
+- Planner lenses come from the planning personas in `personas/*.md` — keep those as the
+  source of truth rather than inlining lenses here.

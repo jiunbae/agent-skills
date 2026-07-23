@@ -56,7 +56,7 @@ Install the agent-skills toolkit into this project:
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
-<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=30+skills&model=Opus+4.6&project=agent-skills" width="100%" /></div>
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=30+skills&model=Opus+4.8&project=agent-skills" width="100%" /></div>
 
 ---
 
@@ -120,9 +120,9 @@ Installed by default with `--core`:
 - `context/context-manager` — Project context auto-loader
 - `context/static-index` — Global static context index
 - `security/security-auditor` — Repository security audit
-- `agents/background-implementer` — Background parallel implementation
-- `agents/background-planner` — Background parallel planning
-- `agents/background-reviewer` — Multi-LLM parallel code review
+- `agents/background-implementer` — Isolated parallel implementation with verified integration
+- `agents/background-planner` — Parallel persona planning with stance-steered synthesis
+- `agents/background-reviewer` — Parallel persona review with adversarial verification
 - `agents/rpf` — Pointer-driven iterative review, plan, work, and feedback
 
 ---
@@ -133,9 +133,9 @@ Installed by default with `--core`:
 
 | Skill | Description |
 |-------|-------------|
-| `background-implementer` | Parallel multi-LLM implementation with context safety |
-| `background-planner` | Parallel multi-LLM planning with auto-save |
-| `background-reviewer` | Multi-LLM parallel code review (security/architecture/quality) |
+| `background-implementer` | Isolated parallel implementation (worktrees) with pre-integration verification |
+| `background-planner` | Bounded parallel planning with planner personas and stance-steered synthesis |
+| `background-reviewer` | Bounded parallel persona review with adversarial verification and root-cause merge |
 | `incident-writer` | Structured incident and status-page reports |
 | `rpf` | Explicit pointer-driven multi-agent review, plan, work, and feedback loop |
 
@@ -219,6 +219,8 @@ Expert identities as markdown files — usable with **any** AI agent.
 | `database-reviewer` | Senior DBA | Query optimization, schema, indexing |
 | `frontend-reviewer` | Senior Frontend Engineer | React, accessibility, performance |
 | `devops-reviewer` | Senior DevOps/SRE | K8s, IaC, CI/CD |
+
+> Above is a featured subset. **Planning personas** (`type: planning`) — `technical-planner`, `product-planner`, `delivery-risk-planner` — drive `background-planner`. Full library: [`personas/README.md`](personas/README.md).
 
 ### Using with agt CLI
 

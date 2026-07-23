@@ -1,7 +1,7 @@
 interface:
   display_name: "Background Reviewer"
-  short_description: "Bounded parallel review and optional fix loop"
-  default_prompt: "Use $background-reviewer to run independent bounded reviews, merge verified findings, and repeat fixes only within the exit criteria I requested."
+  short_description: "Bounded parallel persona review with adversarial verification"
+  default_prompt: "Use $background-reviewer to run independent bounded persona reviews, verify findings adversarially, merge by root cause, and repeat fixes only within the exit criteria I requested."
 
 policy:
   allow_implicit_invocation: false

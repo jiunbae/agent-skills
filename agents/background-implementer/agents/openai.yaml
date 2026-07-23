@@ -1,7 +1,7 @@
 interface:
   display_name: "Background Implementer"
-  short_description: "Parallel multi-agent implementation workflow"
-  default_prompt: "Use $implementing-in-background to implement independent tasks with bounded parallel agents."
+  short_description: "Bounded parallel implementation with verified integration"
+  default_prompt: "Use $background-implementer to implement independent tasks with isolated bounded workers and integrate only diffs that pass verification."
 
 policy:
   allow_implicit_invocation: false

@@ -86,6 +86,16 @@ agt persona show security-reviewer
 
 > `marketing-manager-reviewer.md`, `product-manager-reviewer.md`, `sns-content-strategist.md` 등 비코드 페르소나는 개인 라이브러리(이 저장소) 전용입니다.
 
+### Planning 페르소나 (`type: planning`)
+
+`background-planner` 스킬의 병렬 기획 렌즈로 사용합니다.
+
+| 파일 | 역할 | 렌즈 |
+|------|------|------|
+| `technical-planner.md` | Principal Engineer / Tech Lead | 분해, 시퀀싱, 의존성 DAG, 인터페이스, 미지수 |
+| `product-planner.md` | Senior Product Engineer | 사용자 가치, MVP 컷, 우선순위, 성공 지표 |
+| `delivery-risk-planner.md` | Delivery & Release Lead | 실패 모드, 롤아웃, 마이그레이션, 가역성, 관측성 |
+
 ## 에이전트에서 직접 사용
 
 페르소나는 **일반 마크다운 파일**입니다. 별도 연동 없이 어떤 AI 에이전트에서든 경로로 직접 참조할 수 있습니다.
