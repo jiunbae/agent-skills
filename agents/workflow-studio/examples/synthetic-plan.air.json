@@ -1,0 +1,556 @@
+{
+  "$schema": "https://open330.github.io/air/schema/1.0.0/air.schema.json",
+  "format": "air",
+  "air_version": "1.0.0",
+  "kind": "plan",
+  "profile": "https://open330.github.io/air/profiles/1.0.0/plan-native-cli",
+  "body": {
+    "workflow": {
+      "$schema": "https://open330.github.io/air/schema/1.0.0/air.schema.json",
+      "format": "air",
+      "air_version": "1.0.0",
+      "kind": "workflow",
+      "profile": "https://open330.github.io/air/profiles/1.0.0/workflow-skill",
+      "body": {
+        "source": {
+          "source_id": "source-skill",
+          "media_type": "text/markdown",
+          "encoding": "utf-8",
+          "bytes_base64": "LS0tCm5hbWU6IGhlbGxvLWFnZW50CmRlc2NyaXB0aW9uOiBTeW50aGV0aWMgQUlSIGV4YW1wbGUgd2l0aCBubyBwcml2YXRlIHNlc3Npb24gY29udGVudAotLS0KCiMjIFdvcmtmbG93CgojIyMgU3RlcCAxOiBJbnNwZWN0CgpJbnNwZWN0IHRoZSByZXF1ZXN0ZWQgaW5wdXRzLgoKIyMjIFN0ZXAgMjogUmVwb3J0CgpSZXBvcnQgdGhlIG9ic2VydmFibGUgcmVzdWx0Lgo=",
+          "byte_length": 209,
+          "sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb",
+          "newline": "lf",
+          "final_newline": true,
+          "locator": {
+            "display": "examples/hello-agent/SKILL.md",
+            "disclosure": "local-only"
+          }
+        },
+        "graph": {
+          "entry_node_ids": [
+            "step-e246c2af276e722d"
+          ],
+          "nodes": [
+            {
+              "id": "step-e246c2af276e722d",
+              "kind": "step",
+              "order": 0,
+              "title": "Inspect",
+              "body": "\nInspect the requested inputs.\n\n",
+              "assertion": "declared",
+              "confidence": {
+                "level": "structural",
+                "reason": "Mapped from a fence-aware workflow heading.",
+                "rule_id": "workflow.children"
+              },
+              "evidence_refs": []
+            },
+            {
+              "id": "step-5985f7c9fb98fe3d",
+              "kind": "step",
+              "order": 1,
+              "title": "Report",
+              "body": "\nReport the observable result.\n",
+              "assertion": "declared",
+              "confidence": {
+                "level": "structural",
+                "reason": "Mapped from a fence-aware workflow heading.",
+                "rule_id": "workflow.children"
+              },
+              "evidence_refs": []
+            }
+          ],
+          "edges": [
+            {
+              "id": "edge-step-e246c2af276e722d-step-5985f7c9fb98fe3d",
+              "from": "step-e246c2af276e722d",
+              "to": "step-5985f7c9fb98fe3d",
+              "kind": "sequence",
+              "assertion": "declared",
+              "confidence": {
+                "level": "structural",
+                "reason": "Heading order within the same workflow region.",
+                "rule_id": "workflow.children"
+              },
+              "evidence_refs": []
+            }
+          ]
+        },
+        "source_maps": [
+          {
+            "node_id": "step-e246c2af276e722d",
+            "source_id": "source-skill",
+            "span": {
+              "end_byte": 159,
+              "start_byte": 107
+            },
+            "heading": {
+              "end_byte": 126,
+              "start_byte": 107
+            },
+            "title": {
+              "end_byte": 126,
+              "start_byte": 119
+            },
+            "body": {
+              "end_byte": 159,
+              "start_byte": 127
+            }
+          },
+          {
+            "node_id": "step-5985f7c9fb98fe3d",
+            "source_id": "source-skill",
+            "span": {
+              "end_byte": 209,
+              "start_byte": 159
+            },
+            "heading": {
+              "end_byte": 177,
+              "start_byte": 159
+            },
+            "title": {
+              "end_byte": 177,
+              "start_byte": 171
+            },
+            "body": {
+              "end_byte": 209,
+              "start_byte": 178
+            }
+          }
+        ],
+        "opaque_ranges": [
+          {
+            "end_byte": 107,
+            "reason": "unparsed-or-unsupported-source",
+            "sha256": "9e90e9407e96ca89b72a5a2e9eb4ca915b1c767572262ac2feddfbbc4619fd5e",
+            "start_byte": 0
+          }
+        ],
+        "diagnostics": []
+      },
+      "artifact_id": "urn:air:sha256:b0a3f246a85eecf619ecdb8d1e4ed24facfe8582f514384554c4c147620c2c9a",
+      "provenance": {
+        "created_by": {
+          "name": "air-workbench",
+          "version": "1.0.0"
+        },
+        "origins": [
+          {
+            "kind": "legacy-artifact",
+            "format": "workflow-ir",
+            "version": "1.0",
+            "digest": "ca2dfce44ec26e645a466893a3572b3aadc871e4ce28fb005904db9bd6af56cc"
+          }
+        ],
+        "derived_from": [],
+        "migrations": [
+          {
+            "from_format": "workflow-ir",
+            "from_version": "1.0",
+            "source_digest": "ca2dfce44ec26e645a466893a3572b3aadc871e4ce28fb005904db9bd6af56cc",
+            "migrator": "air-workbench",
+            "migrator_version": "1.0.0",
+            "warnings": []
+          }
+        ]
+      },
+      "integrity": {
+        "canonicalization": "RFC8785",
+        "algorithm": "sha-256",
+        "content_digest": "b0a3f246a85eecf619ecdb8d1e4ed24facfe8582f514384554c4c147620c2c9a",
+        "envelope_digest": "41e413d11e5e7a6917f8b573c70aa87e782931bd3cc9c5d938c11d5dd20077e3"
+      },
+      "required_extensions": [],
+      "extensions": {
+        "https://open330.github.io/air/extensions/legacy-workflow-ir-v1": {
+          "kind": "workflow",
+          "artifact_without_source_bytes": {
+            "artifact_id": "workflow-7a0ee6c5d9bab51a",
+            "diagnostics": [],
+            "extensions": {
+              "frontmatter": {
+                "description": "Synthetic AIR example with no private session content",
+                "name": "hello-agent"
+              },
+              "managed_metadata": null
+            },
+            "graph": {
+              "edges": [
+                {
+                  "confidence": {
+                    "level": "structural",
+                    "reason": "Heading order within the same workflow region.",
+                    "rule_id": "workflow.children"
+                  },
+                  "editable": true,
+                  "from": "step-e246c2af276e722d",
+                  "id": "edge-step-e246c2af276e722d-step-5985f7c9fb98fe3d",
+                  "kind": "sequence",
+                  "provenance": "imported",
+                  "to": "step-5985f7c9fb98fe3d"
+                }
+              ],
+              "entry_node_ids": [
+                "step-e246c2af276e722d"
+              ],
+              "nodes": [
+                {
+                  "added": false,
+                  "body": "\nInspect the requested inputs.\n\n",
+                  "confidence": {
+                    "level": "structural",
+                    "reason": "Mapped from a fence-aware workflow heading.",
+                    "rule_id": "workflow.children"
+                  },
+                  "editable_fields": [
+                    "title",
+                    "body"
+                  ],
+                  "id": "step-e246c2af276e722d",
+                  "kind": "step",
+                  "mode": "sequence",
+                  "order": 0,
+                  "provenance": "imported",
+                  "source_map": {
+                    "body": {
+                      "end_byte": 159,
+                      "start_byte": 127
+                    },
+                    "heading": {
+                      "end_byte": 126,
+                      "start_byte": 107
+                    },
+                    "span": {
+                      "end_byte": 159,
+                      "start_byte": 107
+                    },
+                    "title": {
+                      "end_byte": 126,
+                      "start_byte": 119
+                    }
+                  },
+                  "title": "Inspect"
+                },
+                {
+                  "added": false,
+                  "body": "\nReport the observable result.\n",
+                  "confidence": {
+                    "level": "structural",
+                    "reason": "Mapped from a fence-aware workflow heading.",
+                    "rule_id": "workflow.children"
+                  },
+                  "editable_fields": [
+                    "title",
+                    "body"
+                  ],
+                  "id": "step-5985f7c9fb98fe3d",
+                  "kind": "step",
+                  "mode": "sequence",
+                  "order": 1,
+                  "provenance": "imported",
+                  "source_map": {
+                    "body": {
+                      "end_byte": 209,
+                      "start_byte": 178
+                    },
+                    "heading": {
+                      "end_byte": 177,
+                      "start_byte": 159
+                    },
+                    "span": {
+                      "end_byte": 209,
+                      "start_byte": 159
+                    },
+                    "title": {
+                      "end_byte": 177,
+                      "start_byte": 171
+                    }
+                  },
+                  "title": "Report"
+                }
+              ]
+            },
+            "ir_version": "1.0",
+            "kind": "workflow",
+            "opaque_spans": [
+              {
+                "end_byte": 107,
+                "reason": "unparsed-or-unsupported-source",
+                "sha256": "9e90e9407e96ca89b72a5a2e9eb4ca915b1c767572262ac2feddfbbc4619fd5e",
+                "start_byte": 0
+              }
+            ],
+            "revision": {
+              "current_sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb",
+              "dirty": false,
+              "original_sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb",
+              "structural_dirty": false
+            },
+            "source": {
+              "byte_length": 209,
+              "encoding": "utf-8",
+              "final_newline": true,
+              "newline": "lf",
+              "path": "examples/hello-agent/SKILL.md",
+              "sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb"
+            }
+          }
+        }
+      }
+    },
+    "workflow_content_digest": "b0a3f246a85eecf619ecdb8d1e4ed24facfe8582f514384554c4c147620c2c9a",
+    "prompt": {
+      "encoding": "base64",
+      "bytes_base64": "SW5zcGVjdCBhbmQgcmVwb3J0IHRoZSBzeW50aGV0aWMgZXhhbXBsZS4=",
+      "byte_length": 41,
+      "sha256": "abf5894e6517576153e1973710a2fc5178d9a8f510617c7d3c4fda6310f5598e"
+    },
+    "rendered_skill": {
+      "encoding": "base64",
+      "bytes_base64": "LS0tCm5hbWU6IGhlbGxvLWFnZW50CmRlc2NyaXB0aW9uOiBTeW50aGV0aWMgQUlSIGV4YW1wbGUgd2l0aCBubyBwcml2YXRlIHNlc3Npb24gY29udGVudAotLS0KCiMjIFdvcmtmbG93CgojIyMgU3RlcCAxOiBJbnNwZWN0CgpJbnNwZWN0IHRoZSByZXF1ZXN0ZWQgaW5wdXRzLgoKIyMjIFN0ZXAgMjogUmVwb3J0CgpSZXBvcnQgdGhlIG9ic2VydmFibGUgcmVzdWx0Lgo=",
+      "byte_length": 209,
+      "sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb",
+      "delivery": "prompt-context"
+    },
+    "agent": "codex",
+    "cwd": {
+      "display": "/tmp",
+      "disclosure": "local-only"
+    },
+    "safety": {
+      "boundary": "os-sandbox",
+      "intent": "read-only",
+      "provider": "codex",
+      "sandbox": "read-only"
+    },
+    "command": {
+      "argv": [
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+        "-C",
+        "/tmp",
+        "-"
+      ],
+      "executable": "codex",
+      "shell": false,
+      "stdin": "approved-prompt-context"
+    },
+    "execution_mode": "native-cli-prompt-context",
+    "graph_enforcement": "prompt-context-only",
+    "warnings": []
+  },
+  "artifact_id": "urn:air:sha256:9f068567aaeb5a40a93e890bcb297929d232938d701a1460d0622225ce776961",
+  "provenance": {
+    "created_by": {
+      "name": "air-workbench",
+      "version": "1.0.0"
+    },
+    "origins": [
+      {
+        "kind": "legacy-artifact",
+        "format": "workflow-ir",
+        "version": "1.0",
+        "digest": "b3d0ecd18649ac4001fcdc7f252654b924d363f50ca150e8b14862d7b5cb1be2"
+      }
+    ],
+    "derived_from": [],
+    "migrations": [
+      {
+        "from_format": "workflow-ir",
+        "from_version": "1.0",
+        "source_digest": "b3d0ecd18649ac4001fcdc7f252654b924d363f50ca150e8b14862d7b5cb1be2",
+        "migrator": "air-workbench",
+        "migrator_version": "1.0.0",
+        "warnings": []
+      }
+    ]
+  },
+  "integrity": {
+    "canonicalization": "RFC8785",
+    "algorithm": "sha-256",
+    "content_digest": "9f068567aaeb5a40a93e890bcb297929d232938d701a1460d0622225ce776961",
+    "envelope_digest": "d9df134e4737fb7c21ad456588545e1974675fc4bf2474c2bed3e332cd9cd370"
+  },
+  "required_extensions": [],
+  "extensions": {
+    "https://open330.github.io/air/extensions/legacy-workflow-ir-v1": {
+      "kind": "plan",
+      "artifact_without_byte_content": {
+        "agent": "codex",
+        "command": {
+          "argv": [
+            "exec",
+            "--json",
+            "--ephemeral",
+            "--sandbox",
+            "read-only",
+            "-C",
+            "/tmp",
+            "-"
+          ],
+          "executable": "codex",
+          "shell": false,
+          "stdin": "approved-prompt-context"
+        },
+        "cwd": "/tmp",
+        "execution_mode": "native-cli-prompt-context",
+        "ir_version": "1.0",
+        "kind": "plan",
+        "prompt": {
+          "byte_length": 41,
+          "encoding": "base64",
+          "sha256": "abf5894e6517576153e1973710a2fc5178d9a8f510617c7d3c4fda6310f5598e"
+        },
+        "safety": {
+          "boundary": "os-sandbox",
+          "intent": "read-only",
+          "provider": "codex",
+          "sandbox": "read-only"
+        },
+        "skill": {
+          "byte_length": 209,
+          "delivery": "prompt-context",
+          "encoding": "base64",
+          "sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb",
+          "source_path": "examples/hello-agent/SKILL.md"
+        },
+        "warnings": [],
+        "workflow": {
+          "artifact_id": "workflow-7a0ee6c5d9bab51a",
+          "diagnostics": [],
+          "extensions": {
+            "frontmatter": {
+              "description": "Synthetic AIR example with no private session content",
+              "name": "hello-agent"
+            },
+            "managed_metadata": null
+          },
+          "graph": {
+            "edges": [
+              {
+                "confidence": {
+                  "level": "structural",
+                  "reason": "Heading order within the same workflow region.",
+                  "rule_id": "workflow.children"
+                },
+                "editable": true,
+                "from": "step-e246c2af276e722d",
+                "id": "edge-step-e246c2af276e722d-step-5985f7c9fb98fe3d",
+                "kind": "sequence",
+                "provenance": "imported",
+                "to": "step-5985f7c9fb98fe3d"
+              }
+            ],
+            "entry_node_ids": [
+              "step-e246c2af276e722d"
+            ],
+            "nodes": [
+              {
+                "added": false,
+                "body": "\nInspect the requested inputs.\n\n",
+                "confidence": {
+                  "level": "structural",
+                  "reason": "Mapped from a fence-aware workflow heading.",
+                  "rule_id": "workflow.children"
+                },
+                "editable_fields": [
+                  "title",
+                  "body"
+                ],
+                "id": "step-e246c2af276e722d",
+                "kind": "step",
+                "mode": "sequence",
+                "order": 0,
+                "provenance": "imported",
+                "source_map": {
+                  "body": {
+                    "end_byte": 159,
+                    "start_byte": 127
+                  },
+                  "heading": {
+                    "end_byte": 126,
+                    "start_byte": 107
+                  },
+                  "span": {
+                    "end_byte": 159,
+                    "start_byte": 107
+                  },
+                  "title": {
+                    "end_byte": 126,
+                    "start_byte": 119
+                  }
+                },
+                "title": "Inspect"
+              },
+              {
+                "added": false,
+                "body": "\nReport the observable result.\n",
+                "confidence": {
+                  "level": "structural",
+                  "reason": "Mapped from a fence-aware workflow heading.",
+                  "rule_id": "workflow.children"
+                },
+                "editable_fields": [
+                  "title",
+                  "body"
+                ],
+                "id": "step-5985f7c9fb98fe3d",
+                "kind": "step",
+                "mode": "sequence",
+                "order": 1,
+                "provenance": "imported",
+                "source_map": {
+                  "body": {
+                    "end_byte": 209,
+                    "start_byte": 178
+                  },
+                  "heading": {
+                    "end_byte": 177,
+                    "start_byte": 159
+                  },
+                  "span": {
+                    "end_byte": 209,
+                    "start_byte": 159
+                  },
+                  "title": {
+                    "end_byte": 177,
+                    "start_byte": 171
+                  }
+                },
+                "title": "Report"
+              }
+            ]
+          },
+          "ir_version": "1.0",
+          "kind": "workflow",
+          "opaque_spans": [
+            {
+              "end_byte": 107,
+              "reason": "unparsed-or-unsupported-source",
+              "sha256": "9e90e9407e96ca89b72a5a2e9eb4ca915b1c767572262ac2feddfbbc4619fd5e",
+              "start_byte": 0
+            }
+          ],
+          "revision": {
+            "current_sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb",
+            "dirty": false,
+            "original_sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb",
+            "structural_dirty": false
+          },
+          "source": {
+            "byte_length": 209,
+            "encoding": "utf-8",
+            "final_newline": true,
+            "newline": "lf",
+            "path": "examples/hello-agent/SKILL.md",
+            "sha256": "7a0ee6c5d9bab51ad77c615f60bd49c3ec2e505da6849afff2bb737c475fe6fb"
+          }
+        },
+        "workflow_revision": "ca2dfce44ec26e645a466893a3572b3aadc871e4ce28fb005904db9bd6af56cc"
+      }
+    }
+  }
+}

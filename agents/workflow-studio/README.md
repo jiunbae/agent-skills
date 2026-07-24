@@ -1,19 +1,83 @@
-# Workflow Studio V1
+# AIR Workbench
 
-Workflow Studio is a self-contained local tool that maps an Agent Skill
-`SKILL.md` to versioned Workflow IR, displays and edits its declared flow, and
-exports compatible Markdown. Its browser workspace uses a checked-in React
-Flow bundle; running the distributed tool does not require `npm install` or a
-CDN. Workflow Studio also adds an explicit approval gate around native Codex or
-Claude CLI runs and records only the observable post-run trace.
+AIR Workbench is a self-contained local tool for inspecting and editing Agent
+Skill workflows. AIR means **Agent Intermediate Representation**. AIR is an
+Open330 project format; it is not an IANA or standards-body format and the
+common acronym is not claimed as globally unique.
+
+The browser editor uses a checked-in React Flow bundle, so the installed
+runtime needs no `npm install`, CDN, registry, telemetry, or external service.
+The current native-run compatibility path adds an explicit approval gate
+around Codex or Claude CLI and records only observable post-run evidence.
 
 `SKILL.md` remains the executable/distributable artifact:
 
 ```text
-SKILL.md ⇄ Workflow IR 1.0 ⇄ local visual studio
-                  │
-                  ├─ approved native Codex/Claude run → trace
-                  └─ plan/trace → new skill draft
+SKILL.md ⇄ AIR workflow ⇄ AIR Workbench graph
+```
+
+## AIR 1 contract
+
+- `.air.json` is the complete representation for AIR `workflow`, `plan`, and
+  `trace` artifacts.
+- `.air.md` is a lossless workflow-only Markdown carrier defined by the AIR
+  codec, but Codex and Claude do not discover that filename.
+  Place reviewed carrier bytes at `<skill-directory>/SKILL.md` to distribute
+  or activate them as a native Skill.
+- AIR roots use `format: "air"`, `air_version: "1.0.0"`, project-controlled
+  `https://open330.github.io/air/` identifiers, and domain-separated RFC 8785
+  JCS/SHA-256 identities.
+- The canonical local discovery API is `/air/v1`. It is token protected,
+  read-only, no-store, and accepts no browser-supplied filesystem path, root,
+  glob, URL, output destination, Skill installation, or agent run.
+
+The normative specification is `spec/AIR-1.0.0.md`; schemas and deterministic
+examples live in `schemas/` and `examples/`.
+
+The foundation release publishes the AIR contract, pure codec, conversion and
+migration CLI, zero-input launcher, and bounded local Skill catalog/API. The
+integrated Resources shell and metadata-only Codex/Claude session adapters are
+later delivery waves and are not claimed here.
+
+## Start with automatic Skill discovery
+
+```bash
+node scripts/air.mjs workbench
+```
+
+AIR Workbench scans the standard project, user, system, and repository Skill
+roots at startup within finite read-only budgets. It opens the first discovered
+Skill, or an empty document when none is available. The current foundation
+exposes the full metadata-only catalog and explicit refresh through its
+tokenized `/air/v1` API; the visual Resources list arrives with the unified
+workbench shell.
+
+To open one specific Skill or AIR artifact instead:
+
+```bash
+node scripts/air.mjs workbench /path/to/skill/SKILL.md
+node scripts/air.mjs workbench /path/to/workflow.air.json
+```
+
+## Legacy compatibility
+
+The physical package path remains `agents/workflow-studio/`. The current
+executable entry, Workflow IR `1.0`, exact `workflow-studio:v1` Markdown
+metadata, and tokenized `/api/artifact` route remain supported compatibility
+boundaries:
+
+```bash
+node scripts/workflow-studio.mjs --help
+```
+
+AIR Workbench reads legacy artifacts but does not silently rewrite them.
+Explicit migration is deterministic, no-overwrite, and clears any
+legacy plan approval because AIR authorizes different bytes.
+
+```bash
+node scripts/air.mjs migrate legacy-workflow.json \
+  --to air/1 \
+  --out workflow.air.json
 ```
 
 ## Requirements
@@ -21,12 +85,8 @@ SKILL.md ⇄ Workflow IR 1.0 ⇄ local visual studio
 - macOS and Node.js 26 (V1 tested with Node 26.5.0)
 - Codex CLI or Claude Code CLI only when running a plan
 
-Run commands from this directory, or use the absolute path to
-`scripts/workflow-studio.mjs`. Nothing is installed globally.
-
-```bash
-node scripts/workflow-studio.mjs --help
-```
+Run commands from this directory, or use the absolute compatibility script
+path. Nothing is installed globally.
 
 ## Skill → graph → skill
 
@@ -41,7 +101,7 @@ node scripts/workflow-studio.mjs studio \
   /tmp/workflow-studio-demo/workflow.json
 ```
 
-Open the printed loopback URL. The **Workflow** workspace keeps the interactive
+Open the printed loopback URL. AIR Workbench keeps the interactive
 React Flow canvas, semantic outline, and selection inspector together:
 
 - select a step or dependency on the canvas or keyboard-operable outline;
@@ -69,7 +129,8 @@ node scripts/workflow-studio.mjs studio \
   --host 0.0.0.0
 ```
 
-Keep the printed port and token, but replace `0.0.0.0` with this machine's LAN
+Explicitly choosing `0.0.0.0` is informed plaintext-LAN consent. Keep the
+printed port and token, but replace `0.0.0.0` with this machine's LAN
 address in the remote browser, for example
 `http://<LAN-IP>:PORT/?token=TOKEN`. The default remains loopback.
 `0.0.0.0` exposes the read-only Studio to reachable IPv4 networks, so keep the
@@ -123,8 +184,8 @@ node scripts/workflow-studio.mjs studio \
 ```
 
 Use `--agent claude` to select Claude Code. The tool probes the selected CLI
-and records its version. Missing or unsupported CLIs fail explicitly; Workflow
-Studio does not install a provider or fall back to another one.
+and records its version. Missing or unsupported CLIs fail explicitly; AIR
+Workbench does not install a provider or fall back to another one.
 
 Review the plan before approval. Approval binds the exact prompt and skill
 bytes, graph revision, canonical working directory, provider-specific safety
@@ -160,7 +221,7 @@ never overwrites the original skill. A trace-derived draft must be reviewed:
 observed event order is history, not hidden reasoning or a guaranteed future
 plan.
 
-## Workflow IR 1.0
+## Workflow IR 1.0 compatibility
 
 V1 supports a deliberately small graph grammar:
 
@@ -221,7 +282,7 @@ All artifact and draft destinations are explicit `--out` paths, except that
 - `export`: new, no-overwrite Markdown file
 - `promote`: new skill-draft directory
 
-The studio binds an ephemeral loopback port by default. Explicit
+AIR Workbench binds an ephemeral loopback port by default. Explicit
 `--host 0.0.0.0` binds all IPv4 interfaces for LAN access and accepts only
 IPv4-literal `Host` headers on the selected port. It serves bundled assets plus
 the selected in-memory artifact. Source-bearing reads require a random session

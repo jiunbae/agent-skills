@@ -1,0 +1,116 @@
+{
+  "$schema": "https://open330.github.io/air/schema/1.0.0/air.schema.json",
+  "format": "air",
+  "air_version": "1.0.0",
+  "kind": "trace",
+  "profile": "https://open330.github.io/air/profiles/1.0.0/trace-native-run",
+  "body": {
+    "workflow_content_digest": "ca2dfce44ec26e645a466893a3572b3aadc871e4ce28fb005904db9bd6af56cc",
+    "plan_content_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "agent": "codex",
+    "cwd": {
+      "display": "/tmp",
+      "disclosure": "local-only"
+    },
+    "safety": {
+      "boundary": "os-sandbox",
+      "intent": "read-only",
+      "provider": "codex",
+      "sandbox": "read-only"
+    },
+    "adapter": {
+      "id": "codex",
+      "version": "synthetic"
+    },
+    "events": [
+      {
+        "id": "event-0",
+        "order": 0,
+        "type": "turn.completed",
+        "status": "completed",
+        "assertion": "observed",
+        "confidence": {
+          "level": "explicit",
+          "rule_id": "legacy.native-adapter",
+          "reason": "Observed by the legacy native CLI adapter."
+        },
+        "evidence_refs": [],
+        "source": {
+          "raw_type": "synthetic"
+        }
+      }
+    ],
+    "event_graph": {
+      "entry_event_ids": [
+        "event-0"
+      ],
+      "nodes": [
+        "event-0"
+      ],
+      "edges": []
+    },
+    "process": {
+      "exit_code": 0,
+      "signal": null,
+      "stderr": {
+        "encoding": "base64",
+        "bytes_base64": "",
+        "byte_length": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout_bytes": 0
+    },
+    "terminal": {
+      "status": "completed",
+      "completeness": "complete"
+    },
+    "diagnostics": [],
+    "hidden_reasoning_recovered": false
+  },
+  "artifact_id": "urn:air:sha256:617100c97f4fb307ab8930c08d808fd12329ac19effe0d7dd5442bbf0c58f440",
+  "provenance": {
+    "created_by": {
+      "name": "air-workbench",
+      "version": "1.0.0"
+    },
+    "origins": [
+      {
+        "kind": "legacy-artifact",
+        "format": "workflow-ir",
+        "version": "1.0",
+        "digest": "73529c81eeed369f1ff30a5cb82b06c51a28875a82e700d869a4b1793eb7c697"
+      }
+    ],
+    "derived_from": [],
+    "migrations": [
+      {
+        "from_format": "workflow-ir",
+        "from_version": "1.0",
+        "source_digest": "73529c81eeed369f1ff30a5cb82b06c51a28875a82e700d869a4b1793eb7c697",
+        "migrator": "air-workbench",
+        "migrator_version": "1.0.0",
+        "warnings": []
+      }
+    ]
+  },
+  "integrity": {
+    "canonicalization": "RFC8785",
+    "algorithm": "sha-256",
+    "content_digest": "617100c97f4fb307ab8930c08d808fd12329ac19effe0d7dd5442bbf0c58f440",
+    "envelope_digest": "0a1fdb10f5b1e2de980891fe4668d272caf5f42c672539d8b5b53add7a34f59f"
+  },
+  "required_extensions": [],
+  "extensions": {
+    "https://open330.github.io/air/extensions/legacy-workflow-ir-v1": {
+      "kind": "trace",
+      "run_id": "synthetic-example-run",
+      "event_sequences": [
+        0
+      ],
+      "event_summaries": [
+        "Synthetic provider completion"
+      ],
+      "diagnostics": []
+    }
+  }
+}

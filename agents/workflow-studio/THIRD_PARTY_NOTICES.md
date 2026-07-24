@@ -1,8 +1,8 @@
-# Workflow Studio browser bundle — third-party notices
+# AIR Workbench browser bundle — third-party notices
 
 The checked-in files in `assets/generated/` bundle the following packages.
 Versions are frozen by `package-lock.json` (lock SHA-256 at review:
-`8b9326d66f0a093f2cb383834f44dee27c7de94c6e829c38e46b2850814a8859`).
+`27630615e3a9fa9c4d11852a3d83bfbd4bf6ed7b21610fe35d42ae61028dcf4a`).
 The build-only `esbuild` package is listed as part of the reviewed toolchain.
 
 | Package | Version | License |

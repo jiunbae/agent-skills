@@ -1,0 +1,417 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import test from "node:test";
+
+import {
+  AIR_CONTENT_DOMAIN,
+  AIR_PROFILES,
+  AIR_SCHEMA,
+  AirCodecError,
+  canonicalizeJcs,
+  decodeBase64,
+  inspectAir,
+  parseIJson,
+  validateAirEnvelopeShape,
+} from "../shared/air-codec.mjs";
+import {
+  airToLegacy,
+  decodeAirMarkdownArtifact,
+  encodeAirMarkdownArtifact,
+  migrateLegacyToAir,
+  validateAirArtifact,
+} from "../src/air.mjs";
+import {
+  importSkillBytes,
+  importSkillFile,
+  stableStringify,
+  validateArtifact,
+} from "../src/core.mjs";
+import { approvePlan, buildRunEnvelope } from "../src/adapters.mjs";
+
+const ROOT = resolve(import.meta.dirname, "../../..");
+
+function expectCode(fn, code) {
+  assert.throws(fn, (error) => {
+    assert.equal(error instanceof AirCodecError, true);
+    assert.equal(error.code, code);
+    return true;
+  });
+}
+
+function domainDigest(domain, value) {
+  return createHash("sha256")
+    .update(domain, "utf8")
+    .update(canonicalizeJcs(value), "utf8")
+    .digest("hex");
+}
+
+function nativeEnvelope(kind, profile, body) {
+  const projection = {
+    format: "air",
+    air_version: "1.0.0",
+    kind,
+    profile,
+    body,
+  };
+  const contentDigest = domainDigest(AIR_CONTENT_DOMAIN, projection);
+  return {
+    $schema: AIR_SCHEMA,
+    ...projection,
+    artifact_id: `urn:air:sha256:${contentDigest}`,
+    provenance: {
+      created_by: { name: "air-test", version: "1.0.0" },
+      origins: [],
+      derived_from: [],
+      migrations: [],
+    },
+    integrity: {
+      canonicalization: "RFC8785",
+      algorithm: "sha-256",
+      content_digest: contentDigest,
+    },
+    required_extensions: [],
+    extensions: {},
+  };
+}
+
+function resealContent(artifact) {
+  const contentDigest = domainDigest(AIR_CONTENT_DOMAIN, {
+    format: artifact.format,
+    air_version: artifact.air_version,
+    kind: artifact.kind,
+    profile: artifact.profile,
+    body: artifact.body,
+  });
+  artifact.integrity.content_digest = contentDigest;
+  delete artifact.integrity.envelope_digest;
+  artifact.artifact_id = `urn:air:sha256:${contentDigest}`;
+  return artifact;
+}
+
+function completedTrace() {
+  return {
+    ir_version: "1.0",
+    kind: "trace",
+    run_id: "air-test-run",
+    plan_hash: "1".repeat(64),
+    workflow_revision: "2".repeat(64),
+    agent: "codex",
+    cwd: ROOT,
+    safety: {
+      intent: "read-only",
+      provider: "codex",
+      sandbox: "read-only",
+      boundary: "os-sandbox",
+    },
+    adapter: { executable: "codex", version: "test" },
+    events: [{
+      sequence: 0,
+      provider: "codex",
+      kind: "turn.completed",
+      status: "completed",
+      provenance: "observed",
+      source: { raw_type: "test" },
+      summary: "provider completed",
+    }],
+    inferred_edges: [],
+    diagnostics: [],
+    process: {
+      exit_code: 0,
+      signal: null,
+      stderr: "",
+      stderr_bytes: 0,
+      stdout_bytes: 1,
+    },
+    status: "completed",
+    completeness: "complete",
+    provenance: {
+      events: "observed",
+      sequence_edges: "inferred",
+      hidden_reasoning_recovered: false,
+    },
+  };
+}
+
+test("AIR JCS is deterministic and enforces the I-JSON boundary", () => {
+  assert.equal(
+    canonicalizeJcs({ "\u20ac": 1, "\r": 2, "\ufb33": 3, "1": -0 }),
+    '{"\\r":2,"1":0,"€":1,"דּ":3}',
+  );
+  assert.equal(
+    canonicalizeJcs(parseIJson('{"a":[true,null,1.25]}')),
+    '{"a":[true,null,1.25]}',
+  );
+  expectCode(() => parseIJson('{"a":1,"a":2}'), "AIR_INVALID_JSON");
+  expectCode(() => parseIJson('{"n":9007199254740992}'), "AIR_INVALID_JSON");
+  expectCode(() => parseIJson('{"s":"\\ud800"}'), "AIR_INVALID_JSON");
+  assert.equal(AIR_CONTENT_DOMAIN, "AIR-CONTENT-V1\n");
+});
+
+test("real background-implementer migrates to exact AIR workflow and back", async () => {
+  const legacy = await importSkillFile(
+    resolve(ROOT, "agents/background-implementer/SKILL.md"),
+  );
+  const air = migrateLegacyToAir(legacy);
+  assert.equal(air.format, "air");
+  assert.equal(air.air_version, "1.0.0");
+  assert.equal(air.profile, AIR_PROFILES.workflow);
+  assert.match(air.artifact_id, /^urn:air:sha256:[a-f0-9]{64}$/u);
+  assert.equal(air.body.graph.nodes.length, 5);
+  assert.equal(air.body.graph.edges.length, 4);
+  assert.equal(validateAirArtifact(air), true);
+  assert.equal(
+    stableStringify(airToLegacy(air)),
+    stableStringify(legacy),
+  );
+});
+
+test("AIR Markdown is workflow-only, length anchored, and single-source", async () => {
+  const legacy = await importSkillFile(
+    resolve(ROOT, "agents/background-implementer/SKILL.md"),
+  );
+  const air = migrateLegacyToAir(legacy);
+  const carrier = encodeAirMarkdownArtifact(air);
+  const decoded = decodeAirMarkdownArtifact(carrier);
+  assert.deepEqual(
+    decoded.logicalSource,
+    await readFile(resolve(ROOT, "agents/background-implementer/SKILL.md")),
+  );
+  assert.equal(stableStringify(decoded.artifact), stableStringify(air));
+  assert.deepEqual(encodeAirMarkdownArtifact(decoded.artifact), carrier);
+
+  const marker = carrier
+    .toString("utf8")
+    .match(/<!-- air:v1 ([A-Za-z0-9_-]+) -->\n$/u);
+  assert.ok(marker);
+  const manifestText = Buffer.from(
+    decodeBase64(marker[1], { url: true }),
+  ).toString("utf8");
+  assert.doesNotMatch(manifestText, /"raw_base64"/u);
+  assert.doesNotMatch(manifestText, new RegExp(legacy.source.raw_base64.slice(0, 80), "u"));
+
+  expectCode(
+    () => decodeAirMarkdownArtifact(Buffer.concat([carrier, Buffer.from("x")])),
+    "AIR_CARRIER_INVALID",
+  );
+});
+
+test("AIR Markdown retains LF, CRLF, final-newline, Unicode, and marker prose", () => {
+  const variants = [
+    Buffer.from("---\nname: air-lf\ndescription: no final newline\n---\n\n## Workflow\n### Step 1: 한글\nBody", "utf8"),
+    Buffer.from("---\r\nname: air-crlf\r\ndescription: CRLF\r\n---\r\n\r\n## Workflow\r\n### Step 1: One\r\nBody\r\n", "utf8"),
+    Buffer.from("---\nname: air-marker\ndescription: marker prose\n---\n\n<!-- air:v1 fake -->\n\n## Workflow\n### Step 1: One\nBody\n", "utf8"),
+  ];
+  for (const [index, source] of variants.entries()) {
+    const legacy = importSkillBytes(source, {
+      sourcePath: `variant-${index}/SKILL.md`,
+    });
+    const air = migrateLegacyToAir(legacy);
+    const carrier = encodeAirMarkdownArtifact(air);
+    const decoded = decodeAirMarkdownArtifact(carrier);
+    assert.deepEqual(decoded.logicalSource, source);
+    assert.deepEqual(encodeAirMarkdownArtifact(decoded.artifact), carrier);
+  }
+
+  const fencedSource = Buffer.from(
+    "---\nname: fenced\ndescription: Open fence\n---\n\n```text",
+    "utf8",
+  );
+  const fenced = migrateLegacyToAir(importSkillBytes(fencedSource, {
+    sourcePath: "fenced/SKILL.md",
+  }));
+  expectCode(
+    () => encodeAirMarkdownArtifact(fenced),
+    "AIR_MD_UNREPRESENTABLE_SOURCE",
+  );
+  const withoutSource = structuredClone(fenced);
+  delete withoutSource.body.source.bytes_base64;
+  const manifest = {
+    carrier: "air.md",
+    carrier_version: "1",
+    envelope_without_source_content: withoutSource,
+    logical_source: {
+      byte_length: fencedSource.length,
+      sha256: fenced.body.source.sha256,
+    },
+  };
+  const token = Buffer.from(canonicalizeJcs(manifest), "utf8").toString("base64url");
+  const forged = Buffer.concat([
+    fencedSource,
+    Buffer.from(`\n\n<!-- air:v1 ${token} -->\n`, "utf8"),
+  ]);
+  expectCode(
+    () => decodeAirMarkdownArtifact(forged),
+    "AIR_CARRIER_INVALID",
+  );
+});
+
+test("AIR Markdown refuses plan and trace carriers", async () => {
+  const workflow = await importSkillFile(
+    resolve(ROOT, "agents/background-implementer/SKILL.md"),
+  );
+  const plan = buildRunEnvelope({
+    workflow,
+    prompt: "test",
+    agent: "codex",
+    cwd: ROOT,
+    safetyIntent: "read-only",
+  });
+  expectCode(
+    () => encodeAirMarkdownArtifact(migrateLegacyToAir(plan)),
+    "AIR_MARKDOWN_KIND_UNSUPPORTED",
+  );
+  expectCode(
+    () => encodeAirMarkdownArtifact(migrateLegacyToAir(completedTrace())),
+    "AIR_MARKDOWN_KIND_UNSUPPORTED",
+  );
+});
+
+test("legacy approved-plan migration clears executable approval with provenance", async () => {
+  const workflow = await importSkillFile(
+    resolve(ROOT, "agents/background-implementer/SKILL.md"),
+  );
+  const approved = approvePlan(buildRunEnvelope({
+    workflow,
+    prompt: "test",
+    agent: "codex",
+    cwd: ROOT,
+    safetyIntent: "read-only",
+  }));
+  const air = migrateLegacyToAir(approved);
+  assert.equal(Object.hasOwn(air.body, "approval"), false);
+  assert.equal(air.provenance.migrations[0].cleared_approval, true);
+  assert.deepEqual(
+    air.provenance.migrations[0].warnings,
+    ["MIGRATION_APPROVAL_CLEARED"],
+  );
+  const migratedLegacy = airToLegacy(air);
+  assert.equal(Object.hasOwn(migratedLegacy, "approval"), false);
+  assert.equal(validateArtifact(migratedLegacy), true);
+  assert.equal(validateAirArtifact(air), true);
+});
+
+test("legacy native trace migrates without upgrading observed or inferred truth", () => {
+  const legacy = completedTrace();
+  const air = migrateLegacyToAir(legacy);
+  assert.equal(air.profile, AIR_PROFILES.trace);
+  assert.equal(air.body.events[0].assertion, "observed");
+  assert.equal(air.body.hidden_reasoning_recovered, false);
+  assert.equal(validateAirArtifact(air), true);
+  assert.equal(stableStringify(airToLegacy(air)), stableStringify(legacy));
+});
+
+test("native AIR validates without the optional legacy bridge, including session snapshots", async () => {
+  const workflow = migrateLegacyToAir(await importSkillFile(
+    resolve(ROOT, "agents/background-implementer/SKILL.md"),
+  ));
+  const nativeWorkflow = structuredClone(workflow);
+  nativeWorkflow.extensions = {};
+  delete nativeWorkflow.integrity.envelope_digest;
+  assert.equal(validateAirArtifact(nativeWorkflow), true);
+  const falseNewline = structuredClone(nativeWorkflow);
+  falseNewline.body.source.final_newline =
+    !falseNewline.body.source.final_newline;
+  expectCode(
+    () => validateAirArtifact(resealContent(falseNewline)),
+    "AIR_SEMANTIC_INVALID",
+  );
+
+  const plan = migrateLegacyToAir(buildRunEnvelope({
+    workflow: airToLegacy(workflow),
+    prompt: "native plan",
+    agent: "codex",
+    cwd: ROOT,
+    safetyIntent: "read-only",
+  }));
+  plan.extensions = {};
+  delete plan.integrity.envelope_digest;
+  assert.equal(validateAirArtifact(plan), true);
+
+  const trace = migrateLegacyToAir(completedTrace());
+  trace.extensions = {};
+  delete trace.integrity.envelope_digest;
+  assert.equal(validateAirArtifact(trace), true);
+  const falseCompletion = structuredClone(trace);
+  falseCompletion.body.process.exit_code = 7;
+  expectCode(
+    () => validateAirArtifact(resealContent(falseCompletion)),
+    "AIR_SEMANTIC_INVALID",
+  );
+
+  const emptyDigest = createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+  const session = nativeEnvelope("trace", AIR_PROFILES.session, {
+    capture: {
+      adapter: { id: "codex-rollout-jsonl", version: "1" },
+      source_schema_fingerprint: "3".repeat(64),
+      snapshot_cursor: { epoch: 0, byte_offset: 0 },
+      completeness: "complete-prefix",
+      source_prefix: { byte_length: 0, sha256: emptyDigest },
+    },
+    privacy: {
+      profile: "metadata-only",
+      redaction_manifest: [{ category: "prompt", disposition: "omitted" }],
+    },
+    events: [],
+    event_graph: { entry_event_ids: [], nodes: [], edges: [] },
+    lifecycle: {
+      state: "unknown",
+      complete: false,
+      confidence: {
+        level: "unknown",
+        rule_id: "test.session",
+        reason: "No lifecycle evidence.",
+      },
+      evidence: [],
+    },
+    diagnostics: [],
+    hidden_reasoning_recovered: false,
+  });
+  assert.equal(validateAirArtifact(session), true);
+});
+
+test("AIR integrity, closed roots, required extensions, and versions fail safely", async () => {
+  const legacy = await importSkillFile(
+    resolve(ROOT, "agents/background-implementer/SKILL.md"),
+  );
+  const air = migrateLegacyToAir(legacy);
+
+  const tampered = structuredClone(air);
+  tampered.body.graph.nodes[0].title = "tampered";
+  expectCode(() => validateAirArtifact(tampered), "AIR_INTEGRITY_MISMATCH");
+
+  const extra = structuredClone(air);
+  extra.surprise = true;
+  expectCode(() => validateAirEnvelopeShape(extra), "AIR_SCHEMA_INVALID");
+
+  const required = structuredClone(air);
+  required.extensions["example.invalid:future"] = { retained: true };
+  required.required_extensions = ["example.invalid:future"];
+  expectCode(
+    () => validateAirEnvelopeShape(required),
+    "AIR_REQUIRED_EXTENSION_UNSUPPORTED",
+  );
+
+  const newer = structuredClone(air);
+  newer.air_version = "1.1.0";
+  assert.equal(inspectAir(newer).metadata.disposition, "read-only-version");
+  expectCode(
+    () => validateAirEnvelopeShape(newer),
+    "AIR_READ_ONLY_VERSION",
+  );
+  const patch = structuredClone(air);
+  patch.air_version = "1.0.1";
+  assert.equal(inspectAir(patch).metadata.disposition, "read-only-version");
+  expectCode(
+    () => validateAirEnvelopeShape(patch),
+    "AIR_READ_ONLY_VERSION",
+  );
+  const major = structuredClone(air);
+  major.air_version = "2.0.0";
+  assert.equal(inspectAir(major).metadata.disposition, "unsupported-major");
+  expectCode(
+    () => validateAirEnvelopeShape(major),
+    "AIR_UNSUPPORTED_VERSION",
+  );
+});

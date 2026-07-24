@@ -4,9 +4,20 @@ import { createServer } from "node:http";
 import { isIP } from "node:net";
 import { isAbsolute, resolve } from "node:path";
 
+import { AIR_PROFILES } from "../shared/air-codec.mjs";
+import { migrateLegacyToAir } from "./air.mjs";
+import { CATALOG_LIMITS } from "./catalog.mjs";
+
 const DEFAULT_HOST = "127.0.0.1";
 const WILDCARD_IPV4_HOST = "0.0.0.0";
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
+const SCHEMA_FILES = new Map([
+  ["air", "air.schema.json"],
+  ["workflow", "air-workflow.schema.json"],
+  ["plan", "air-plan.schema.json"],
+  ["trace", "air-trace.schema.json"],
+  ["problem", "air-problem.schema.json"],
+]);
 
 const ASSETS = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -146,6 +157,46 @@ function send(response, method, status, body, headers = {}) {
   response.end(method === "HEAD" ? undefined : bytes);
 }
 
+function encodeJson(value) {
+  const bytes = Buffer.from(JSON.stringify(value), "utf8");
+  if (bytes.byteLength > MAX_ARTIFACT_BYTES) {
+    throw new RangeError("AIR response exceeds the bounded response limit.");
+  }
+  return bytes;
+}
+
+function problem(code, status, title, detail) {
+  const value = {
+    type: `https://open330.github.io/air/problems/${code
+      .toLowerCase()
+      .replaceAll("_", "-")}`,
+    title,
+    status,
+    code,
+  };
+  if (detail) value.detail = detail;
+  return encodeJson(value);
+}
+
+function sendProblem(response, method, code, status, title, detail, headers = {}) {
+  send(response, method, status, problem(code, status, title, detail), {
+    "Content-Type": "application/problem+json; charset=utf-8",
+    ...headers,
+  });
+}
+
+function exactToken(url, token, allowedQuery = new Set()) {
+  if (
+    [...url.searchParams.keys()].some(
+      (key) => key !== "token" && !allowedQuery.has(key),
+    ) ||
+    url.searchParams.getAll("token").length !== 1
+  ) {
+    return false;
+  }
+  return tokenMatches(url.searchParams.get("token"), token);
+}
+
 /**
  * Create a read-only Workflow Studio server.
  *
@@ -158,6 +209,8 @@ function send(response, method, status, body, headers = {}) {
 export function createStudioServer({
   artifact,
   assetsDir,
+  schemasDir,
+  catalog = null,
   host = DEFAULT_HOST,
   port = 0,
 } = {}) {
@@ -168,6 +221,9 @@ export function createStudioServer({
   }
 
   const assetRoot = isAbsolute(assetsDir) ? assetsDir : resolve(assetsDir);
+  const schemaRoot = typeof schemasDir === "string"
+    ? (isAbsolute(schemasDir) ? schemasDir : resolve(schemasDir))
+    : null;
   const artifactBytes = encodeArtifact(artifact);
   const token = randomBytes(32).toString("base64url");
   let permanentlyClosed = false;
@@ -187,10 +243,22 @@ export function createStudioServer({
 
     const method = request.method ?? "GET";
     if (method !== "GET" && method !== "HEAD") {
-      send(response, method, 405, "Method Not Allowed\n", {
-        Allow: "GET, HEAD",
-        "Content-Type": "text/plain; charset=utf-8",
-      });
+      if ((request.url ?? "").startsWith("/air/v1/")) {
+        sendProblem(
+          response,
+          method,
+          "AIR_METHOD_NOT_ALLOWED",
+          405,
+          "Method not allowed",
+          "AIR foundation routes are read-only.",
+          { Allow: "GET, HEAD" },
+        );
+      } else {
+        send(response, method, 405, "Method Not Allowed\n", {
+          Allow: "GET, HEAD",
+          "Content-Type": "text/plain; charset=utf-8",
+        });
+      }
       return;
     }
 
@@ -224,6 +292,181 @@ export function createStudioServer({
       send(response, method, 200, artifactBytes, {
         "Content-Type": "application/json; charset=utf-8",
       });
+      return;
+    }
+
+    if (url.pathname.startsWith("/air/v1/")) {
+      const skillsCatalogRoute = url.pathname === "/air/v1/skills";
+      if (!exactToken(
+        url,
+        token,
+        skillsCatalogRoute ? new Set(["refresh"]) : new Set(),
+      )) {
+        sendProblem(
+          response,
+          method,
+          "AIR_AUTH_REQUIRED",
+          401,
+          "Authentication required",
+          "Exactly one valid Workbench token is required.",
+          { "WWW-Authenticate": 'Bearer realm="air-workbench"' },
+        );
+        return;
+      }
+      if (catalog === null || schemaRoot === null) {
+        sendProblem(
+          response,
+          method,
+          "AIR_RESOURCE_NOT_FOUND",
+          404,
+          "Resource not found",
+        );
+        return;
+      }
+      try {
+        if (url.pathname === "/air/v1/capabilities") {
+          send(response, method, 200, encodeJson({
+            api_version: "1",
+            air_versions: ["1.0.0"],
+            profiles: [
+              AIR_PROFILES.workflow,
+              AIR_PROFILES.plan,
+              AIR_PROFILES.trace,
+              AIR_PROFILES.session,
+            ],
+            operations: {
+              "capabilities.read": "available",
+              "schemas.read": "available",
+              "skills.catalog.read": "available",
+              "skills.catalog.refresh": "available",
+              "skills.artifact.read": "available",
+              "sessions.catalog.read": "unavailable",
+              "sessions.snapshot.create": "unavailable",
+            },
+            catalog_generation: catalog.getSnapshot().generation,
+            provider_adapters: {
+              "codex-rollout-jsonl": "unavailable",
+              "claude-project-jsonl": "unavailable",
+            },
+            read_only: true,
+            write: false,
+            run: false,
+            limits: {
+              artifact_response_bytes: MAX_ARTIFACT_BYTES,
+              catalog_max_roots: CATALOG_LIMITS.maxRoots,
+              catalog_max_depth: CATALOG_LIMITS.maxDepth,
+              catalog_max_entries: CATALOG_LIMITS.maxEntries,
+              catalog_max_candidates: CATALOG_LIMITS.maxCandidates,
+              catalog_max_records: CATALOG_LIMITS.maxRecords,
+              catalog_max_skill_bytes: CATALOG_LIMITS.maxSkillBytes,
+              catalog_max_total_bytes: CATALOG_LIMITS.maxTotalBytes,
+              catalog_max_duration_ms: CATALOG_LIMITS.maxDurationMs,
+              catalog_max_description_bytes:
+                CATALOG_LIMITS.maxDescriptionBytes,
+              catalog_max_diagnostics_per_item:
+                CATALOG_LIMITS.maxDiagnosticsPerItem,
+              catalog_max_response_bytes: CATALOG_LIMITS.maxCatalogBytes,
+            },
+          }), {
+            "Content-Type": "application/json; charset=utf-8",
+          });
+          return;
+        }
+        const schemaMatch =
+          /^\/air\/v1\/schemas\/1\.0\.0\/(air|workflow|plan|trace|problem)$/u
+            .exec(url.pathname);
+        if (schemaMatch) {
+          const body = await readFile(resolve(
+            schemaRoot,
+            SCHEMA_FILES.get(schemaMatch[1]),
+          ));
+          send(response, method, 200, body, {
+            "Content-Type": "application/schema+json; charset=utf-8",
+          });
+          return;
+        }
+        if (url.pathname === "/air/v1/skills") {
+          const refresh = url.searchParams.getAll("refresh");
+          if (
+            refresh.length > 1 ||
+            (refresh.length === 1 && refresh[0] !== "1")
+          ) {
+            sendProblem(
+              response,
+              method,
+              "AIR_INVALID_REQUEST",
+              400,
+              "Invalid request",
+              'The optional refresh query must be exactly "1".',
+            );
+            return;
+          }
+          if (method === "HEAD" && refresh.length === 1) {
+            sendProblem(
+              response,
+              method,
+              "AIR_INVALID_REQUEST",
+              400,
+              "Invalid refresh request",
+              "HEAD never refreshes the catalog.",
+            );
+            return;
+          }
+          const snapshot = refresh.length === 1
+            ? await catalog.refresh()
+            : catalog.getSnapshot();
+          send(response, method, 200, encodeJson(snapshot), {
+            "Content-Type": "application/json; charset=utf-8",
+          });
+          return;
+        }
+        const itemMatch =
+          /^\/air\/v1\/skills\/(skill_[A-Za-z0-9_-]{22})\/artifact$/u
+            .exec(url.pathname);
+        if (itemMatch) {
+          const air = migrateLegacyToAir(
+            await catalog.importArtifact(itemMatch[1]),
+          );
+          send(response, method, 200, encodeJson(air), {
+            "Content-Type":
+              `application/json; profile="${AIR_PROFILES.workflow}"`,
+          });
+          return;
+        }
+        sendProblem(
+          response,
+          method,
+          "AIR_RESOURCE_NOT_FOUND",
+          404,
+          "Resource not found",
+        );
+      } catch (error) {
+        if (error?.code === "AIR_CATALOG_ITEM_STALE") {
+          sendProblem(
+            response,
+            method,
+            "AIR_CATALOG_ITEM_CHANGED",
+            409,
+            "Catalog item changed",
+          );
+        } else if (error?.code === "AIR_CATALOG_ITEM_NOT_FOUND") {
+          sendProblem(
+            response,
+            method,
+            "AIR_RESOURCE_NOT_FOUND",
+            404,
+            "Resource not found",
+          );
+        } else {
+          sendProblem(
+            response,
+            method,
+            "AIR_INTERNAL_ERROR",
+            500,
+            "Internal server error",
+          );
+        }
+      }
       return;
     }
 

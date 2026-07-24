@@ -1,0 +1,726 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open330.github.io/air/schema/1.0.0/trace.schema.json",
+  "title": "AIR 1 trace profiles",
+  "allOf": [
+    {
+      "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/envelope"
+    },
+    {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "trace"
+            },
+            "profile": {
+              "const": "https://open330.github.io/air/profiles/1.0.0/trace-native-run"
+            },
+            "body": {
+              "$ref": "#/$defs/nativeTraceBody"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "trace"
+            },
+            "profile": {
+              "const": "https://open330.github.io/air/profiles/1.0.0/trace-session-snapshot"
+            },
+            "body": {
+              "$ref": "#/$defs/sessionTraceBody"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "adapter": {
+      "type": "object",
+      "required": [
+        "id",
+        "version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "eventEdge": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "to",
+        "kind",
+        "assertion",
+        "confidence",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "provider-link",
+            "temporal"
+          ]
+        },
+        "assertion": {
+          "enum": [
+            "observed",
+            "inferred"
+          ]
+        },
+        "confidence": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "provider-link"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "assertion": {
+                "const": "observed"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "assertion": {
+                "const": "inferred"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "eventGraph": {
+      "type": "object",
+      "required": [
+        "entry_event_ids",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "entry_event_ids": {
+          "type": "array",
+          "maxItems": 30000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "maxItems": 30000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/eventEdge"
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "nativeEvent": {
+      "type": "object",
+      "required": [
+        "id",
+        "order",
+        "type",
+        "status",
+        "assertion",
+        "confidence",
+        "evidence_refs",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 29999
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "assertion": {
+          "const": "observed"
+        },
+        "confidence": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "source": {
+          "type": "object"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "terminal": {
+      "type": "object",
+      "required": [
+        "status",
+        "completeness"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled",
+            "protocol-error",
+            "truncated"
+          ]
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "failure": {
+          "$ref": "#/$defs/failure"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "process": {
+      "type": "object",
+      "required": [
+        "exit_code",
+        "signal",
+        "stderr",
+        "stdout_bytes"
+      ],
+      "properties": {
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stderr": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRecord"
+        },
+        "stdout_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "nativeTraceBody": {
+      "type": "object",
+      "required": [
+        "workflow_content_digest",
+        "plan_content_digest",
+        "agent",
+        "cwd",
+        "safety",
+        "adapter",
+        "events",
+        "event_graph",
+        "process",
+        "terminal",
+        "diagnostics",
+        "hidden_reasoning_recovered"
+      ],
+      "properties": {
+        "workflow_content_digest": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        },
+        "plan_content_digest": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        },
+        "agent": {
+          "enum": [
+            "codex",
+            "claude"
+          ]
+        },
+        "cwd": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/locator"
+        },
+        "safety": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/plan.schema.json#/$defs/safety"
+        },
+        "adapter": {
+          "$ref": "#/$defs/adapter"
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/nativeEvent"
+          }
+        },
+        "event_graph": {
+          "$ref": "#/$defs/eventGraph"
+        },
+        "process": {
+          "$ref": "#/$defs/process"
+        },
+        "terminal": {
+          "$ref": "#/$defs/terminal"
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/diagnostic"
+          }
+        },
+        "hidden_reasoning_recovered": {
+          "const": false
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "sessionEvidence": {
+      "type": "object",
+      "required": [
+        "raw_type",
+        "top_level_keys",
+        "byte_range",
+        "byte_length",
+        "sha256",
+        "omitted"
+      ],
+      "properties": {
+        "raw_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "top_level_keys": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "byte_range": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRange"
+        },
+        "byte_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "sha256": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        },
+        "omitted": {
+          "const": true
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "sessionEvent": {
+      "type": "object",
+      "required": [
+        "id",
+        "order",
+        "type",
+        "assertion",
+        "confidence",
+        "evidence_refs",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 29999
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "assertion": {
+          "const": "observed"
+        },
+        "confidence": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/sessionEvidence"
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "capture": {
+      "type": "object",
+      "required": [
+        "adapter",
+        "source_schema_fingerprint",
+        "snapshot_cursor",
+        "completeness",
+        "source_prefix"
+      ],
+      "properties": {
+        "adapter": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/adapter"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "enum": [
+                    "codex-rollout-jsonl",
+                    "claude-project-jsonl"
+                  ]
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        },
+        "source_schema_fingerprint": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        },
+        "snapshot_cursor": {
+          "type": "object",
+          "required": [
+            "epoch",
+            "byte_offset"
+          ],
+          "properties": {
+            "epoch": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "byte_offset": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        "completeness": {
+          "enum": [
+            "complete-prefix",
+            "partial-prefix",
+            "truncated"
+          ]
+        },
+        "source_prefix": {
+          "type": "object",
+          "required": [
+            "byte_length",
+            "sha256"
+          ],
+          "properties": {
+            "byte_length": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 33554432
+            },
+            "sha256": {
+              "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+            }
+          },
+          "unevaluatedProperties": false
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "privacy": {
+      "type": "object",
+      "required": [
+        "profile",
+        "redaction_manifest"
+      ],
+      "properties": {
+        "profile": {
+          "const": "metadata-only"
+        },
+        "redaction_manifest": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "category",
+              "disposition"
+            ],
+            "properties": {
+              "category": {
+                "enum": [
+                  "prompt",
+                  "message",
+                  "reasoning",
+                  "command",
+                  "arguments",
+                  "results",
+                  "stdout",
+                  "stderr",
+                  "attachments",
+                  "file-content",
+                  "environment",
+                  "credentials",
+                  "paths",
+                  "branches",
+                  "provider-identifiers"
+                ]
+              },
+              "disposition": {
+                "const": "omitted"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "unevaluatedProperties": false
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "lifecycleEvidence": {
+      "type": "object",
+      "required": [
+        "source",
+        "signal",
+        "observed",
+        "confidence"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "provider-declared",
+            "process-liveness",
+            "mtime",
+            "adapter-boundary"
+          ]
+        },
+        "signal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "observed": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": [
+        "state",
+        "complete",
+        "confidence",
+        "evidence"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "unknown",
+            "stale",
+            "partial"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/lifecycleEvidence"
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "sessionTraceBody": {
+      "type": "object",
+      "required": [
+        "capture",
+        "privacy",
+        "events",
+        "event_graph",
+        "lifecycle",
+        "diagnostics",
+        "hidden_reasoning_recovered"
+      ],
+      "properties": {
+        "capture": {
+          "$ref": "#/$defs/capture"
+        },
+        "privacy": {
+          "$ref": "#/$defs/privacy"
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/sessionEvent"
+          }
+        },
+        "event_graph": {
+          "$ref": "#/$defs/eventGraph"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/lifecycle"
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/diagnostic"
+          }
+        },
+        "hidden_reasoning_recovered": {
+          "const": false
+        }
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

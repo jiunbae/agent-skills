@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open330.github.io/air/schema/1.0.0/workflow.schema.json",
+  "title": "AIR 1 workflow-skill profile",
+  "allOf": [
+    {
+      "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/envelope"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "workflow"
+        },
+        "profile": {
+          "const": "https://open330.github.io/air/profiles/1.0.0/workflow-skill"
+        },
+        "body": {
+          "$ref": "#/$defs/workflowBody"
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "media_type",
+        "encoding",
+        "bytes_base64",
+        "byte_length",
+        "sha256",
+        "newline",
+        "final_newline"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "media_type": {
+          "const": "text/markdown"
+        },
+        "encoding": {
+          "const": "utf-8"
+        },
+        "bytes_base64": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "maxLength": 44739244
+        },
+        "byte_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "sha256": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        },
+        "newline": {
+          "enum": [
+            "lf",
+            "crlf",
+            "mixed"
+          ]
+        },
+        "final_newline": {
+          "type": "boolean"
+        },
+        "locator": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/locator"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "order",
+        "title",
+        "body",
+        "assertion",
+        "confidence",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "const": "step"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 29999
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "pattern": "^(?!.*[ \\t]+#+$)(?=\\S(?:.*\\S)?$)[^\\r\\n]+$"
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 33554432
+        },
+        "assertion": {
+          "const": "declared"
+        },
+        "confidence": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "to",
+        "kind",
+        "assertion",
+        "confidence",
+        "evidence_refs"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "sequence",
+            "parallel"
+          ]
+        },
+        "assertion": {
+          "enum": [
+            "declared",
+            "inferred"
+          ]
+        },
+        "confidence": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "graph": {
+      "type": "object",
+      "required": [
+        "entry_node_ids",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "entry_node_ids": {
+          "type": "array",
+          "maxItems": 30000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/edge"
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "sourceMap": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "source_id",
+        "span",
+        "heading",
+        "title",
+        "body"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "span": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRange"
+        },
+        "heading": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRange"
+        },
+        "title": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRange"
+        },
+        "body": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRange"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "opaqueRange": {
+      "type": "object",
+      "required": [
+        "start_byte",
+        "end_byte",
+        "sha256",
+        "reason"
+      ],
+      "properties": {
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "sha256": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "workflowBody": {
+      "type": "object",
+      "required": [
+        "source",
+        "graph",
+        "source_maps",
+        "opaque_ranges",
+        "diagnostics"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "graph": {
+          "$ref": "#/$defs/graph"
+        },
+        "source_maps": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/sourceMap"
+          }
+        },
+        "opaque_ranges": {
+          "type": "array",
+          "maxItems": 60001,
+          "items": {
+            "$ref": "#/$defs/opaqueRange"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/diagnostic"
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

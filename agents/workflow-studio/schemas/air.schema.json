@@ -1,0 +1,471 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open330.github.io/air/schema/1.0.0/air.schema.json",
+  "title": "AIR 1 artifact",
+  "description": "Closed envelope for the project-defined Agent Intermediate Representation.",
+  "oneOf": [
+    {
+      "$ref": "https://open330.github.io/air/schema/1.0.0/workflow.schema.json"
+    },
+    {
+      "$ref": "https://open330.github.io/air/schema/1.0.0/plan.schema.json"
+    },
+    {
+      "$ref": "https://open330.github.io/air/schema/1.0.0/trace.schema.json"
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "contentArtifactId": {
+      "type": "string",
+      "pattern": "^urn:air:sha256:[a-f0-9]{64}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "confidence": {
+      "type": "object",
+      "required": [
+        "level",
+        "rule_id",
+        "reason"
+      ],
+      "properties": {
+        "level": {
+          "enum": [
+            "explicit",
+            "structural",
+            "heuristic",
+            "unknown"
+          ]
+        },
+        "rule_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "byteRange": {
+      "type": "object",
+      "required": [
+        "start_byte",
+        "end_byte"
+      ],
+      "properties": {
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "locator": {
+      "type": "object",
+      "required": [
+        "display",
+        "disclosure"
+      ],
+      "properties": {
+        "display": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "disclosure": {
+          "enum": [
+            "local-only",
+            "redacted"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "byteRecord": {
+      "type": "object",
+      "required": [
+        "encoding",
+        "bytes_base64",
+        "byte_length",
+        "sha256"
+      ],
+      "properties": {
+        "encoding": {
+          "const": "base64"
+        },
+        "bytes_base64": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "maxLength": 44739244
+        },
+        "byte_length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "diagnosticSourceTarget": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "start_byte",
+        "end_byte"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 33554432
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "required": [
+        "severity",
+        "code",
+        "message",
+        "targets"
+      ],
+      "properties": {
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{1,127}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "targets": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              {
+                "$ref": "#/$defs/diagnosticSourceTarget"
+              }
+            ]
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "createdBy": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "origin": {
+      "type": "object",
+      "required": [
+        "kind",
+        "format",
+        "version",
+        "digest"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "source",
+            "legacy-artifact",
+            "session-store"
+          ]
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "locator": {
+          "$ref": "#/$defs/locator"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "derivedFrom": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "content_digest",
+        "relationship"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/contentArtifactId"
+        },
+        "content_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "relationship": {
+          "enum": [
+            "migration",
+            "promotion",
+            "snapshot",
+            "render"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "migration": {
+      "type": "object",
+      "required": [
+        "from_format",
+        "from_version",
+        "source_digest",
+        "migrator",
+        "migrator_version",
+        "warnings"
+      ],
+      "properties": {
+        "from_format": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "from_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "source_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "migrator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "migrator_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "cleared_approval": {
+          "type": "boolean"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "created_by",
+        "origins",
+        "derived_from",
+        "migrations"
+      ],
+      "properties": {
+        "created_by": {
+          "$ref": "#/$defs/createdBy"
+        },
+        "origins": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/origin"
+          }
+        },
+        "derived_from": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/derivedFrom"
+          }
+        },
+        "migrations": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/migration"
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "integrity": {
+      "type": "object",
+      "required": [
+        "canonicalization",
+        "algorithm",
+        "content_digest"
+      ],
+      "properties": {
+        "canonicalization": {
+          "const": "RFC8785"
+        },
+        "algorithm": {
+          "const": "sha-256"
+        },
+        "content_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "envelope_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "extensionKey": {
+      "type": "string",
+      "anyOf": [
+        {
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        {
+          "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)+[A-Za-z][A-Za-z0-9-]*(?::[A-Za-z0-9._-]+)?$"
+        }
+      ]
+    },
+    "extensions": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/extensionKey"
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "format",
+        "air_version",
+        "kind",
+        "profile",
+        "artifact_id",
+        "body",
+        "provenance",
+        "integrity",
+        "required_extensions",
+        "extensions"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://open330.github.io/air/schema/1.0.0/air.schema.json"
+        },
+        "format": {
+          "const": "air"
+        },
+        "air_version": {
+          "const": "1.0.0"
+        },
+        "kind": {
+          "enum": [
+            "workflow",
+            "plan",
+            "trace"
+          ]
+        },
+        "profile": {
+          "enum": [
+            "https://open330.github.io/air/profiles/1.0.0/workflow-skill",
+            "https://open330.github.io/air/profiles/1.0.0/plan-native-cli",
+            "https://open330.github.io/air/profiles/1.0.0/trace-native-run",
+            "https://open330.github.io/air/profiles/1.0.0/trace-session-snapshot"
+          ]
+        },
+        "artifact_id": {
+          "$ref": "#/$defs/contentArtifactId"
+        },
+        "body": {
+          "type": "object"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "integrity": {
+          "$ref": "#/$defs/integrity"
+        },
+        "required_extensions": {
+          "type": "array",
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/extensionKey"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

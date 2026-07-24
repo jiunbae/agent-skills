@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open330.github.io/air/schema/1.0.0/plan.schema.json",
+  "title": "AIR 1 plan-native-cli profile",
+  "allOf": [
+    {
+      "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/envelope"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "plan"
+        },
+        "profile": {
+          "const": "https://open330.github.io/air/profiles/1.0.0/plan-native-cli"
+        },
+        "body": {
+          "$ref": "#/$defs/planBody"
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "codexSafety": {
+      "type": "object",
+      "required": [
+        "intent",
+        "provider",
+        "sandbox",
+        "boundary"
+      ],
+      "properties": {
+        "intent": {
+          "enum": [
+            "read-only",
+            "workspace-write"
+          ]
+        },
+        "provider": {
+          "const": "codex"
+        },
+        "sandbox": {
+          "enum": [
+            "read-only",
+            "workspace-write"
+          ]
+        },
+        "boundary": {
+          "const": "os-sandbox"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "claudeSafety": {
+      "type": "object",
+      "required": [
+        "intent",
+        "provider",
+        "permission_mode",
+        "boundary"
+      ],
+      "properties": {
+        "intent": {
+          "enum": [
+            "read-only",
+            "workspace-write"
+          ]
+        },
+        "provider": {
+          "const": "claude"
+        },
+        "permission_mode": {
+          "enum": [
+            "plan",
+            "acceptEdits"
+          ]
+        },
+        "boundary": {
+          "const": "tool-permission-policy-not-os-sandbox"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "safety": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/codexSafety"
+        },
+        {
+          "$ref": "#/$defs/claudeSafety"
+        }
+      ]
+    },
+    "command": {
+      "type": "object",
+      "required": [
+        "executable",
+        "argv",
+        "stdin",
+        "shell"
+      ],
+      "properties": {
+        "executable": {
+          "enum": [
+            "codex",
+            "claude"
+          ]
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        },
+        "stdin": {
+          "const": "approved-prompt-context"
+        },
+        "shell": {
+          "const": false
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "scope",
+        "statement",
+        "digest"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sha-256"
+        },
+        "scope": {
+          "const": "exact-native-run-envelope"
+        },
+        "statement": {
+          "const": "plan approved for native execution; graph not enforced"
+        },
+        "digest": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "planBody": {
+      "type": "object",
+      "required": [
+        "workflow",
+        "workflow_content_digest",
+        "prompt",
+        "rendered_skill",
+        "agent",
+        "cwd",
+        "safety",
+        "command",
+        "execution_mode",
+        "graph_enforcement",
+        "warnings"
+      ],
+      "properties": {
+        "workflow": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/workflow.schema.json"
+        },
+        "workflow_content_digest": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        },
+        "prompt": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRecord"
+        },
+        "rendered_skill": {
+          "type": "object",
+          "required": [
+            "encoding",
+            "bytes_base64",
+            "byte_length",
+            "sha256",
+            "delivery"
+          ],
+          "properties": {
+            "encoding": {
+              "const": "base64"
+            },
+            "bytes_base64": {
+              "type": "string",
+              "contentEncoding": "base64",
+              "maxLength": 44739244
+            },
+            "byte_length": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 33554432
+            },
+            "sha256": {
+              "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+            },
+            "delivery": {
+              "const": "prompt-context"
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        "agent": {
+          "enum": [
+            "codex",
+            "claude"
+          ]
+        },
+        "cwd": {
+          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/locator"
+        },
+        "safety": {
+          "$ref": "#/$defs/safety"
+        },
+        "command": {
+          "$ref": "#/$defs/command"
+        },
+        "execution_mode": {
+          "const": "native-cli-prompt-context"
+        },
+        "graph_enforcement": {
+          "const": "prompt-context-only"
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/diagnostic"
+          }
+        },
+        "approval": {
+          "$ref": "#/$defs/approval"
+        }
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

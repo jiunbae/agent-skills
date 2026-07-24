@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
-    <title>Workflow Studio</title>
+    <title>AIR Workbench</title>
     <link rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232d4e43'/%3E%3Cpath d='M18 19h12v10H18zm16 16h12v10H34zM24 29v11h10' fill='none' stroke='%23fffdf8' stroke-width='5' stroke-linejoin='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/styles.css">
@@ -14,8 +14,8 @@
     <a class="skip-link" href="#workspace">Skip to workspace</a>
     <header class="masthead">
       <div>
-        <p class="eyebrow">Local skill workspace</p>
-        <h1>Workflow Studio</h1>
+        <p class="eyebrow">Agent Intermediate Representation</p>
+        <h1>AIR Workbench</h1>
       </div>
       <div class="artifact-state" aria-label="Artifact state">
         <span id="artifactKind" class="kind-badge">Loading</span>
@@ -29,7 +29,7 @@
         <strong id="sourcePath">Waiting for artifact…</strong>
       </div>
       <div>
-        <span class="label">IR</span>
+        <span class="label">Format</span>
         <strong id="irVersion">—</strong>
       </div>
       <div>
@@ -37,7 +37,7 @@
         <strong id="parseSummary">—</strong>
       </div>
       <div class="download-actions">
-        <button id="downloadIr" type="button" disabled>Download IR</button>
+        <button id="downloadIr" type="button" disabled>Download artifact</button>
         <button id="downloadMarkdown" type="button" class="primary" disabled>
           Download Markdown draft
         </button>

@@ -950,7 +950,7 @@ test("studio starts without a model, serves its token URL, and stops on SIGINT",
 
   const page = await get(url);
   assert.equal(page.status, 200);
-  assert.match(page.body.toString("utf8"), /Workflow Studio/u);
+  assert.match(page.body.toString("utf8"), /AIR Workbench/u);
   assert.equal(page.headers["cache-control"], "no-store");
 
   const parsed = new URL(url);

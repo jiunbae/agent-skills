@@ -3,10 +3,12 @@
 import { link, open, readFile, lstat, mkdir, rename, rm } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import {
   applyOperation,
   diffText,
+  importSkillBytes,
   importSkillFile,
   renderWorkflow,
   validateArtifact,
@@ -21,11 +23,32 @@ import {
   verifyPlanApproval,
 } from "../src/adapters.mjs";
 import { createStudioServer } from "../src/server.mjs";
+import {
+  airToLegacy,
+  decodeAirMarkdownArtifact,
+  encodeAirMarkdownArtifact,
+  migrateLegacyToAir,
+  validateAirArtifact,
+} from "../src/air.mjs";
+import { parseIJson } from "../shared/air-codec.mjs";
+import {
+  createSkillCatalog,
+  resolveSkillRoots,
+} from "../src/catalog.mjs";
 
 const ASSETS_DIR = resolve(import.meta.dirname, "../assets");
-const HELP = `Workflow Studio V1
+const SCHEMAS_DIR = resolve(import.meta.dirname, "../schemas");
+const COMPONENT_SKILLS_ROOT = resolve(import.meta.dirname, "../..");
+const HELP = `AIR Workbench
 
 Usage:
+  air import SKILL.md --out WORKFLOW.air.json
+  air validate ARTIFACT.air.json|WORKFLOW.air.md
+  air convert INPUT.air.json|INPUT.air.md --out OUTPUT.air.json|OUTPUT.air.md
+  air migrate LEGACY.json|LEGACY.md --to air/1 --out OUTPUT.air.json|OUTPUT.air.md
+  air workbench [ARTIFACT] [--host loopback|127.0.0.1|::1|0.0.0.0] [--port N]
+
+Legacy compatibility:
   workflow-studio import SKILL --out IR
   workflow-studio validate ARTIFACT
   workflow-studio edit IR --operation JSON|@file --out IR
@@ -49,6 +72,10 @@ Notes:
   until SIGINT or SIGTERM. Edits remain client-side until downloaded. The
   default is loopback; explicit 0.0.0.0 exposes it to IPv4 networks, so keep
   the token URL private.
+  AIR commands are additive. Every AIR output must be a new .air.json file,
+  or a workflow-only .air.md carrier. AIR Workbench discovers bounded local
+  Skill roots by default. Explicit 0.0.0.0 is plaintext LAN consent and
+  exposes the tokenized read-only catalog to IPv4 peers.
 `;
 
 function cliError(code, message, details) {
@@ -286,6 +313,139 @@ async function writeJson(path, artifact) {
   return { path: absolute, byte_length: bytes.length };
 }
 
+function airExtension(path) {
+  const lower = String(path).toLowerCase();
+  if (lower.endsWith(".air.json")) return "json";
+  if (lower.endsWith(".air.md")) return "markdown";
+  return null;
+}
+
+function requireAirOutput(path, artifact, { jsonOnly = false } = {}) {
+  const carrier = airExtension(path);
+  if (
+    carrier === null ||
+    (jsonOnly && carrier !== "json") ||
+    (carrier === "markdown" && artifact.kind !== "workflow")
+  ) {
+    throw cliError(
+      "AIR_OUTPUT_EXTENSION_MISMATCH",
+      jsonOnly
+        ? "AIR import output must end in .air.json."
+        : artifact.kind === "workflow"
+          ? "AIR output must end in .air.json or .air.md."
+          : `AIR ${artifact.kind} output must end in .air.json; .air.md is workflow-only.`,
+    );
+  }
+  return carrier;
+}
+
+async function readAir(path) {
+  const absolute = await assertInputFile(path);
+  const carrier = airExtension(path);
+  if (carrier === null) {
+    throw cliError(
+      "AIR_INPUT_EXTENSION_MISMATCH",
+      "AIR input must end in .air.json or .air.md.",
+    );
+  }
+  const bytes = await readFile(absolute);
+  const artifact = carrier === "markdown"
+    ? decodeAirMarkdownArtifact(bytes).artifact
+    : parseIJson(bytes);
+  validateAirArtifact(artifact);
+  return { absolute, artifact };
+}
+
+async function publishAir(path, artifact, options = {}) {
+  validateAirArtifact(artifact);
+  const carrier = requireAirOutput(path, artifact, options);
+  const bytes = carrier === "markdown"
+    ? encodeAirMarkdownArtifact(artifact)
+    : Buffer.from(`${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+  return {
+    path: await writeNewFile(path, bytes),
+    byte_length: bytes.byteLength,
+    carrier,
+  };
+}
+
+async function airImportCommand(parsed) {
+  assertShape(parsed, { positionals: 1, required: ["out"] });
+  if (airExtension(parsed.positionals[0]) !== null) {
+    throw cliError("ALREADY_AIR", "AIR input does not need to be imported.");
+  }
+  const workflow = await importSkillFile(parsed.positionals[0]);
+  const artifact = migrateLegacyToAir(workflow);
+  const written = await publishAir(option(parsed, "out"), artifact, {
+    jsonOnly: true,
+  });
+  result({
+    command: "air import",
+    artifact: written.path,
+    kind: artifact.kind,
+    artifact_id: artifact.artifact_id,
+  });
+}
+
+async function airValidateCommand(parsed) {
+  assertShape(parsed, { positionals: 1 });
+  const { absolute, artifact } = await readAir(parsed.positionals[0]);
+  result({
+    command: "air validate",
+    artifact: absolute,
+    kind: artifact.kind,
+    air_version: artifact.air_version,
+    artifact_id: artifact.artifact_id,
+  });
+}
+
+async function airConvertCommand(parsed) {
+  assertShape(parsed, { positionals: 1, required: ["out"] });
+  const { artifact } = await readAir(parsed.positionals[0]);
+  const written = await publishAir(option(parsed, "out"), artifact);
+  result({
+    command: "air convert",
+    artifact: written.path,
+    kind: artifact.kind,
+    carrier: written.carrier,
+    artifact_id: artifact.artifact_id,
+  });
+}
+
+async function readLegacyForMigration(path) {
+  if (airExtension(path) !== null) {
+    throw cliError("ALREADY_AIR", "Input is already an AIR artifact.");
+  }
+  if (isSkillPath(path)) return importSkillFile(path);
+  const artifact = await readJson(path);
+  if (artifact?.format === "air") {
+    throw cliError("ALREADY_AIR", "Input is already an AIR artifact.");
+  }
+  validateArtifact(artifact);
+  return artifact;
+}
+
+async function airMigrateCommand(parsed) {
+  assertShape(parsed, {
+    positionals: 1,
+    required: ["to", "out"],
+  });
+  if (option(parsed, "to") !== "air/1") {
+    throw cliError("AIR_UNSUPPORTED_VERSION", 'AIR migration target must be "air/1".');
+  }
+  const artifact = migrateLegacyToAir(
+    await readLegacyForMigration(parsed.positionals[0]),
+  );
+  const written = await publishAir(option(parsed, "out"), artifact);
+  result({
+    command: "air migrate",
+    artifact: written.path,
+    kind: artifact.kind,
+    carrier: written.carrier,
+    artifact_id: artifact.artifact_id,
+  });
+}
+
 function requireKind(artifact, kind) {
   validateArtifact(artifact);
   if (artifact.kind !== kind) {
@@ -410,6 +570,13 @@ async function readStudioArtifact(path) {
   return artifact;
 }
 
+async function readWorkbenchArtifact(path) {
+  if (airExtension(path) !== null) {
+    return airToLegacy((await readAir(path)).artifact);
+  }
+  return readStudioArtifact(path);
+}
+
 function studioHost(value) {
   if (value === undefined || value === "loopback") return "127.0.0.1";
   if (
@@ -437,17 +604,17 @@ function studioPort(value) {
   return port;
 }
 
-async function studioCommand(parsed) {
-  assertShape(parsed, {
-    positionals: 1,
-    optional: ["host", "port"],
-  });
-  const host = studioHost(option(parsed, "host"));
-  const port = studioPort(option(parsed, "port"));
-  const artifact = await readStudioArtifact(parsed.positionals[0]);
+async function serveWorkbench({ artifact, catalog, host, port, lanWarning }) {
+  if (lanWarning && host === "0.0.0.0") {
+    process.stderr.write(
+      "AIR Workbench warning: 0.0.0.0 exposes the tokenized local Skill catalog over plaintext HTTP to IPv4 LAN peers. Keep the URL private.\n",
+    );
+  }
   const studio = createStudioServer({
     artifact,
     assetsDir: ASSETS_DIR,
+    schemasDir: SCHEMAS_DIR,
+    catalog,
     host,
     port,
   });
@@ -472,6 +639,70 @@ async function studioCommand(parsed) {
     };
     process.on("SIGINT", close);
     process.on("SIGTERM", close);
+  });
+}
+
+async function studioCommand(parsed) {
+  assertShape(parsed, {
+    positionals: 1,
+    optional: ["host", "port"],
+  });
+  const host = studioHost(option(parsed, "host"));
+  const port = studioPort(option(parsed, "port"));
+  const artifact = await readStudioArtifact(parsed.positionals[0]);
+  await serveWorkbench({
+    artifact,
+    catalog: null,
+    host,
+    port,
+    lanWarning: false,
+  });
+}
+
+function emptyWorkbenchArtifact() {
+  return importSkillBytes(
+    Buffer.from(
+      "---\nname: air-workbench-empty\ndescription: Empty AIR Workbench document\n---\n\n## Workflow\n",
+      "utf8",
+    ),
+    { sourcePath: "air-workbench/empty/SKILL.md" },
+  );
+}
+
+async function airWorkbenchCommand(parsed) {
+  if (parsed.positionals.length > 1) {
+    throw cliError(
+      "INVALID_ARGUMENT",
+      "air workbench accepts zero or one initial artifact.",
+    );
+  }
+  assertShape(parsed, {
+    positionals: parsed.positionals.length,
+    optional: ["host", "port"],
+  });
+  const host = studioHost(option(parsed, "host"));
+  const port = studioPort(option(parsed, "port"));
+  const catalog = createSkillCatalog({
+    roots: resolveSkillRoots({
+      cwd: process.cwd(),
+      componentRoot: COMPONENT_SKILLS_ROOT,
+    }),
+  });
+  const snapshot = await catalog.initialize();
+  let artifact;
+  if (parsed.positionals.length === 1) {
+    artifact = await readWorkbenchArtifact(parsed.positionals[0]);
+  } else if (snapshot.items.length > 0) {
+    artifact = await catalog.importArtifact(snapshot.items[0].id);
+  } else {
+    artifact = emptyWorkbenchArtifact();
+  }
+  await serveWorkbench({
+    artifact,
+    catalog,
+    host,
+    port,
+    lanWarning: true,
   });
 }
 
@@ -641,6 +872,31 @@ async function promoteCommand(parsed) {
   });
 }
 
+async function airCommand(parsed) {
+  const [subcommand, ...positionals] = parsed.positionals;
+  if (!subcommand || subcommand === "help") {
+    process.stdout.write(HELP);
+    return;
+  }
+  const nested = {
+    command: `air ${subcommand}`,
+    positionals,
+    options: parsed.options,
+  };
+  const commands = {
+    import: airImportCommand,
+    validate: airValidateCommand,
+    convert: airConvertCommand,
+    migrate: airMigrateCommand,
+    workbench: airWorkbenchCommand,
+  };
+  const command = commands[subcommand];
+  if (!command) {
+    throw cliError("UNKNOWN_COMMAND", `Unknown AIR command: ${subcommand}`);
+  }
+  await command(nested);
+}
+
 async function main(argv) {
   const parsed = parseCommand(argv);
   if (parsed.command === "help") {
@@ -662,6 +918,7 @@ async function main(argv) {
     approve: approveCommand,
     run: runCommand,
     promote: promoteCommand,
+    air: airCommand,
   };
   const command = commands[parsed.command];
   if (!command) {
@@ -670,15 +927,24 @@ async function main(argv) {
   await command(parsed);
 }
 
-try {
-  await main(process.argv.slice(2));
-} catch (error) {
-  const diagnostic = {
-    ok: false,
-    code: typeof error?.code === "string" ? error.code : "WORKFLOW_STUDIO_ERROR",
-    message: error?.message ?? String(error),
-  };
-  if (error?.details !== undefined) diagnostic.details = error.details;
-  process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
-  process.exitCode = 1;
+export async function runWorkflowStudioCli(argv) {
+  try {
+    await main(argv);
+  } catch (error) {
+    const diagnostic = {
+      ok: false,
+      code: typeof error?.code === "string" ? error.code : "WORKFLOW_STUDIO_ERROR",
+      message: error?.message ?? String(error),
+    };
+    if (error?.details !== undefined) diagnostic.details = error.details;
+    process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  await runWorkflowStudioCli(process.argv.slice(2));
 }

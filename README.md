@@ -138,7 +138,7 @@ Installed by default with `--core`:
 | `background-reviewer` | Bounded parallel persona review with adversarial verification and root-cause merge |
 | `incident-writer` | Structured incident and status-page reports |
 | `rpf` | Explicit pointer-driven multi-agent review, plan, work, and feedback loop |
-| `workflow-studio` | Visual Skill workflow editing, plan approval, and execution tracing |
+| `air-workbench` | AIR Skill workflow editing, local Skill discovery, plan approval, and observable tracing |
 
 ### 🛠 development/ — Dev Tools
 

@@ -1,57 +1,130 @@
 ---
-name: workflow-studio
-description: Visualize, review, edit, and round-trip an Agent Skill workflow; gate a Codex or Claude CLI request behind an explicit plan approval; inspect an observable post-run trace; or promote a plan or trace into a reviewable skill draft. Use only when the user explicitly asks for Workflow Studio, skill-to-graph or graph-to-skill conversion, visual workflow editing, pre-run plan approval, post-run flow tracing, or plan/trace promotion. Do not trigger for ordinary skill execution, general planning, or routine Codex/Claude requests.
+name: air-workbench
+description: Open AIR Workbench to discover local Agent Skills, visualize and round-trip a Skill workflow as AIR (Agent Intermediate Representation), review a native Codex or Claude plan, inspect observable execution evidence, or promote a reviewed plan or trace into a Skill draft. Use only when the user explicitly asks for AIR Workbench, the legacy Workflow Studio, Skill-to-graph or graph-to-Skill conversion, visual workflow editing, plan approval, observable tracing, or plan/trace promotion. Do not trigger for ordinary Skill execution, general planning, or routine Codex/Claude requests.
 ---
 
-# Workflow Studio
+# AIR Workbench
 
-Keep `SKILL.md` as the portable runtime artifact while using Workflow IR `1.0`
-as an editable local view. Run the bundled tool with Node:
+Keep `SKILL.md` as the native executable and distributable artifact. AIR is the
+portable, editable interchange view:
 
-```bash
-node scripts/workflow-studio.mjs --help
+```text
+SKILL.md ⇄ AIR workflow ⇄ visual graph
 ```
 
-Resolve `scripts/workflow-studio.mjs` relative to this skill directory. Do not
-install a global command or modify the source skill. Portable V1 exports
-Markdown only to a new path.
-
-## 1. Choose the flow and disclose the boundary
-
-Confirm the source `SKILL.md`, output directory, and requested flow:
-
-- **Round trip:** import → studio/edit → review diff → export
-- **Native run:** prepare plan → inspect/edit → approve → run → inspect trace
-- **Promotion:** plan or trace → new skill draft
-
-Before a native run, state that the graph is supplied to the selected CLI but is
-not enforced node by node. A trace contains observable CLI events and inferred
-sequence edges; it does not recover hidden reasoning.
-
-## 2. Import and inspect a skill
-
-Create an IR artifact in a user-selected working directory:
+Resolve all script paths relative to this Skill directory. Do not install a
+global command:
 
 ```bash
-node scripts/workflow-studio.mjs import /path/to/skill/SKILL.md \
-  --out /path/to/workflow.json
-node scripts/workflow-studio.mjs studio /path/to/workflow.json
+node scripts/air.mjs --help
 ```
 
-Report parser diagnostics, confidence, and opaque regions. In the studio,
-keep the **Workflow** canvas, semantic outline, and selection inspector in one
-workspace. Select a step or dependency on the React Flow canvas or
-keyboard-operable outline. Use the inspector to edit it, add/reorder/delete
-steps, or create and change dependencies. Canvas handles support direct
-connect/reconnect, and selected graph elements can be deleted. Node positions
-are local view state, not Workflow IR.
+AIR is a project-defined format, not an IANA or standards-body format.
+`agents/workflow-studio/` is the retained physical package path; “Workflow
+Studio” identifies only `scripts/workflow-studio.mjs`, its compatibility
+commands, and legacy artifacts.
 
-Use undo/redo for semantic graph edits. Open **Review source** and **Review
-diff** in the side drawer before downloading an edited IR or Markdown draft;
-the review drawer does not replace the graph workspace. The server is
-read-only, and browser export is a client-side download.
+## 1. Open the current AIR Workbench editor
 
-For a repository-backed smoke test, import the real adjacent skill:
+Start AIR Workbench without an input to discover installed and project-local
+Skills automatically:
+
+```bash
+node scripts/air.mjs workbench
+```
+
+The catalog scans standard project, user, system, and repository Skill roots
+with finite read-only bounds and exposes only opaque item IDs through the local
+API. It opens the first discovered Skill, or an empty document when none is
+available. Never accept a browser-supplied path, root, glob, URL, or output
+destination. The integrated Resources list is not implemented in this
+foundation wave.
+
+Open a specific Skill or AIR artifact by supplying one input:
+
+```bash
+node scripts/air.mjs workbench /path/to/skill/SKILL.md
+node scripts/air.mjs workbench /path/to/workflow.air.json
+```
+
+Do not claim that Codex or Claude session adapters, a session history view, or
+the full Resources workbench shell are implemented until their later
+integration gates pass.
+
+Default binding is loopback. An explicit `--host 0.0.0.0` is informed consent
+to expose the same token-protected, read-only catalog over plaintext HTTP to
+reachable IPv4 networks:
+
+```bash
+node scripts/air.mjs workbench \
+  --host 0.0.0.0
+```
+
+Tell the user to replace `0.0.0.0` in the printed URL with
+`http://<LAN-IP>:PORT/?token=TOKEN`, preserving the port and token. Use a
+trusted network/firewall, keep the token URL private, and stop the process
+after review. Do not describe `0.0.0.0` as local-user-only.
+
+## 2. Choose the AIR representation
+
+- `.air.json` is the complete AIR 1 artifact for `workflow`, `plan`, and
+  `trace`.
+- `.air.md` is the lossless workflow-only Markdown carrier defined by the AIR
+  codec.
+- `.air.md` contains valid Agent Skill Markdown, but Codex and Claude do not
+  discover it merely from that extension. To activate or distribute it as a
+  native Skill, place the reviewed bytes at `<skill-directory>/SKILL.md`.
+- Plans and traces use `.air.json`; Markdown reports of them are non-lossless
+  views, not AIR carriers.
+
+Use the AIR CLI to import, validate, or convert without overwriting an existing
+output:
+
+```bash
+node scripts/air.mjs import /path/to/skill/SKILL.md \
+  --out /path/to/workflow.air.json
+node scripts/air.mjs validate /path/to/workflow.air.json
+node scripts/air.mjs convert /path/to/workflow.air.json \
+  --out /path/to/workflow.air.md
+```
+
+## 3. Migrate legacy artifacts explicitly
+
+AIR Workbench reads Workflow IR `1.0`, exact `workflow-studio:v1` Skill
+metadata, plain `SKILL.md`, and saved legacy workflow/plan/trace artifacts.
+It does not silently rewrite them.
+
+Migration is deterministic, no-overwrite, and new-output-only. A migrated
+legacy plan loses executable approval because AIR binds different bytes; any
+old approval is historical, non-authorizing provenance. Require a fresh AIR
+approval before any future AIR-native execution path.
+
+```bash
+node scripts/air.mjs migrate /path/to/legacy.json \
+  --to air/1 \
+  --out /path/to/migrated.air.json
+```
+
+## 4. Review and edit a workflow
+
+Keep the graph canvas, semantic outline, selection inspector, source, and diff
+in one review context:
+
+- select a step or dependency on the React Flow canvas or keyboard-operable
+  outline;
+- edit step titles/bodies and supported dependency properties;
+- add, reorder, or delete steps and connect/reconnect dependencies;
+- use bounded undo/redo for semantic graph edits; and
+- review source and the full diff before downloading an artifact or Markdown
+  draft.
+
+Canvas positions, viewport, focus, and selection are presentation state and
+must never enter AIR, legacy Workflow IR, plan hashes, approvals, or promoted
+Skills. Mount the interactive canvas only at or below 1,000 nodes and 1,000
+edges. Above either limit, use the bounded first-100-rows-per-kind fallback
+while preserving validation, diagnostics, source truth, and downloads.
+
+For a real repository smoke test:
 
 ```bash
 node scripts/workflow-studio.mjs import \
@@ -61,43 +134,13 @@ node scripts/workflow-studio.mjs studio \
   /tmp/background-implementer.workflow.json
 ```
 
-Default Studio binding is loopback. Use `--host 0.0.0.0` only when the user
-explicitly requests LAN access, disclose that the token URL becomes reachable
-from the IPv4 network, and tell them to replace `0.0.0.0` in the printed URL
-with `http://<LAN-IP>:PORT/?token=TOKEN`, preserving the printed port and token.
-Use a trusted network/firewall, keep the token URL out of documentation and
-logs, and stop Studio after review.
+An unchanged Skill round-trip must preserve its source bytes exactly.
+Unsupported or ambiguous Markdown remains opaque rather than being guessed.
 
-V1 graph edits are limited to step title/body edits, add before/after, delete,
-reorder, and acyclic `sequence` or `parallel` edge add/remove/change. Reject
-cycles, missing endpoints, duplicate IDs, and unsupported constructs instead
-of guessing.
+## 5. Use the legacy native-run compatibility path
 
-Mount the interactive canvas only at or below both limits: 1,000 nodes and
-1,000 edges. Above either limit, use the bounded semantic fallback, which
-mounts only the first 100 step rows and first 100 dependency rows. Do not imply
-that unmounted rows are directly editable; full-artifact downloads remain
-available.
-
-## 3. Export safely
-
-Export the reviewed IR to a new file by default:
-
-```bash
-node scripts/workflow-studio.mjs export /path/to/edited-workflow.json \
-  --out /path/to/SKILL.draft.md
-```
-
-Portable V1 rejects `--in-place` and any `--out` path that resolves to the
-imported source. Dependency-free Node cannot atomically replace a pathname
-only if its imported hash still matches, so always export to a new path. An
-unchanged import/export is byte-identical. Mapped edits patch the recognized
-byte spans; edited exports retain stable graph IDs in inert versioned metadata.
-All unsupported or opaque source content stays unchanged.
-
-## 4. Prepare, approve, and run a native request
-
-Put the exact prompt in a file so byte hashing and review are unambiguous:
+The established Workflow IR `1.0` native-run commands remain available
+unchanged while AIR-native plan/run support is developed:
 
 ```bash
 node scripts/workflow-studio.mjs plan /path/to/workflow.json \
@@ -106,35 +149,26 @@ node scripts/workflow-studio.mjs plan /path/to/workflow.json \
   --prompt-file /path/to/prompt.txt \
   --safety read-only \
   --out /path/to/plan.json
-node scripts/workflow-studio.mjs studio /path/to/plan.json
 node scripts/workflow-studio.mjs approve /path/to/plan.json \
   --out /path/to/approved-plan.json
 node scripts/workflow-studio.mjs run /path/to/approved-plan.json \
   --trace /path/to/trace.json
-node scripts/workflow-studio.mjs studio /path/to/trace.json
 ```
 
-In the studio Plan view, changing the prompt, agent, working directory, safety
-profile, or graph clears prior review. **Browser review current plan** hashes
-the browser payload and marks it **Browser reviewed**; this is not CLI
-authorization. Download that exact plan and pass it through
-`workflow-studio approve` for the separate **CLI approval required** gate, or
-close Studio, recreate the CLI plan with the corrected inputs, and approve the
-new file before `run`.
-
 Use `--agent claude` for Claude Code. Default to `read-only`;
-`workspace-write` requires a separate, explicit user choice. Approval hashes the
-exact prompt, skill bytes, graph, working directory, provider safety profile,
-and command. Any edit requires a new approval.
+`workspace-write` requires a separate explicit choice. Browser review is not
+CLI authorization. Any prompt, graph, agent, working-directory, safety, or
+command change requires new approval.
 
-At run time the tool detects the selected CLI executable and version, and fails
-without installing or silently falling back. Keep provider boundaries visible:
-Codex uses its sandbox profile; Claude permission modes are tool policy, not an
-OS sandbox. Never add bypass or arbitrary passthrough flags.
+Before a native run, state that the graph is supplied to the selected CLI but
+is not enforced node by node. A trace includes observable provider events and
+explicitly inferred sequence, not hidden reasoning or causal truth. Missing
+CLIs fail explicitly; never install, silently fall back, add bypass flags, or
+accept arbitrary passthrough arguments.
 
-## 5. Promote a reviewed artifact
+## 6. Promote a reviewed legacy plan or trace
 
-Promotion always writes a new draft and never overwrites a source skill:
+Promotion always writes a new Skill draft and never overwrites a source:
 
 ```bash
 node scripts/workflow-studio.mjs promote /path/to/plan-or-trace.json \
@@ -143,28 +177,23 @@ node scripts/workflow-studio.mjs promote /path/to/plan-or-trace.json \
   --out /path/to/reviewed-workflow
 ```
 
-Review every generated instruction and provenance warning before treating the
-draft as a skill. Trace-derived steps describe observed history, not guaranteed
-future behavior.
+Review generated instructions and provenance warnings. Trace-derived steps
+describe observed history, not guaranteed future behavior.
 
-## V1 limits
+## Compatibility and limits
 
-- Native execution only; no managed node-by-node orchestration.
-- Codex CLI and Claude Code CLI adapters only.
-- Observation is limited to emitted CLI events; provider schemas and safety
-  semantics differ.
-- The React Flow canvas is interactive only through 1,000 nodes and 1,000
-  edges; larger artifacts use the first-100-rows-per-kind bounded fallback.
-- No global install, remote service, collaboration server, or server-side
-  browser write/run endpoint.
-- Validated on macOS with Node.js 26.5.0, Codex CLI 0.144.6, and Claude Code
-  2.1.218; other operating systems and Node versions are not claimed.
+- AIR 1 uses `format: "air"`, `air_version: "1.0.0"`, the
+  `https://open330.github.io/air/` project origin, and canonical `/air/v1`
+  read-only discovery routes.
+- `/api/artifact`, Workflow IR `1.0`, `workflow-studio:v1`, and
+  `scripts/workflow-studio.mjs` remain explicit compatibility boundaries.
+- The server has no browser file-write, Skill-install, or agent-run endpoint.
+- Native execution remains delegated to installed Codex and Claude CLIs; AIR
+  Workbench is not a managed node-by-node orchestrator.
+- Session discovery/snapshot conversion and the full React Resources shell are
+  later delivery waves, not capabilities of this foundation release.
+- The installed runtime uses checked-in same-origin assets and needs no npm,
+  CDN, registry, telemetry, remote service, or global executable.
 
-The runtime uses checked-in `assets/generated/` JavaScript and CSS and makes no
-CDN or registry request. UI dependencies and esbuild are exact-pinned in the
-component-local package and lockfile. Contributors must run
-`npm run check:generated` after `npm ci --ignore-scripts`; copy installers omit
-`node_modules` but retain the generated bundle and
-`THIRD_PARTY_NOTICES.md`.
-
-See `README.md` for artifact locations, grammar details, and a complete example.
+See `README.md` and `spec/AIR-1.0.0.md` for the complete contract, safety
+model, build instructions, and compatibility matrix.

@@ -1,0 +1,944 @@
+{
+  "openapi": "3.1.1",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "AIR Workbench local API",
+    "version": "1.0.0",
+    "description": "Project-defined local API for Agent Intermediate Representation artifacts. This document makes no IANA or standards-body claim."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:{port}",
+      "variables": {
+        "port": {
+          "default": "0"
+        }
+      }
+    }
+  ],
+  "security": [
+    {
+      "airToken": []
+    }
+  ],
+  "paths": {
+    "/air/v1/capabilities": {
+      "get": {
+        "operationId": "getAirCapabilities",
+        "summary": "Report exact server capabilities and limits",
+        "x-air-capability": "capabilities.read",
+        "x-air-availability": "foundation",
+        "responses": {
+          "200": {
+            "description": "Capability report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/schemas/{version}/{profile}": {
+      "get": {
+        "operationId": "getAirSchema",
+        "summary": "Read a published AIR schema by supported version and profile token",
+        "x-air-capability": "schemas.read",
+        "x-air-availability": "foundation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Version"
+          },
+          {
+            "$ref": "#/components/parameters/Profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON Schema",
+            "content": {
+              "application/schema+json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/skills": {
+      "get": {
+        "operationId": "listAirSkills",
+        "summary": "List the bounded server-owned Skill catalog",
+        "x-air-capability": "skills.catalog.read",
+        "x-air-availability": "foundation",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "description": "Set to 1 to perform one bounded read-only catalog refresh before returning.",
+            "schema": {
+              "type": "string",
+              "const": "1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metadata-only catalog; no source bytes or filesystem paths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillCatalog"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/skills/{opaque-id}/artifact": {
+      "get": {
+        "operationId": "getAirSkillArtifact",
+        "summary": "Import one catalog item as an AIR workflow",
+        "x-air-capability": "skills.artifact.read",
+        "x-air-availability": "foundation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OpaqueId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AIR workflow-skill artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "https://open330.github.io/air/schema/1.0.0/workflow.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/sessions": {
+      "get": {
+        "operationId": "listAirSessions",
+        "summary": "List bounded metadata-only Codex and Claude session records",
+        "x-air-capability": "sessions.catalog.read",
+        "x-air-availability": "planned",
+        "responses": {
+          "200": {
+            "description": "Metadata-only session catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCatalog"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/sessions/{opaque-id}/snapshots": {
+      "post": {
+        "operationId": "createAirSessionSnapshot",
+        "summary": "Create an in-memory metadata-only session snapshot",
+        "x-air-capability": "sessions.snapshot.create",
+        "x-air-availability": "planned",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OpaqueId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "generation"
+                ],
+                "properties": {
+                  "generation": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "unevaluatedProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AIR trace-session-snapshot artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "https://open330.github.io/air/schema/1.0.0/trace.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/validate": {
+      "post": {
+        "operationId": "validateAirArtifact",
+        "summary": "Validate an in-memory AIR artifact",
+        "x-air-capability": "artifacts.validate",
+        "x-air-availability": "planned",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Artifact"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/imports/skill": {
+      "post": {
+        "operationId": "importAirSkill",
+        "summary": "Import supplied Markdown bytes without reading a client path",
+        "x-air-capability": "skills.import",
+        "x-air-availability": "planned",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillBytes"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AIR workflow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "https://open330.github.io/air/schema/1.0.0/workflow.schema.json"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/renderings/skill": {
+      "post": {
+        "operationId": "renderAirSkill",
+        "summary": "Render supplied AIR workflow as in-memory Markdown bytes",
+        "x-air-capability": "skills.render",
+        "x-air-availability": "planned",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Artifact"
+        },
+        "responses": {
+          "200": {
+            "description": "Rendered bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillBytes"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/air/v1/migrations": {
+      "post": {
+        "operationId": "migrateToAir",
+        "summary": "Migrate supplied legacy artifact or Markdown bytes in memory",
+        "x-air-capability": "artifacts.migrate",
+        "x-air-availability": "planned",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "source",
+                  "target_carrier"
+                ],
+                "properties": {
+                  "source": {},
+                  "target_carrier": {
+                    "enum": [
+                      "air-json",
+                      "air-markdown"
+                    ]
+                  }
+                },
+                "unevaluatedProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New AIR artifact or carrier bytes; no filesystem write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "airToken": {
+        "type": "apiKey",
+        "in": "query",
+        "name": "token",
+        "description": "Per-process local bearer secret. Servers also enforce exact Host validation."
+      }
+    },
+    "parameters": {
+      "Version": {
+        "name": "version",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "const": "1.0.0"
+        }
+      },
+      "Profile": {
+        "name": "profile",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "enum": [
+            "air",
+            "workflow",
+            "plan",
+            "trace",
+            "problem"
+          ]
+        }
+      },
+      "OpaqueId": {
+        "name": "opaque-id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{16,256}$"
+        }
+      }
+    },
+    "schemas": {
+      "Problem": {
+        "$ref": "https://open330.github.io/air/schema/1.0.0/problem.schema.json"
+      },
+      "Capabilities": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "air_versions",
+          "profiles",
+          "operations",
+          "catalog_generation",
+          "provider_adapters",
+          "read_only",
+          "write",
+          "run",
+          "limits"
+        ],
+        "properties": {
+          "api_version": {
+            "const": "1"
+          },
+          "air_versions": {
+            "type": "array",
+            "items": {
+              "const": "1.0.0"
+            }
+          },
+          "profiles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "operations": {
+            "type": "object",
+            "required": [
+              "capabilities.read",
+              "schemas.read",
+              "skills.catalog.read",
+              "skills.catalog.refresh",
+              "skills.artifact.read",
+              "sessions.catalog.read",
+              "sessions.snapshot.create"
+            ],
+            "properties": {
+              "capabilities.read": {
+                "const": "available"
+              },
+              "schemas.read": {
+                "const": "available"
+              },
+              "skills.catalog.read": {
+                "const": "available"
+              },
+              "skills.catalog.refresh": {
+                "const": "available"
+              },
+              "skills.artifact.read": {
+                "const": "available"
+              },
+              "sessions.catalog.read": {
+                "const": "unavailable"
+              },
+              "sessions.snapshot.create": {
+                "const": "unavailable"
+              }
+            },
+            "unevaluatedProperties": false
+          },
+          "catalog_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "provider_adapters": {
+            "type": "object",
+            "required": [
+              "codex-rollout-jsonl",
+              "claude-project-jsonl"
+            ],
+            "properties": {
+              "codex-rollout-jsonl": {
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
+              },
+              "claude-project-jsonl": {
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
+              }
+            },
+            "unevaluatedProperties": false
+          },
+          "read_only": {
+            "const": true
+          },
+          "write": {
+            "const": false
+          },
+          "run": {
+            "const": false
+          },
+          "limits": {
+            "type": "object",
+            "required": [
+              "artifact_response_bytes",
+              "catalog_max_roots",
+              "catalog_max_depth",
+              "catalog_max_entries",
+              "catalog_max_candidates",
+              "catalog_max_records",
+              "catalog_max_skill_bytes",
+              "catalog_max_total_bytes",
+              "catalog_max_duration_ms",
+              "catalog_max_description_bytes",
+              "catalog_max_diagnostics_per_item",
+              "catalog_max_response_bytes"
+            ],
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "propertyNames": {
+              "enum": [
+                "artifact_response_bytes",
+                "catalog_max_roots",
+                "catalog_max_depth",
+                "catalog_max_entries",
+                "catalog_max_candidates",
+                "catalog_max_records",
+                "catalog_max_skill_bytes",
+                "catalog_max_total_bytes",
+                "catalog_max_duration_ms",
+                "catalog_max_description_bytes",
+                "catalog_max_diagnostics_per_item",
+                "catalog_max_response_bytes"
+              ]
+            }
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SkillCatalog": {
+        "type": "object",
+        "required": [
+          "format",
+          "version",
+          "generation",
+          "truncated",
+          "limit_codes",
+          "scanned_entry_count",
+          "candidate_count",
+          "physical_record_count",
+          "total_byte_count",
+          "roots",
+          "item_count",
+          "items"
+        ],
+        "properties": {
+          "format": {
+            "const": "air-skill-catalog"
+          },
+          "version": {
+            "const": "1.0.0"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "limit_codes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^AIR_CATALOG_[A-Z0-9_]+$"
+            }
+          },
+          "scanned_entry_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "candidate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "physical_record_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_byte_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillCatalogRoot"
+            }
+          },
+          "item_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillCatalogItem"
+            }
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "CatalogDiagnostic": {
+        "type": "object",
+        "required": [
+          "severity",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "severity": {
+            "enum": [
+              "error",
+              "warning",
+              "info"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SkillCatalogRoot": {
+        "type": "object",
+        "required": [
+          "source_label",
+          "source_kind",
+          "status",
+          "record_count",
+          "diagnostics",
+          "omitted_diagnostic_count"
+        ],
+        "properties": {
+          "source_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "source_kind": {
+            "enum": [
+              "project",
+              "user",
+              "system",
+              "repository",
+              "explicit",
+              "enabled-plugin"
+            ]
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "invalid",
+              "missing",
+              "partial",
+              "unreadable"
+            ]
+          },
+          "record_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogDiagnostic"
+            }
+          },
+          "omitted_diagnostic_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SkillSourceLabel": {
+        "type": "object",
+        "required": [
+          "label",
+          "kind",
+          "locations",
+          "linked_locations"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "kind": {
+            "enum": [
+              "project",
+              "user",
+              "system",
+              "repository",
+              "explicit",
+              "enabled-plugin"
+            ]
+          },
+          "locations": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "linked_locations": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SkillCatalogItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "content_hash",
+          "byte_count",
+          "workflow_node_count",
+          "workflow_edge_count",
+          "source_labels",
+          "location_count",
+          "exact_copy",
+          "name_conflict",
+          "stale",
+          "diagnostics",
+          "omitted_diagnostic_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^skill_[A-Za-z0-9_-]{22}$"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "byte_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workflow_node_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workflow_edge_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_labels": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/SkillSourceLabel"
+            }
+          },
+          "location_count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "exact_copy": {
+            "type": "boolean"
+          },
+          "name_conflict": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogDiagnostic"
+            }
+          },
+          "omitted_diagnostic_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SessionCatalog": {
+        "type": "object",
+        "required": [
+          "generation",
+          "items",
+          "diagnostics",
+          "truncated"
+        ],
+        "properties": {
+          "generation": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SkillBytes": {
+        "type": "object",
+        "required": [
+          "encoding",
+          "bytes_base64",
+          "byte_length",
+          "sha256"
+        ],
+        "properties": {
+          "encoding": {
+            "const": "base64"
+          },
+          "bytes_base64": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "byte_length": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 33554432
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "Validation": {
+        "type": "object",
+        "required": [
+          "valid",
+          "mode",
+          "diagnostics"
+        ],
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "read",
+              "mutate"
+            ]
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "unevaluatedProperties": false
+      }
+    },
+    "requestBodies": {
+      "Artifact": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "artifact"
+              ],
+              "properties": {
+                "artifact": {
+                  "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json"
+                },
+                "mode": {
+                  "enum": [
+                    "read",
+                    "mutate"
+                  ],
+                  "default": "read"
+                }
+              },
+              "unevaluatedProperties": false
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "AIR problem",
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "Validation": {
+        "description": "Validation result",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Validation"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-air-contract-version": "1.0.0",
+  "x-air-runtime-semantics-normative": true,
+  "x-air-no-filesystem-path-inputs": true,
+  "x-air-no-cors": true
+}

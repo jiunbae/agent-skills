@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open330.github.io/air/schema/1.0.0/problem.schema.json",
+  "title": "AIR 1 problem detail",
+  "type": "object",
+  "required": [
+    "type",
+    "title",
+    "status",
+    "code"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "pattern": "^https://open330\\.github\\.io/air/problems/[a-z0-9-]+$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "status": {
+      "type": "integer",
+      "minimum": 400,
+      "maximum": 599
+    },
+    "code": {
+      "enum": [
+        "AIR_INVALID_JSON",
+        "AIR_INVALID_REQUEST",
+        "AIR_AUTH_REQUIRED",
+        "AIR_RESOURCE_NOT_FOUND",
+        "AIR_METHOD_NOT_ALLOWED",
+        "AIR_OUTPUT_EXISTS",
+        "AIR_CATALOG_ITEM_CHANGED",
+        "AIR_SOURCE_CHANGED",
+        "AIR_READ_ONLY_VERSION",
+        "AIR_REQUEST_TOO_LARGE",
+        "AIR_STRUCTURE_LIMIT",
+        "AIR_GRAPH_LIMIT",
+        "AIR_HOST_REJECTED",
+        "AIR_SCHEMA_INVALID",
+        "AIR_SEMANTIC_INVALID",
+        "AIR_INTEGRITY_MISMATCH",
+        "AIR_KIND_PROFILE_MISMATCH",
+        "AIR_CARRIER_INVALID",
+        "AIR_CARRIER_DUPLICATE",
+        "AIR_UNSUPPORTED_VERSION",
+        "AIR_REQUIRED_EXTENSION_UNSUPPORTED",
+        "AIR_LEGACY_INVALID",
+        "AIR_INTERNAL_ERROR"
+      ]
+    },
+    "detail": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": [
+          "pointer",
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "pointer": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,127}$"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "unevaluatedProperties": false
+      }
+    }
+  },
+  "unevaluatedProperties": false
+}
