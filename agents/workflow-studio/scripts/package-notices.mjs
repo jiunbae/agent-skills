@@ -13,6 +13,16 @@ const EXPECTED_ROOT_PINS = Object.freeze({
   react: "19.2.8",
   "react-dom": "19.2.8",
 });
+const ROOT_DEPENDENCY_MAP_FIELDS = Object.freeze([
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+]);
+const ROOT_DEPENDENCY_LIST_FIELDS = Object.freeze([
+  "bundleDependencies",
+  "bundledDependencies",
+]);
 
 export async function assertPackageNotices(component = COMPONENT) {
   const [packageSource, lockSource, noticesSource] = await Promise.all([
@@ -23,15 +33,10 @@ export async function assertPackageNotices(component = COMPONENT) {
   const packageDocument = JSON.parse(packageSource);
   const lockDocument = JSON.parse(lockSource);
 
-  assert.deepEqual(
-    packageDocument.devDependencies,
-    EXPECTED_ROOT_PINS,
-    "package.json must retain the reviewed exact root dependency pins.",
-  );
-  assert.deepEqual(
-    lockDocument.packages?.[""]?.devDependencies,
-    EXPECTED_ROOT_PINS,
-    "package-lock.json must retain the reviewed exact root dependency pins.",
+  assertRootDependencyInventory(packageDocument, "package.json");
+  assertRootDependencyInventory(
+    lockDocument.packages?.[""] ?? {},
+    "package-lock.json",
   );
   for (const [name, version] of Object.entries(EXPECTED_ROOT_PINS)) {
     assert.equal(
@@ -97,6 +102,24 @@ export async function assertPackageNotices(component = COMPONENT) {
     [...productionPackages].sort(compareEntries),
     "The production esbuild package inventory and notices inventory differ.",
   );
+}
+
+function assertRootDependencyInventory(document, sourceName) {
+  for (const field of ROOT_DEPENDENCY_MAP_FIELDS) {
+    const expected = field === "devDependencies" ? EXPECTED_ROOT_PINS : {};
+    assert.deepEqual(
+      document[field] ?? {},
+      expected,
+      `${sourceName} must retain the reviewed exact root dependency pins; ${field} contains an unreviewed root dependency.`,
+    );
+  }
+  for (const field of ROOT_DEPENDENCY_LIST_FIELDS) {
+    assert.deepEqual(
+      document[field] ?? [],
+      [],
+      `${sourceName} must retain the reviewed exact root dependency pins; ${field} contains an unreviewed bundled root dependency.`,
+    );
+  }
 }
 
 function parseNoticeRows(source) {

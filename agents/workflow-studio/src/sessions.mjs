@@ -498,6 +498,7 @@ export function createSessionRegistry({
   );
   const secret = randomBytes(32);
   const stableIds = new Map();
+  const sourceStates = new Map();
   const privateItems = new Map();
   const snapshotHandles = new Map();
   const snapshotOrder = [];
@@ -505,12 +506,45 @@ export function createSessionRegistry({
   let activeReaders = 0;
   let refreshPromise = null;
   let generation = 1;
+  let nextEpoch = 0;
   let publicCatalog = Object.freeze({
     generation: 1,
     items: Object.freeze([]),
     diagnostics: Object.freeze([]),
     truncated: false,
   });
+
+  function allocateEpoch() {
+    if (!Number.isSafeInteger(nextEpoch)) {
+      throw sessionError("AIR_SESSION_LIMIT");
+    }
+    const epoch = nextEpoch;
+    nextEpoch += 1;
+    return epoch;
+  }
+
+  function sourceState(sourceKey, sourceIdentity) {
+    const current = sourceStates.get(sourceKey);
+    if (current && current.identity === sourceIdentity) return current;
+    const next = {
+      epoch: allocateEpoch(),
+      identity: sourceIdentity,
+    };
+    sourceStates.set(sourceKey, next);
+    return next;
+  }
+
+  function markSourceReset(item, attemptEpoch, observedIdentity) {
+    const current = sourceStates.get(item.sourceKey) ??
+      sourceState(item.sourceKey, item.identity);
+    if (current.epoch !== attemptEpoch) return current;
+    const next = {
+      epoch: allocateEpoch(),
+      identity: observedIdentity ?? current.identity,
+    };
+    sourceStates.set(item.sourceKey, next);
+    return next;
+  }
 
   function capabilities() {
     return Object.freeze({
@@ -585,8 +619,12 @@ export function createSessionRegistry({
           }
           if (!info.isFile()) continue;
           const kind = streamKind(root.provider, locator);
+          const relativeLocator = relative(root.path, locator);
           const privateKey =
-            `${root.provider}\0${kind}\0${identity(info)}\0${relative(root.path, locator)}`;
+            `${root.provider}\0${kind}\0${identity(info)}\0${relativeLocator}`;
+          const sourceKey =
+            `${root.provider}\0${kind}\0${root.path}\0${relativeLocator}`;
+          const state = sourceState(sourceKey, identity(info));
           let id = stableIds.get(privateKey);
           if (!id) {
             id = opaqueToken(randomBytes, "session");
@@ -596,9 +634,11 @@ export function createSessionRegistry({
             id,
             locator,
             privateKey,
+            sourceKey,
             provider: root.provider,
             streamKind: kind,
             identity: identity(info),
+            epoch: state.epoch,
             modifiedAt: Number(info.mtimeMs),
           });
         }
@@ -625,8 +665,14 @@ export function createSessionRegistry({
     const retainedPrivateKeys = new Set(
       candidates.map(({ privateKey }) => privateKey),
     );
+    const retainedSourceKeys = new Set(
+      candidates.map(({ sourceKey }) => sourceKey),
+    );
     for (const privateKey of stableIds.keys()) {
       if (!retainedPrivateKeys.has(privateKey)) stableIds.delete(privateKey);
+    }
+    for (const sourceKey of sourceStates.keys()) {
+      if (!retainedSourceKeys.has(sourceKey)) sourceStates.delete(sourceKey);
     }
     const nextPrivateItems = new Map();
     const publicItems = [];
@@ -661,6 +707,19 @@ export function createSessionRegistry({
     privateItems.clear();
     for (const item of next.items) {
       privateItems.set(item.id, nextPrivateItems.get(item.id));
+    }
+    for (const [snapshotId, handle] of snapshotHandles) {
+      const item = privateItems.get(handle.sessionId);
+      if (
+        item &&
+        handle.sourceIdentity === item.identity &&
+        handle.adapterVersion === adapterFor(item.provider).version
+      ) {
+        snapshotHandles.set(snapshotId, {
+          ...handle,
+          generation: next.generation,
+        });
+      }
     }
     publicCatalog = Object.freeze({
       generation: next.generation,
@@ -705,6 +764,12 @@ export function createSessionRegistry({
     ) {
       throw sessionError("AIR_SESSION_STALE_SNAPSHOT");
     }
+    const currentSourceState = sourceStates.get(item.sourceKey) ??
+      sourceState(item.sourceKey, item.identity);
+    const epoch = prior?.epoch ?? currentSourceState.epoch;
+    if (prior && prior.epoch !== currentSourceState.epoch) {
+      return sourceChanged(sessionId, requestedGeneration);
+    }
 
     let handle;
     try {
@@ -720,6 +785,7 @@ export function createSessionRegistry({
         (prior && prior.sourceIdentity !== sourceIdentity) ||
         (prior && Number(before.size) < prior.offset)
       ) {
+        markSourceReset(item, epoch, sourceIdentity);
         return sourceChanged(sessionId, requestedGeneration);
       }
       const offset = prior?.offset ?? 0;
@@ -749,6 +815,7 @@ export function createSessionRegistry({
           prior.continuity !== beforeContinuity.continuity
         )
       ) {
+        markSourceReset(item, epoch, sourceIdentity);
         return sourceChanged(sessionId, requestedGeneration);
       }
 
@@ -807,6 +874,7 @@ export function createSessionRegistry({
         identity(after) !== sourceIdentity ||
         Number(after.size) < nextOffset
       ) {
+        markSourceReset(item, epoch, identity(after));
         return sourceChanged(sessionId, requestedGeneration);
       }
 
@@ -833,7 +901,7 @@ export function createSessionRegistry({
       ) {
         const eventId = `event_${createHmac("sha256", secret)
           .update(
-            `event\0${item.privateKey}\0${prior?.epoch ?? 0}\0${completedOversized.startByte}\0${completedOversized.endByte}`,
+            `event\0${item.privateKey}\0${epoch}\0${completedOversized.startByte}\0${completedOversized.endByte}`,
           )
           .digest("base64url")
           .slice(0, 22)}`;
@@ -882,7 +950,7 @@ export function createSessionRegistry({
           : safeRecord(line, item.provider, boundedLimits, secret);
         const eventId = `event_${createHmac("sha256", secret)
           .update(
-            `event\0${item.privateKey}\0${prior?.epoch ?? 0}\0${startByte}\0${endByte}`,
+            `event\0${item.privateKey}\0${epoch}\0${startByte}\0${endByte}`,
           )
           .digest("base64url")
           .slice(0, 22)}`;
@@ -909,7 +977,13 @@ export function createSessionRegistry({
           });
           retainedEventIds.add(eventId);
         }
-        if (record.privateId) providerIds.set(record.privateId, eventId);
+        if (record.privateId) {
+          if (!providerIds.has(record.privateId)) {
+            providerIds.set(record.privateId, eventId);
+          } else if (providerIds.get(record.privateId) !== eventId) {
+            providerIds.set(record.privateId, null);
+          }
+        }
         const providerLinkKey = record.privateParent
           ? `${record.privateParent}\0${eventId}`
           : null;
@@ -927,7 +1001,6 @@ export function createSessionRegistry({
         nextOffset = offset + position;
       }
 
-      const epoch = prior?.epoch ?? 0;
       const finalInfo = await handle.stat({ bigint: true });
       const finalContinuity = await boundedContinuityFingerprint(
         handle,
@@ -953,6 +1026,7 @@ export function createSessionRegistry({
           acceptedChunk,
         )
       ) {
+        markSourceReset(item, epoch, identity(finalInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
       const prefixLength = Math.min(
@@ -976,6 +1050,7 @@ export function createSessionRegistry({
         identity(publishedInfo) !== sourceIdentity ||
         Number(publishedInfo.size) < nextOffset
       ) {
+        markSourceReset(item, epoch, identity(publishedInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
       const publishedFingerprint = await boundedFingerprint(
@@ -1008,6 +1083,7 @@ export function createSessionRegistry({
           acceptedChunk,
         )
       ) {
+        markSourceReset(item, epoch, identity(publishedInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
       const hasTornTail =
@@ -1134,6 +1210,7 @@ export function createSessionRegistry({
         identity(publicationInfo) !== sourceIdentity ||
         Number(publicationInfo.size) < nextOffset
       ) {
+        markSourceReset(item, epoch, identity(publicationInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
       const publicationFingerprint = await boundedFingerprint(
@@ -1168,10 +1245,14 @@ export function createSessionRegistry({
           acceptedChunk,
         )
       ) {
+        markSourceReset(item, epoch, identity(publicationInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
       if (generation !== requestedGeneration) {
         throw sessionError("AIR_SESSION_STALE_GENERATION");
+      }
+      if (sourceStates.get(item.sourceKey)?.epoch !== epoch) {
+        return sourceChanged(sessionId, requestedGeneration);
       }
       retainHandle({
         id: snapshotId,
@@ -1202,6 +1283,7 @@ export function createSessionRegistry({
     } catch (error) {
       if (error?.code?.startsWith("AIR_SESSION_")) throw error;
       if (error?.code === "ELOOP" || error?.code === "ENOENT") {
+        markSourceReset(item, epoch, null);
         return sourceChanged(sessionId, requestedGeneration);
       }
       throw sessionError("AIR_SESSION_SOURCE_UNAVAILABLE");

@@ -43,6 +43,8 @@ const AIR_CONTENT_DOMAIN = "AIR-CONTENT-V1\n";
 const AIR_ENVELOPE_DOMAIN = "AIR-ENVELOPE-V1\n";
 const AIR_LEGACY_EXTENSION =
   "https://open330.github.io/air/extensions/legacy-workflow-ir-v1";
+const MAX_AIR_MARKDOWN_BYTES = 32 * 1024 * 1024;
+const MAX_AIR_CARRIER_TOKEN_BYTES = 32 * 1024 * 1024;
 
 function clone(value) {
   return structuredClone(value);
@@ -68,6 +70,28 @@ function decodeBase64(value) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function decodeAirCarrierTokenBytes(value) {
+  if (
+    typeof value !== "string" ||
+    !/^[A-Za-z0-9_-]+$/u.test(value) ||
+    value.length > Math.ceil((MAX_AIR_CARRIER_TOKEN_BYTES * 4) / 3)
+  ) {
+    throw new Error("Invalid AIR carrier token.");
+  }
+  const remainder = value.length % 4;
+  if (remainder === 1) throw new Error("Invalid AIR carrier token.");
+  return decodeBase64(
+    value.replaceAll("-", "+").replaceAll("_", "/") +
+      "=".repeat((4 - remainder) % 4),
+  );
+}
+
+function airMarkdownError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
 
 function bytesToBase64(bytes) {
@@ -2388,6 +2412,66 @@ function sourceEndsInOpenAirMarkdownContext(sourceText) {
   return frontmatter || fence !== null;
 }
 
+function hasRecognizedAirMarkdownCarrier(sourceText) {
+  let offset = 0;
+  let firstLine = true;
+  let frontmatter = false;
+  let fence = null;
+  while (offset < sourceText.length) {
+    const newlineIndex = sourceText.indexOf("\n", offset);
+    const hasNewline = newlineIndex !== -1;
+    const nextOffset = hasNewline ? newlineIndex + 1 : sourceText.length;
+    let line = sourceText.slice(offset, hasNewline ? newlineIndex : nextOffset);
+    if (line.endsWith("\r")) line = line.slice(0, -1);
+    offset = nextOffset;
+
+    if (firstLine && line === "---") {
+      frontmatter = true;
+      firstLine = false;
+      continue;
+    }
+    firstLine = false;
+    if (frontmatter) {
+      if (line === "---") frontmatter = false;
+      continue;
+    }
+
+    const fenceMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence !== null) {
+      if (
+        fenceMatch &&
+        fence.marker === fenceMatch[1][0] &&
+        fenceMatch[1].length >= fence.length &&
+        fenceMatch[2].trim().length === 0
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+    if (fenceMatch) {
+      fence = { marker: fenceMatch[1][0], length: fenceMatch[1].length };
+      continue;
+    }
+
+    const marker = line.match(/^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u);
+    if (!marker || !hasNewline) continue;
+    try {
+      const tokenBytes = decodeAirCarrierTokenBytes(marker[1]);
+      if (tokenBytes.byteLength > MAX_AIR_CARRIER_TOKEN_BYTES) continue;
+      const manifest = JSON.parse(UTF8_FATAL_DECODER.decode(tokenBytes));
+      if (
+        manifest?.carrier === "air.md" &&
+        manifest?.carrier_version === "1"
+      ) {
+        return true;
+      }
+    } catch {
+      // Marker-shaped ordinary prose is not a recognized AIR carrier.
+    }
+  }
+  return false;
+}
+
 export function buildAirMarkdownBytes(state) {
   const artifact = buildAirArtifact(state);
   const sourceBytes = decodeBase64(artifact.body.source.bytes_base64);
@@ -2408,16 +2492,40 @@ export function buildAirMarkdownBytes(state) {
     .replace(/=+$/u, "");
   const eol = artifact.body.source.newline === "crlf" ? "\r\n" : "\n";
   const sourceText = UTF8_DECODER.decode(sourceBytes);
+  if (hasRecognizedAirMarkdownCarrier(sourceText)) {
+    throw airMarkdownError(
+      "AIR_CARRIER_DUPLICATE",
+      "AIR Markdown logical source contains a recognized AIR carrier.",
+    );
+  }
   if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
-    throw new Error(
+    throw airMarkdownError(
+      "AIR_MD_UNREPRESENTABLE_SOURCE",
       "Source ends in an open frontmatter or fenced-code context.",
     );
   }
   const separator = sourceText.endsWith(eol) ? eol : `${eol}${eol}`;
-  return concatBytes([
-    sourceBytes,
-    UTF8.encode(`${separator}<!-- air:v1 ${token} -->${eol}`),
-  ]);
+  const suffixBytes = UTF8.encode(
+    `${separator}<!-- air:v1 ${token} -->${eol}`,
+  );
+  if (sourceBytes.byteLength + suffixBytes.byteLength > MAX_AIR_MARKDOWN_BYTES) {
+    throw airMarkdownError(
+      "AIR_REQUEST_TOO_LARGE",
+      "AIR Markdown exceeds the 32 MiB publication limit.",
+    );
+  }
+  return concatBytes([sourceBytes, suffixBytes]);
+}
+
+export function canDownloadAirMarkdown(state) {
+  if (!canDownloadArtifact(state)) return false;
+  if (!state.airArtifact) return true;
+  try {
+    buildAirMarkdownBytes(state);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function buildWorkflowArtifact(state) {

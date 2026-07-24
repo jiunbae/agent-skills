@@ -17,6 +17,7 @@ import {
   buildFullDiff,
   buildPlanArtifact,
   buildWorkflowArtifact,
+  canDownloadAirMarkdown,
   canDownloadArtifact,
   changeEdge,
   createEditorState,
@@ -1533,6 +1534,56 @@ test("browser AIR Markdown export matches native context safety", () => {
   }
 });
 
+test("browser AIR Markdown refuses recognized inner carriers and oversized publication", async () => {
+  const checkedCarrier = await readFile(
+    new URL("../examples/hello-agent/workflow.air.md", import.meta.url),
+  );
+  const corruptCarrier = Buffer.from(checkedCarrier);
+  corruptCarrier[0] = corruptCarrier[0] === 0x2d ? 0x23 : 0x2d;
+  const nonterminalCarrier = Buffer.concat([
+    checkedCarrier,
+    Buffer.from("ordinary tail\n", "utf8"),
+  ]);
+  for (const source of [corruptCarrier, nonterminalCarrier]) {
+    const state = createEditorState(
+      migrateLegacyToAir(importSkillBytes(source, {
+        sourcePath: "nested-carrier/SKILL.md",
+      })),
+    );
+    assert.throws(
+      () => buildAirMarkdownBytes(state),
+      (error) => error?.code === "AIR_CARRIER_DUPLICATE",
+    );
+    assert.equal(canDownloadAirMarkdown(state), false);
+  }
+
+  const base = JSON.parse(
+    await readFile(
+      new URL("../examples/hello-agent/workflow.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  let large = createEditorState(base);
+  large.airArtifact.extensions["https://example.invalid/large"] =
+    "x".repeat(25 * 1024 * 1024);
+  large = editNode(
+    large,
+    large.nodes[0].id,
+    "title",
+    "Inspect the bounded carrier",
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(buildAirArtifact(large)), "utf8") <
+      32 * 1024 * 1024,
+  );
+  assert.throws(
+    () => buildAirMarkdownBytes(large),
+    (error) => error?.code === "AIR_REQUEST_TOO_LARGE",
+  );
+  assert.equal(canDownloadArtifact(large), true);
+  assert.equal(canDownloadAirMarkdown(large), false);
+});
+
 test("background implementer AIR carrier activates and reopens for a second edit", async () => {
   const sourcePath = "agents/background-implementer/SKILL.md";
   const source = await readFile(
@@ -1681,7 +1732,10 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
     "downloading must not mark the in-memory candidate as saved",
   );
   assert.match(editor, /downloadIr"\)\.disabled = !downloadCache\.allowed/);
-  assert.match(editor, /downloadMarkdown"\)\.disabled = !downloadCache\.allowed/);
+  assert.match(
+    editor,
+    /downloadMarkdown"\)\.disabled = !downloadCache\.markdownAllowed/,
+  );
   assert.match(editor, /promotePlan"\)\.disabled =\s*!canPreparePlan \|\| !state\.validation\.valid/);
   assert.match(editor, /promoteTrace"\)\.disabled =\s*!isTrace \|\| !state\.nodes\.length \|\| !state\.validation\.valid/);
   assert.match(editor, /setStatus\(validationAnnouncement\(state\)\)/);

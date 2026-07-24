@@ -14,6 +14,24 @@ const MAX_SESSION_REQUEST_BYTES = 4 * 1024;
 const SESSION_REQUEST_TIMEOUT_MS = 2_000;
 const MAX_CONCURRENT_SESSION_REQUESTS = 4;
 const SNAPSHOT_ID_PATTERN = /^snapshot_[A-Za-z0-9_-]{22}$/u;
+const SAFE_ARTIFACT_PROBLEMS = new Map([
+  [
+    "AIR_INTEGRITY_MISMATCH",
+    [422, "AIR artifact integrity mismatch"],
+  ],
+  [
+    "AIR_SEMANTIC_INVALID",
+    [422, "AIR artifact semantics invalid"],
+  ],
+  [
+    "AIR_CARRIER_INVALID",
+    [422, "AIR Markdown carrier invalid"],
+  ],
+  [
+    "AIR_CARRIER_DUPLICATE",
+    [422, "AIR Markdown carrier duplicated"],
+  ],
+]);
 const SCHEMA_FILES = new Map([
   ["air", "air.schema.json"],
   ["workflow", "air-workflow.schema.json"],
@@ -339,6 +357,13 @@ function sessionErrorResponse(response, method, error) {
     ],
   };
   const match = responses[error?.code];
+  if (!match) return false;
+  sendProblem(response, method, error.code, match[0], match[1]);
+  return true;
+}
+
+function artifactErrorResponse(response, method, error) {
+  const match = SAFE_ARTIFACT_PROBLEMS.get(error?.code);
   if (!match) return false;
   sendProblem(response, method, error.code, match[0], match[1]);
   return true;
@@ -786,15 +811,9 @@ export function createStudioServer({
           );
         } else if (
           skillItemMatch !== null &&
-          error?.code === "AIR_INTEGRITY_MISMATCH"
+          artifactErrorResponse(response, method, error)
         ) {
-          sendProblem(
-            response,
-            method,
-            "AIR_INTEGRITY_MISMATCH",
-            422,
-            "AIR artifact integrity mismatch",
-          );
+          // The helper emits a sanitized problem for this exact route only.
         } else if (!sessionErrorResponse(response, method, error)) {
           sendProblem(
             response,

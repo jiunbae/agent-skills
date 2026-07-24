@@ -654,5 +654,131 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
     }
   }
 
+  const workflowCollectionLimits = [
+    {
+      label: "workflow nodes",
+      maximum: 30_000,
+      mutate(artifact, values) {
+        artifact.body.graph.nodes = values;
+      },
+    },
+    {
+      label: "workflow edges",
+      maximum: 30_000,
+      mutate(artifact, values) {
+        artifact.body.graph.edges = values;
+      },
+    },
+    {
+      label: "workflow entry IDs",
+      maximum: 30_000,
+      mutate(artifact, values) {
+        artifact.body.graph.entry_node_ids = values;
+      },
+    },
+    {
+      label: "workflow source maps",
+      maximum: 30_000,
+      mutate(artifact, values) {
+        artifact.body.source_maps = values;
+      },
+    },
+    {
+      label: "workflow opaque ranges",
+      maximum: 60_001,
+      mutate(artifact, values) {
+        artifact.body.opaque_ranges = values;
+      },
+    },
+    {
+      label: "workflow diagnostics",
+      maximum: 10_000,
+      mutate(artifact, values) {
+        artifact.body.diagnostics = values;
+      },
+    },
+    {
+      label: "workflow node evidence refs",
+      maximum: 1_000,
+      mutate(artifact, values) {
+        artifact.body.graph.nodes[0].evidence_refs = values;
+      },
+    },
+    {
+      label: "workflow edge evidence refs",
+      maximum: 1_000,
+      mutate(artifact, values) {
+        artifact.body.graph.edges[0].evidence_refs = values;
+      },
+    },
+    {
+      label: "workflow diagnostic targets",
+      maximum: 1_000,
+      mutate(artifact, values) {
+        artifact.body.diagnostics = [{
+          severity: "warning",
+          code: "AIR_TEST_LIMIT",
+          message: "Collection limit fixture.",
+          targets: values,
+        }];
+      },
+    },
+  ];
+  const workflowSchema = documents.find((document) =>
+    document.$id.endsWith("/workflow.schema.json"));
+  assert.equal(
+    workflowSchema.$defs.graph.properties.nodes.maxItems,
+    30_000,
+  );
+  assert.equal(
+    workflowSchema.$defs.graph.properties.edges.maxItems,
+    30_000,
+  );
+  assert.equal(
+    workflowSchema.$defs.graph.properties.entry_node_ids.maxItems,
+    30_000,
+  );
+  assert.equal(
+    workflowSchema.$defs.workflowBody.properties.source_maps.maxItems,
+    30_000,
+  );
+  assert.equal(
+    workflowSchema.$defs.workflowBody.properties.opaque_ranges.maxItems,
+    60_001,
+  );
+  assert.equal(
+    workflowSchema.$defs.workflowBody.properties.diagnostics.maxItems,
+    10_000,
+  );
+  assert.equal(
+    workflowSchema.$defs.node.properties.evidence_refs.maxItems,
+    1_000,
+  );
+  assert.equal(
+    workflowSchema.$defs.edge.properties.evidence_refs.maxItems,
+    1_000,
+  );
+  const envelopeSchema = documents.find((document) =>
+    document.$id.endsWith("/air.schema.json"));
+  assert.equal(
+    envelopeSchema.$defs.diagnostic.properties.targets.maxItems,
+    1_000,
+  );
+  for (const scenario of workflowCollectionLimits) {
+    const artifact = structuredClone(workflow);
+    scenario.mutate(
+      artifact,
+      Array.from({ length: scenario.maximum + 1 }, () => null),
+    );
+    resealContent(artifact);
+    assert.throws(
+      () => validateAirArtifact(artifact),
+      (error) =>
+        error?.code === "AIR_SEMANTIC_INVALID" &&
+        error.message.includes(`at most ${scenario.maximum} items`),
+      scenario.label,
+    );
+  }
+
   assert.equal(session.profile, AIR_PROFILES.session);
 });

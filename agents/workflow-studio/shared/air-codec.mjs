@@ -24,6 +24,7 @@ const MAX_JSON_BYTES = 32 * 1024 * 1024;
 const MAX_JSON_DEPTH = 128;
 const MAX_JSON_ITEMS = 2_000_000;
 const MAX_CARRIER_TOKEN_BYTES = 32 * 1024 * 1024;
+const MAX_ENVELOPE_COLLECTION_ITEMS = 1_000;
 const ROOT_KEYS = Object.freeze([
   "$schema",
   "air_version",
@@ -450,6 +451,19 @@ function requireDigest(value, label) {
   }
 }
 
+function requireBoundedArray(value, label, maximum) {
+  if (!Array.isArray(value)) {
+    fail("AIR_SCHEMA_INVALID", `${label} must be an array.`);
+  }
+  if (value.length > maximum) {
+    fail(
+      "AIR_SCHEMA_INVALID",
+      `${label} may contain at most ${maximum} items.`,
+    );
+  }
+  return value;
+}
+
 function versionDisposition(version) {
   if (typeof version !== "string" || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(version)) {
     fail("AIR_INVALID_VERSION", "air_version must be release SemVer.");
@@ -542,9 +556,11 @@ export function validateAirEnvelopeShape(value, {
   requireText(artifact.provenance.created_by.name, "created_by.name");
   requireText(artifact.provenance.created_by.version, "created_by.version");
   for (const field of ["origins", "derived_from", "migrations"]) {
-    if (!Array.isArray(artifact.provenance[field])) {
-      fail("AIR_SCHEMA_INVALID", `provenance.${field} must be an array.`);
-    }
+    requireBoundedArray(
+      artifact.provenance[field],
+      `provenance.${field}`,
+      MAX_ENVELOPE_COLLECTION_ITEMS,
+    );
   }
   for (const [index, origin] of artifact.provenance.origins.entries()) {
     exactKeys(
@@ -608,8 +624,11 @@ export function validateAirEnvelopeShape(value, {
     }
     requireDigest(migration.source_digest, "migration.source_digest");
     if (
-      !Array.isArray(migration.warnings) ||
-      migration.warnings.some(
+      requireBoundedArray(
+        migration.warnings,
+        "migration.warnings",
+        MAX_ENVELOPE_COLLECTION_ITEMS,
+      ).some(
         (warning) => typeof warning !== "string" || warning.length === 0,
       ) ||
       (migration.cleared_approval !== undefined &&
@@ -629,10 +648,11 @@ export function validateAirEnvelopeShape(value, {
       fail("AIR_SCHEMA_INVALID", `Invalid extension owner: ${key}`);
     }
   }
-  if (!Array.isArray(artifact.required_extensions)) {
-    fail("AIR_SCHEMA_INVALID", "required_extensions must be an array.");
-  }
-  const required = artifact.required_extensions;
+  const required = requireBoundedArray(
+    artifact.required_extensions,
+    "required_extensions",
+    MAX_ENVELOPE_COLLECTION_ITEMS,
+  );
   const sorted = [...required].sort();
   if (
     new Set(required).size !== required.length ||
@@ -722,10 +742,96 @@ export function sourceEndsInOpenAirMarkdownContext(sourceText) {
   return frontmatter || fence !== null;
 }
 
+export function hasRecognizedAirMarkdownCarrier(input) {
+  let sourceText;
+  try {
+    sourceText =
+      typeof input === "string"
+        ? input
+        : decodeUtf8(input, "AIR_CARRIER_INVALID");
+  } catch {
+    return false;
+  }
+
+  let offset = 0;
+  let firstLine = true;
+  let frontmatter = false;
+  let fence = null;
+  while (offset < sourceText.length) {
+    const newlineIndex = sourceText.indexOf("\n", offset);
+    const hasNewline = newlineIndex !== -1;
+    const nextOffset = hasNewline ? newlineIndex + 1 : sourceText.length;
+    let line = sourceText.slice(offset, hasNewline ? newlineIndex : nextOffset);
+    if (line.endsWith("\r")) line = line.slice(0, -1);
+    offset = nextOffset;
+
+    if (firstLine && line === "---") {
+      frontmatter = true;
+      firstLine = false;
+      continue;
+    }
+    firstLine = false;
+    if (frontmatter) {
+      if (line === "---") frontmatter = false;
+      continue;
+    }
+
+    const fenceMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence !== null) {
+      if (
+        fenceMatch &&
+        fence.marker === fenceMatch[1][0] &&
+        fenceMatch[1].length >= fence.length &&
+        fenceMatch[2].trim().length === 0
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+    if (fenceMatch) {
+      fence = {
+        marker: fenceMatch[1][0],
+        length: fenceMatch[1].length,
+      };
+      continue;
+    }
+
+    const marker = line.match(/^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u);
+    if (!marker || !hasNewline) {
+      continue;
+    }
+    try {
+      const manifest = parseIJson(
+        decodeBase64(marker[1], {
+          url: true,
+          code: "AIR_CARRIER_INVALID",
+          maxBytes: MAX_CARRIER_TOKEN_BYTES,
+        }),
+        { maxBytes: MAX_CARRIER_TOKEN_BYTES },
+      );
+      if (
+        manifest?.carrier === "air.md" &&
+        manifest?.carrier_version === "1"
+      ) {
+        return true;
+      }
+    } catch {
+      // Marker-shaped ordinary prose is not a recognized AIR carrier.
+    }
+  }
+  return false;
+}
+
 export function encodeAirMarkdown(artifact) {
   validateAirEnvelopeShape(artifact);
   const sourceBytes = sourceBytesFromWorkflow(artifact);
   const sourceText = decodeUtf8(sourceBytes, "AIR_MD_UNREPRESENTABLE_SOURCE");
+  if (hasRecognizedAirMarkdownCarrier(sourceText)) {
+    fail(
+      "AIR_CARRIER_DUPLICATE",
+      "AIR Markdown logical source contains a recognized AIR carrier.",
+    );
+  }
   if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
     fail(
       "AIR_MD_UNREPRESENTABLE_SOURCE",
@@ -770,10 +876,20 @@ export function encodeAirMarkdown(artifact) {
     sourceBytes.byteLength >= eol.length &&
     decodeUtf8(sourceBytes.slice(sourceBytes.byteLength - eol.length)) === eol;
   const separator = sourceEndsEol ? eol : eol + eol;
-  return new Uint8Array([
-    ...sourceBytes,
-    ...UTF8.encode(`${separator}<!-- air:v1 ${token} -->${eol}`),
-  ]);
+  const suffixBytes = UTF8.encode(
+    `${separator}<!-- air:v1 ${token} -->${eol}`,
+  );
+  const carrierLength = sourceBytes.byteLength + suffixBytes.byteLength;
+  if (carrierLength > MAX_JSON_BYTES) {
+    fail(
+      "AIR_REQUEST_TOO_LARGE",
+      "AIR Markdown exceeds the byte limit.",
+    );
+  }
+  const carrier = new Uint8Array(carrierLength);
+  carrier.set(sourceBytes);
+  carrier.set(suffixBytes, sourceBytes.byteLength);
+  return carrier;
 }
 
 export function decodeAirMarkdown(input) {
@@ -845,6 +961,12 @@ export function decodeAirMarkdown(input) {
   }
   const sourceBytes = inputBytes.slice(0, sourceLength);
   const sourceText = decodeUtf8(sourceBytes, "AIR_CARRIER_INVALID");
+  if (hasRecognizedAirMarkdownCarrier(sourceText)) {
+    fail(
+      "AIR_CARRIER_DUPLICATE",
+      "AIR Markdown logical source contains a recognized AIR carrier.",
+    );
+  }
   if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
     fail(
       "AIR_CARRIER_INVALID",

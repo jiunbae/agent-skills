@@ -108,6 +108,36 @@ function rewriteCarrierManifest(carrier, mutate) {
   );
 }
 
+function buildCarrierWithoutEncoder(artifact) {
+  const source = artifact.body.source;
+  const sourceBytes = Buffer.from(source.bytes_base64, "base64");
+  const withoutSource = structuredClone(artifact);
+  delete withoutSource.body.source.bytes_base64;
+  const manifest = {
+    carrier: "air.md",
+    carrier_version: "1",
+    envelope_without_source_content: withoutSource,
+    logical_source: {
+      byte_length: sourceBytes.byteLength,
+      sha256: source.sha256,
+    },
+  };
+  const token = Buffer.from(canonicalizeJcs(manifest), "utf8")
+    .toString("base64url");
+  const eol = source.newline === "crlf" ? "\r\n" : "\n";
+  const sourceEndsEol = sourceBytes.subarray(-Buffer.byteLength(eol)).equals(
+    Buffer.from(eol),
+  );
+  return Buffer.concat([
+    sourceBytes,
+    Buffer.from(
+      `${sourceEndsEol ? eol : eol + eol}` +
+        `<!-- air:v1 ${token} -->${eol}`,
+      "utf8",
+    ),
+  ]);
+}
+
 function completedTrace() {
   return {
     ir_version: "1.0",
@@ -212,6 +242,34 @@ test("AIR Markdown is workflow-only, length anchored, and single-source", async 
   expectCode(
     () => decodeAirMarkdownArtifact(Buffer.concat([carrier, Buffer.from("x")])),
     "AIR_CARRIER_INVALID",
+  );
+});
+
+test("AIR Markdown never emits a carrier beyond its decoder envelope", () => {
+  const prefix = Buffer.from(
+    "---\nname: air-carrier-bound\ndescription: Carrier bound fixture\n---\n\n",
+    "utf8",
+  );
+  const source = Buffer.concat([
+    prefix,
+    Buffer.alloc((2 * 1024 * 1024) - prefix.byteLength, 0x61),
+  ]);
+  const artifact = migrateLegacyToAir(importSkillBytes(source, {
+    sourcePath: "carrier-bound/SKILL.md",
+  }));
+  artifact.extensions = {
+    "https://example.test/extensions/padding": {
+      padding: "x".repeat(23 * 1024 * 1024),
+    },
+  };
+  delete artifact.integrity.envelope_digest;
+  resealContent(artifact);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(artifact), "utf8") < 32 * 1024 * 1024,
+  );
+  expectCode(
+    () => encodeAirMarkdownArtifact(artifact),
+    "AIR_REQUEST_TOO_LARGE",
   );
 });
 
@@ -360,11 +418,31 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
     `${logical.toString("utf8")}\n\`\`\`text\n<!-- air:v1 ${marker[1]} -->\n`,
     "utf8",
   );
+  const closedFenced = Buffer.from(
+    `${logical.toString("utf8")}\n\`\`\`text\n` +
+      `<!-- air:v1 ${marker[1]} -->\n\`\`\`\n`,
+    "utf8",
+  );
+  const quoted = Buffer.from(
+    `${logical.toString("utf8")}\n> <!-- air:v1 ${marker[1]} -->\n`,
+    "utf8",
+  );
+  const indented = Buffer.from(
+    `${logical.toString("utf8")}\n    <!-- air:v1 ${marker[1]} -->\n`,
+    "utf8",
+  );
   const markerProse = Buffer.from(
     `${logical.toString("utf8")}\n<!-- air:v1 ordinary-prose -->\n`,
     "utf8",
   );
-  for (const source of [invalid, fenced, markerProse]) {
+  for (const source of [
+    invalid,
+    fenced,
+    closedFenced,
+    quoted,
+    indented,
+    markerProse,
+  ]) {
     assert.equal(recognizeAirSkillCarrier(source), null);
     const imported = importSkillBytesAsAir(source, {
       sourcePath: "hostile/SKILL.md",
@@ -375,17 +453,58 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
     );
   }
 
-  const nested = encodeAirMarkdownArtifact(
-    migrateLegacyToAir(importSkillBytes(carrier, {
-      sourcePath: "nested/SKILL.md",
-    })),
-  );
+  const nestedArtifact = migrateLegacyToAir(importSkillBytes(carrier, {
+    sourcePath: "nested/SKILL.md",
+  }));
+  nestedArtifact.extensions = {};
+  delete nestedArtifact.integrity.envelope_digest;
+  resealContent(nestedArtifact);
   expectCode(
-    () => recognizeAirSkillCarrier(nested),
+    () => encodeAirMarkdownArtifact(nestedArtifact),
+    "AIR_CARRIER_DUPLICATE",
+  );
+  const nested = buildCarrierWithoutEncoder(nestedArtifact);
+  expectCode(
+    () => decodeAirMarkdownArtifact(nested),
+    "AIR_CARRIER_DUPLICATE",
+  );
+  expectCode(() => recognizeAirSkillCarrier(nested), "AIR_CARRIER_DUPLICATE");
+  expectCode(() => importSkillBytesAsAir(nested), "AIR_CARRIER_DUPLICATE");
+
+  const corruptedInner = Buffer.from(carrier);
+  corruptedInner[0] = corruptedInner[0] === 0x2d ? 0x23 : 0x2d;
+  const corruptArtifact = migrateLegacyToAir(importSkillBytes(corruptedInner, {
+    sourcePath: "corrupt-inner/SKILL.md",
+  }));
+  corruptArtifact.extensions = {};
+  delete corruptArtifact.integrity.envelope_digest;
+  resealContent(corruptArtifact);
+  expectCode(
+    () => encodeAirMarkdownArtifact(corruptArtifact),
     "AIR_CARRIER_DUPLICATE",
   );
   expectCode(
-    () => importSkillBytesAsAir(nested),
+    () => recognizeAirSkillCarrier(buildCarrierWithoutEncoder(corruptArtifact)),
+    "AIR_CARRIER_DUPLICATE",
+  );
+
+  const nonterminal = Buffer.concat([carrier, Buffer.from("ordinary tail\n")]);
+  expectCode(
+    () => recognizeAirSkillCarrier(nonterminal),
+    "AIR_CARRIER_INVALID",
+  );
+  expectCode(
+    () => importSkillBytesAsAir(nonterminal),
+    "AIR_CARRIER_INVALID",
+  );
+  const nonterminalArtifact = migrateLegacyToAir(importSkillBytes(nonterminal, {
+    sourcePath: "nonterminal-inner/SKILL.md",
+  }));
+  nonterminalArtifact.extensions = {};
+  delete nonterminalArtifact.integrity.envelope_digest;
+  resealContent(nonterminalArtifact);
+  expectCode(
+    () => encodeAirMarkdownArtifact(nonterminalArtifact),
     "AIR_CARRIER_DUPLICATE",
   );
 });
@@ -685,6 +804,26 @@ test("AIR integrity, closed roots, required extensions, and versions fail safely
     () => validateAirEnvelopeShape(required),
     "AIR_REQUIRED_EXTENSION_UNSUPPORTED",
   );
+
+  for (const mutate of [
+    (artifact, values) => { artifact.provenance.origins = values; },
+    (artifact, values) => { artifact.provenance.derived_from = values; },
+    (artifact, values) => { artifact.provenance.migrations = values; },
+    (artifact, values) => {
+      artifact.provenance.migrations[0].warnings = values;
+    },
+    (artifact, values) => { artifact.required_extensions = values; },
+  ]) {
+    const overLimit = structuredClone(air);
+    mutate(
+      overLimit,
+      Array.from({ length: 1_001 }, () => null),
+    );
+    expectCode(
+      () => validateAirEnvelopeShape(overLimit),
+      "AIR_SCHEMA_INVALID",
+    );
+  }
 
   const newer = structuredClone(air);
   newer.air_version = "1.1.0";

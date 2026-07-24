@@ -521,6 +521,64 @@ test("port-0 HTTP rejects a refresh committed at the final publication cut", asy
   assert.equal(response.body.includes(directory), false);
 });
 
+test("port-0 HTTP continues an unchanged session after catalog refresh", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-http-continue-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceRoot = join(directory, "codex");
+  const source = join(sourceRoot, "continue.jsonl");
+  await mkdir(sourceRoot, { recursive: true });
+  await writeFile(source, fixedRecord("session_meta", 0));
+  const registry = createSessionRegistry({
+    roots: [{ path: sourceRoot, provider: "codex" }],
+    randomBytes: (length) => Buffer.alloc(length, 7),
+  });
+  let catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  const token = encodeURIComponent(studio.token);
+  const snapshotPath =
+    `/air/v1/sessions/${sessionId}/snapshots?token=${token}`;
+  const firstResponse = await http(address, {
+    method: "POST",
+    path: snapshotPath,
+    body: JSON.stringify({ generation: catalog.generation }),
+    headers: { "Content-Type": "application/json" },
+  });
+  assert.equal(firstResponse.status, 200);
+  const first = JSON.parse(firstResponse.body);
+
+  await appendFile(source, fixedRecord("event_msg", 1));
+  const refreshResponse = await http(address, {
+    path: `/air/v1/sessions?refresh=1&token=${token}`,
+  });
+  assert.equal(refreshResponse.status, 200);
+  catalog = JSON.parse(refreshResponse.body);
+  assert.equal(catalog.items[0].id, sessionId);
+  const continuedResponse = await http(address, {
+    method: "POST",
+    path: snapshotPath,
+    body: JSON.stringify({
+      generation: catalog.generation,
+      prior_snapshot_id: first.snapshot_id,
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+  assert.equal(continuedResponse.status, 200);
+  const continued = JSON.parse(continuedResponse.body);
+  assert.equal(continued.source_changed, false);
+  assert.equal(continued.generation, catalog.generation);
+  assert.equal(continued.artifact.body.events.length, 2);
+  assert.equal(continuedResponse.body.includes(directory), false);
+});
+
 test("snapshot POST enforces the published global request concurrency bound", async (t) => {
   await withServer(t, async ({ address, sessionRegistry, studio }) => {
     const releases = [];

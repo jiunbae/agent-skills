@@ -11,6 +11,7 @@ import {
   buildPlanArtifact,
   buildStateDiff,
   buildWorkflowArtifact,
+  canDownloadAirMarkdown,
   canDownloadArtifact,
   canonicalJson,
   changeEdge,
@@ -67,6 +68,7 @@ let pendingStaleReturnFocus = null;
 let loadRequestEpoch = 0;
 let mobileRegion = "graph";
 let commandLineResource = null;
+let inspectorReturnFocus = null;
 const documents = new Map();
 const history = {
   undo: [],
@@ -315,7 +317,7 @@ function replaceOptions(select, selectedValue) {
 function selectNodeInWorkspace(nodeId, focusId = null) {
   selection = { type: "node", id: nodeId };
   state = selectNode(state, nodeId);
-  document.body.dataset.inspectorOpen = "true";
+  openInspector(document.activeElement);
   pendingFocusId = focusId;
   render();
   setStatus(state.status);
@@ -324,7 +326,7 @@ function selectNodeInWorkspace(nodeId, focusId = null) {
 function selectEdgeInWorkspace(edgeId, focusId = null) {
   if (!state.edges.some((edge) => edge.id === edgeId)) return;
   selection = { type: "edge", id: edgeId };
-  document.body.dataset.inspectorOpen = "true";
+  openInspector(document.activeElement);
   pendingFocusId = focusId;
   render();
   const edge = selectedEdge();
@@ -358,13 +360,15 @@ function renderHeader() {
 
   const cacheKey = `${state.kind}:${state.revision}:${state.validation.valid}`;
   if (downloadCache.key !== cacheKey) {
+    const allowed = canDownloadArtifact(state);
     downloadCache = {
       key: cacheKey,
-      allowed: canDownloadArtifact(state),
+      allowed,
+      markdownAllowed: allowed && canDownloadAirMarkdown(state),
     };
   }
   element("downloadIr").disabled = !downloadCache.allowed;
-  element("downloadMarkdown").disabled = !downloadCache.allowed;
+  element("downloadMarkdown").disabled = !downloadCache.markdownAllowed;
   setDownloadLabel(
     "downloadIr",
     state.airArtifact ? "Download AIR JSON" : "Download Workflow IR",
@@ -382,7 +386,10 @@ function renderHeader() {
         : `Fix ${state.airArtifact ? "AIR" : "Workflow IR"} validation errors before downloading.`
       : "These downloads are available only for workflow artifacts.";
   element("downloadIr").title = reason;
-  element("downloadMarkdown").title = reason;
+  element("downloadMarkdown").title =
+    downloadCache.allowed && !downloadCache.markdownAllowed
+      ? "AIR Markdown is unavailable because its carrier cannot be published safely."
+      : reason;
 }
 
 function renderTabs() {
@@ -1325,16 +1332,16 @@ async function fetchJson(path, {
     cache: "no-store",
   });
   if (!response.ok) {
-    let detail = "";
     let code = "";
     try {
       const problem = await response.json();
-      detail = typeof problem?.detail === "string" ? ` ${problem.detail}` : "";
-      code = typeof problem?.code === "string" ? problem.code : "";
+      code = SAFE_PUBLIC_PROBLEM_CODES.has(problem?.code)
+        ? problem.code
+        : "";
     } catch {
       // A typed status is sufficient; never surface an untrusted response body.
     }
-    const error = new Error(`Request failed with HTTP ${response.status}.${detail}`);
+    const error = new Error(`Request failed with HTTP ${response.status}.`);
     error.status = response.status;
     error.code = code;
     throw error;
@@ -1342,13 +1349,36 @@ async function fetchJson(path, {
   return response.json();
 }
 
-function safeProblemCode(error) {
-  return (
-    typeof error?.code === "string" &&
-    /^AIR_[A-Z0-9_]{1,64}$/u.test(error.code)
-  )
-    ? error.code
-    : "";
+const SAFE_ARTIFACT_PROBLEM_CODES = new Set([
+  "AIR_CARRIER_DUPLICATE",
+  "AIR_CARRIER_INVALID",
+  "AIR_CATALOG_ITEM_CHANGED",
+  "AIR_CATALOG_ITEM_NOT_FOUND",
+  "AIR_CATALOG_ITEM_STALE",
+  "AIR_INTEGRITY_MISMATCH",
+  "AIR_SEMANTIC_INVALID",
+]);
+const SAFE_SESSION_PROBLEM_CODES = new Set([
+  "AIR_SESSION_BUSY",
+  "AIR_SESSION_INVALID_REQUEST",
+  "AIR_SESSION_LIMIT",
+  "AIR_SESSION_NOT_FOUND",
+  "AIR_SESSION_SOURCE_CHANGED",
+  "AIR_SESSION_SOURCE_UNAVAILABLE",
+  "AIR_SESSION_STALE_GENERATION",
+  "AIR_SESSION_STALE_SNAPSHOT",
+  "AIR_SESSION_UNSUPPORTED_MEDIA",
+]);
+const SAFE_PUBLIC_PROBLEM_CODES = new Set([
+  ...SAFE_ARTIFACT_PROBLEM_CODES,
+  ...SAFE_SESSION_PROBLEM_CODES,
+]);
+
+function safeProblemCode(error, resourceType) {
+  const allowlist = resourceType === "session"
+    ? SAFE_SESSION_PROBLEM_CODES
+    : SAFE_ARTIFACT_PROBLEM_CODES;
+  return allowlist.has(error?.code) ? error.code : "";
 }
 
 function currentResource() {
@@ -1426,43 +1456,59 @@ async function loadResource(
     } else {
       let response;
       let sourceChanged = false;
-      try {
-        response = await fetchJson(
+      const requestSnapshot = (priorSnapshotId) =>
+        fetchJson(
           `/air/v1/sessions/${encodeURIComponent(resource.id)}/snapshots`,
           {
             method: "POST",
             body: {
               generation: sessionGeneration,
-              ...(cached?.snapshotId
-                ? { prior_snapshot_id: cached.snapshotId }
+              ...(priorSnapshotId
+                ? { prior_snapshot_id: priorSnapshotId }
                 : {}),
             },
           },
         );
+      try {
+        response = await requestSnapshot(cached?.snapshotId);
       } catch (error) {
         if (
           !refreshSession ||
-          !["AIR_SESSION_SOURCE_CHANGED", "AIR_SESSION_STALE_GENERATION"]
+          ![
+            "AIR_SESSION_SOURCE_CHANGED",
+            "AIR_SESSION_STALE_GENERATION",
+            "AIR_SESSION_STALE_SNAPSHOT",
+          ]
             .includes(error?.code)
         ) {
           throw error;
         }
-        const refreshed = await fetchJson("/air/v1/sessions", {
-          parameters: { refresh: "1" },
-        });
-        sessionGeneration = refreshed.generation;
-        const replacement = normalizeSessionResources(refreshed).find(
-          (candidate) => candidate.id === resource.id,
-        );
-        if (!replacement) throw error;
-        sourceChanged = true;
-        response = await fetchJson(
-          `/air/v1/sessions/${encodeURIComponent(resource.id)}/snapshots`,
-          {
-            method: "POST",
-            body: { generation: sessionGeneration },
-          },
-        );
+        let priorSnapshotId = cached?.snapshotId;
+        if (error.code !== "AIR_SESSION_STALE_SNAPSHOT") {
+          const refreshed = await fetchJson("/air/v1/sessions", {
+            parameters: { refresh: "1" },
+          });
+          sessionGeneration = refreshed.generation;
+          const replacement = normalizeSessionResources(refreshed).find(
+            (candidate) => candidate.id === resource.id,
+          );
+          if (!replacement) throw error;
+          sourceChanged = error.code === "AIR_SESSION_SOURCE_CHANGED";
+          if (sourceChanged) priorSnapshotId = null;
+        } else {
+          priorSnapshotId = null;
+        }
+        try {
+          response = await requestSnapshot(priorSnapshotId);
+        } catch (retryError) {
+          if (
+            retryError?.code !== "AIR_SESSION_STALE_SNAPSHOT" ||
+            !priorSnapshotId
+          ) {
+            throw retryError;
+          }
+          response = await requestSnapshot(null);
+        }
       }
       payload = response.artifact;
       metadata = {
@@ -1495,7 +1541,7 @@ async function loadResource(
       `${resourceItems.length} local resource${resourceItems.length === 1 ? "" : "s"}`;
   } catch (error) {
     if (epoch !== loadRequestEpoch) return;
-    const code = safeProblemCode(error);
+    const code = safeProblemCode(error, resource.type);
     const detail = error instanceof Error ? error.message : String(error);
     const message = code ? `[${code}] ${detail}` : detail;
     element("resourceStatus").textContent = `Could not open resource. ${message}`;
@@ -1800,13 +1846,66 @@ function showMobileRegion(region) {
     button.setAttribute("aria-pressed", String(selected));
     button.tabIndex = selected ? 0 : -1;
   }
+  syncInspectorAccessibility();
+}
+
+function inspectorIsVisuallyClosed() {
+  const mobile = window.matchMedia(
+    "(max-width: 46rem), (max-height: 34rem)",
+  ).matches;
+  if (mobile) return mobileRegion !== "inspector";
+  const intermediate = window.matchMedia("(max-width: 68rem)").matches;
+  return (
+    intermediate &&
+    document.body.dataset.inspectorOpen !== "true"
+  );
+}
+
+function syncInspectorAccessibility() {
+  const inspector = element("inspectorRegion");
+  const closed = inspectorIsVisuallyClosed();
+  inspector.inert = closed;
+  if (closed) {
+    inspector.setAttribute("aria-hidden", "true");
+  } else {
+    inspector.removeAttribute("aria-hidden");
+  }
+}
+
+function openInspector(returnTarget = document.activeElement) {
+  if (
+    document.body.dataset.inspectorOpen !== "true" &&
+    returnTarget instanceof HTMLElement &&
+    !element("inspectorRegion").contains(returnTarget)
+  ) {
+    inspectorReturnFocus = returnTarget;
+  }
+  document.body.dataset.inspectorOpen = "true";
+  syncInspectorAccessibility();
+}
+
+function closeInspector() {
+  document.body.dataset.inspectorOpen = "false";
+  if (
+    window.matchMedia("(max-width: 46rem), (max-height: 34rem)").matches
+  ) {
+    showMobileRegion("graph");
+  } else {
+    syncInspectorAccessibility();
+  }
+  const target =
+    inspectorReturnFocus?.isConnected && !inspectorReturnFocus.inert
+      ? inspectorReturnFocus
+      : element("graphCanvas");
+  inspectorReturnFocus = null;
+  requestAnimationFrame(() => target.focus({ preventScroll: true }));
 }
 
 function focusRegion(region) {
   if (region === "canvas") showMobileRegion("graph");
   if (region === "inspector") {
     showMobileRegion("inspector");
-    document.body.dataset.inspectorOpen = "true";
+    openInspector(document.activeElement);
   }
   if (region === "panel") showMobileRegion("panel");
   if (region === "resources") showMobileRegion("resources");
@@ -1935,6 +2034,7 @@ function installHandlers() {
       target.focus({ preventScroll: true });
     });
   }
+  element("togglePanel").setAttribute("aria-expanded", "true");
   element("togglePanel").addEventListener("click", () => {
     const panel = element("bottomPanel");
     const collapsed = panel.dataset.collapsed === "true";
@@ -1944,6 +2044,7 @@ function installHandlers() {
       "aria-label",
       collapsed ? "Collapse bottom panel" : "Expand bottom panel",
     );
+    element("togglePanel").setAttribute("aria-expanded", String(collapsed));
   });
   for (const button of document.querySelectorAll(
     ".mobile-switcher [data-mobile-region]",
@@ -2288,7 +2389,8 @@ function installHandlers() {
       event.key === "Escape" &&
       document.body.dataset.inspectorOpen === "true"
     ) {
-      document.body.dataset.inspectorOpen = "false";
+      event.preventDefault();
+      closeInspector();
       return;
     }
     const target = event.target;
@@ -2375,6 +2477,7 @@ function settleBootstrapFailure(message) {
 async function loadArtifact() {
   installHandlers();
   showMobileRegion(mobileRegion);
+  window.addEventListener("resize", syncInspectorAccessibility);
   const parameters = new URLSearchParams(window.location.search);
   accessToken = parameters.get("token") ?? "";
   const explicitInitialArtifact = parameters.get("initial") === "explicit";
@@ -2382,6 +2485,9 @@ async function loadArtifact() {
     settleBootstrapFailure(
       "Missing session token. Reopen AIR Workbench from its CLI URL.",
     );
+    element("refreshResources").disabled = true;
+    element("refreshResources").title =
+      "Refresh is unavailable without a Workbench session token.";
     return;
   }
   if (explicitInitialArtifact) {

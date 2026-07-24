@@ -184,6 +184,43 @@ test("snapshot commits complete lines, retries a torn suffix, and leaks no conte
   );
 });
 
+test("unchanged catalog refresh rebases a private continuation handle", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "refresh-continuation.jsonl");
+  await writeFile(source, fixedRecord("session_meta", 0));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  let catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  let snapshot = await registry.snapshot({
+    sessionId,
+    generation: catalog.generation,
+  });
+
+  for (let index = 1; index <= 2; index += 1) {
+    await appendFile(source, fixedRecord("event_msg", index));
+    const previous = snapshot;
+    catalog = await registry.catalog({ refresh: true });
+    assert.equal(catalog.items[0].id, sessionId);
+    snapshot = await registry.snapshot({
+      sessionId,
+      generation: catalog.generation,
+      priorSnapshotId: previous.snapshot_id,
+    });
+    assert.equal(snapshot.source_changed, false);
+    assert.equal(snapshot.generation, catalog.generation);
+    assert.equal(snapshot.artifact.body.events.length, index + 1);
+    assert.deepEqual(
+      snapshot.artifact.body.events
+        .slice(0, previous.artifact.body.events.length)
+        .map(({ id }) => id),
+      previous.artifact.body.events.map(({ id }) => id),
+    );
+  }
+});
+
 test("continuation detects replacement without joining source epochs", async (t) => {
   const dirs = await fixture(t);
   const source = join(dirs.claude, "main.jsonl");
@@ -209,6 +246,21 @@ test("continuation detects replacement without joining source epochs", async (t)
   });
   assert.equal(changed.source_changed, true);
   assert.equal(changed.artifact, null);
+
+  const replacementCatalog = await registry.catalog({ refresh: true });
+  const replacementSnapshot = await registry.snapshot({
+    sessionId: replacementCatalog.items[0].id,
+    generation: replacementCatalog.generation,
+  });
+  assert.notEqual(
+    replacementSnapshot.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    replacementSnapshot.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
 });
 
 test("continuation detects a same-inode middle rewrite of the accepted prefix", async (t) => {
@@ -248,6 +300,51 @@ test("continuation detects a same-inode middle rewrite of the accepted prefix", 
   });
   assert.equal(changed.source_changed, true);
   assert.equal(changed.artifact, null);
+
+  const second = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.notEqual(
+    second.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    second.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+
+  const secondHandle = await open(source, "r+");
+  try {
+    await secondHandle.write(
+      fixedRecord("response_item", 100),
+      0,
+      128,
+      100 * 128,
+    );
+  } finally {
+    await secondHandle.close();
+  }
+  const changedAgain = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: second.snapshot_id,
+  });
+  assert.equal(changedAgain.source_changed, true);
+  const third = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.notEqual(
+    third.artifact.body.capture.snapshot_cursor.epoch,
+    second.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    third.artifact.body.events.some(({ id }) =>
+      second.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
 });
 
 test("continuation detects a same-inode middle rewrite followed by append", async (t) => {
@@ -287,6 +384,63 @@ test("continuation detects a same-inode middle rewrite followed by append", asyn
   });
   assert.equal(changed.source_changed, true);
   assert.equal(changed.artifact, null);
+
+  const fresh = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.notEqual(
+    fresh.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    fresh.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+});
+
+test("truncate and rewrite starts a distinct snapshot epoch", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "truncate-rewrite.jsonl");
+  await writeFile(
+    source,
+    Buffer.concat([
+      fixedRecord("session_meta", 0),
+      fixedRecord("event_msg", 1),
+    ]),
+  );
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  const first = await registry.snapshot({
+    sessionId,
+    generation: catalog.generation,
+  });
+
+  await writeFile(source, fixedRecord("response_item", 2));
+  const changed = await registry.snapshot({
+    sessionId,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(changed.source_changed, true);
+  const fresh = await registry.snapshot({
+    sessionId,
+    generation: catalog.generation,
+  });
+  assert.notEqual(
+    fresh.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    fresh.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
 });
 
 test("continuation detects a same-inode rewrite inside an oversized record", async (t) => {
@@ -586,7 +740,7 @@ test("oversized newline records advance in bounded chunks and emit one omission"
     roots: [{ path: dirs.codex, provider: "codex" }],
     randomBytes: deterministicRandom(),
   });
-  const catalog = await registry.catalog({ refresh: true });
+  let catalog = await registry.catalog({ refresh: true });
   const first = await registry.snapshot({
     sessionId: catalog.items[0].id,
     generation: catalog.generation,
@@ -597,6 +751,7 @@ test("oversized newline records advance in bounded chunks and emit one omission"
   );
   assert.equal(first.artifact.body.events.length, 0);
 
+  catalog = await registry.catalog({ refresh: true });
   const second = await registry.snapshot({
     sessionId: catalog.items[0].id,
     generation: catalog.generation,
@@ -672,6 +827,89 @@ test("known provider records and declared parents become closed graph evidence",
       .update(Buffer.from(codexLines.split("\n")[0] + "\n"))
       .digest("hex"),
   );
+});
+
+test("duplicate provider identifiers never produce observed provider links", async (t) => {
+  const dirs = await fixture(t);
+  const withinRoot = join(dirs.root, "within");
+  const appendRoot = join(dirs.root, "append");
+  await Promise.all([
+    mkdir(withinRoot, { recursive: true }),
+    mkdir(appendRoot, { recursive: true }),
+  ]);
+  const duplicateId = `duplicate-${SENTINEL}`;
+  const withinSource = join(withinRoot, "within.jsonl");
+  await writeFile(
+    withinSource,
+    [
+      { type: "user", uuid: duplicateId },
+      { type: "assistant", uuid: "child-before", parentUuid: duplicateId },
+      { type: "assistant", uuid: duplicateId },
+      { type: "assistant", uuid: "child-after", parentUuid: duplicateId },
+    ].map((record) => `${JSON.stringify(record)}\n`).join(""),
+  );
+  const withinRegistry = createSessionRegistry({
+    roots: [{ path: withinRoot, provider: "claude" }],
+    randomBytes: deterministicRandom(),
+  });
+  const withinCatalog = await withinRegistry.catalog({ refresh: true });
+  const within = await withinRegistry.snapshot({
+    sessionId: withinCatalog.items[0].id,
+    generation: withinCatalog.generation,
+  });
+  assert.equal(
+    within.artifact.body.event_graph.edges.some(
+      ({ kind, assertion }) =>
+        kind === "provider-link" && assertion === "observed",
+    ),
+    false,
+  );
+
+  const appendSource = join(appendRoot, "append.jsonl");
+  await writeFile(
+    appendSource,
+    [
+      { type: "user", uuid: duplicateId },
+      { type: "assistant", uuid: "first-child", parentUuid: duplicateId },
+    ].map((record) => `${JSON.stringify(record)}\n`).join(""),
+  );
+  const appendRegistry = createSessionRegistry({
+    roots: [{ path: appendRoot, provider: "claude" }],
+    randomBytes: deterministicRandom(),
+  });
+  const appendCatalog = await appendRegistry.catalog({ refresh: true });
+  const first = await appendRegistry.snapshot({
+    sessionId: appendCatalog.items[0].id,
+    generation: appendCatalog.generation,
+  });
+  assert.equal(
+    first.artifact.body.event_graph.edges.some(
+      ({ kind, assertion }) =>
+        kind === "provider-link" && assertion === "observed",
+    ),
+    true,
+  );
+  await appendFile(
+    appendSource,
+    [
+      { type: "assistant", uuid: duplicateId },
+      { type: "assistant", uuid: "second-child", parentUuid: duplicateId },
+    ].map((record) => `${JSON.stringify(record)}\n`).join(""),
+  );
+  const second = await appendRegistry.snapshot({
+    sessionId: appendCatalog.items[0].id,
+    generation: appendCatalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(
+    second.artifact.body.event_graph.edges.some(
+      ({ kind, assertion }) =>
+        kind === "provider-link" && assertion === "observed",
+    ),
+    false,
+  );
+  assert.equal(JSON.stringify({ within, first, second }).includes(SENTINEL), false);
+  assert.equal(JSON.stringify({ within, first, second }).includes(dirs.root), false);
 });
 
 test("catalog count limit is explicit and never discloses omitted locators", async (t) => {

@@ -15,9 +15,9 @@ import {
   decodeBase64,
   decodeAirMarkdown,
   encodeAirMarkdown,
+  hasRecognizedAirMarkdownCarrier,
   inspectAir,
   parseIJson,
-  sourceEndsInOpenAirMarkdownContext,
   validateAirEnvelopeShape,
 } from "../shared/air-codec.mjs";
 import {
@@ -29,6 +29,16 @@ import {
 
 const HEX = /^[a-f0-9]{64}$/u;
 const UTF8_FATAL = new TextDecoder("utf-8", { fatal: true });
+const WORKFLOW_COLLECTION_LIMITS = Object.freeze({
+  diagnostics: 10_000,
+  diagnosticTargets: 1_000,
+  edges: 30_000,
+  entryNodeIds: 30_000,
+  evidenceRefs: 1_000,
+  nodes: 30_000,
+  opaqueRanges: 60_001,
+  sourceMaps: 30_000,
+});
 
 function airError(code, message) {
   return new AirCodecError(code, message);
@@ -298,15 +308,25 @@ function digest(value, label) {
   return value;
 }
 
-function array(value, label) {
+function array(value, label, maximum = Number.MAX_SAFE_INTEGER) {
   if (!Array.isArray(value)) {
     throw airError("AIR_SEMANTIC_INVALID", `${label} must be an array.`);
+  }
+  if (value.length > maximum) {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      `${label} may contain at most ${maximum} items.`,
+    );
   }
   return value;
 }
 
-function uniqueTextList(value, label) {
-  const values = array(value, label);
+function uniqueTextList(
+  value,
+  label,
+  maximum = Number.MAX_SAFE_INTEGER,
+) {
+  const values = array(value, label, maximum);
   if (
     values.some((item) => typeof item !== "string" || item.length === 0) ||
     new Set(values).size !== values.length
@@ -372,8 +392,12 @@ function validateConfidence(value, label) {
   text(value.reason, `${label}.reason`);
 }
 
-function diagnostics(value, label) {
-  for (const [index, item] of array(value, label).entries()) {
+function diagnostics(
+  value,
+  label,
+  maximum = WORKFLOW_COLLECTION_LIMITS.diagnostics,
+) {
+  for (const [index, item] of array(value, label, maximum).entries()) {
     const itemLabel = `${label}[${index}]`;
     record(item, ["severity", "code", "message", "targets"], [], itemLabel);
     if (!["error", "warning", "info"].includes(item.severity)) {
@@ -381,7 +405,11 @@ function diagnostics(value, label) {
     }
     text(item.code, `${itemLabel}.code`);
     text(item.message, `${itemLabel}.message`);
-    for (const target of array(item.targets, `${itemLabel}.targets`)) {
+    for (const target of array(
+      item.targets,
+      `${itemLabel}.targets`,
+      WORKFLOW_COLLECTION_LIMITS.diagnosticTargets,
+    )) {
       if (typeof target === "string" && target.length > 0) continue;
       byteRange(target, `${itemLabel}.target`, Number.MAX_SAFE_INTEGER, [
         "source_id",
@@ -663,7 +691,11 @@ function validateWorkflowBody(artifact) {
   if (source.locator !== undefined) locator(source.locator, "workflow source locator");
 
   const graph = record(body.graph, ["entry_node_ids", "nodes", "edges"], [], "workflow graph");
-  const nodes = array(graph.nodes, "workflow nodes");
+  const nodes = array(
+    graph.nodes,
+    "workflow nodes",
+    WORKFLOW_COLLECTION_LIMITS.nodes,
+  );
   const nodeIds = [];
   for (const [index, node] of nodes.entries()) {
     record(
@@ -683,9 +715,17 @@ function validateWorkflowBody(artifact) {
       throw airError("AIR_SEMANTIC_INVALID", `Workflow node ${index} is invalid.`);
     }
     validateConfidence(node.confidence, `workflow node ${index} confidence`);
-    uniqueTextList(node.evidence_refs, `workflow node ${index} evidence refs`);
+    uniqueTextList(
+      node.evidence_refs,
+      `workflow node ${index} evidence refs`,
+      WORKFLOW_COLLECTION_LIMITS.evidenceRefs,
+    );
   }
-  const edges = array(graph.edges, "workflow edges");
+  const edges = array(
+    graph.edges,
+    "workflow edges",
+    WORKFLOW_COLLECTION_LIMITS.edges,
+  );
   const edgeIds = new Set();
   for (const [index, edge] of edges.entries()) {
     record(
@@ -705,16 +745,28 @@ function validateWorkflowBody(artifact) {
     text(edge.from, `workflow edge ${index} source`);
     text(edge.to, `workflow edge ${index} target`);
     validateConfidence(edge.confidence, `workflow edge ${index} confidence`);
-    uniqueTextList(edge.evidence_refs, `workflow edge ${index} evidence refs`);
+    uniqueTextList(
+      edge.evidence_refs,
+      `workflow edge ${index} evidence refs`,
+      WORKFLOW_COLLECTION_LIMITS.evidenceRefs,
+    );
   }
   acyclicGraph(
     nodeIds,
     edges,
-    uniqueTextList(graph.entry_node_ids, "workflow entry IDs"),
+    uniqueTextList(
+      graph.entry_node_ids,
+      "workflow entry IDs",
+      WORKFLOW_COLLECTION_LIMITS.entryNodeIds,
+    ),
     "workflow graph",
   );
   const nodeIdSet = new Set(nodeIds);
-  for (const [index, map] of array(body.source_maps, "workflow source maps").entries()) {
+  for (const [index, map] of array(
+    body.source_maps,
+    "workflow source maps",
+    WORKFLOW_COLLECTION_LIMITS.sourceMaps,
+  ).entries()) {
     record(
       map,
       ["node_id", "source_id", "span", "heading", "title", "body"],
@@ -728,7 +780,11 @@ function validateWorkflowBody(artifact) {
       byteRange(map[field], `workflow source map ${index}.${field}`, sourceBytes.length);
     }
   }
-  for (const [index, range] of array(body.opaque_ranges, "workflow opaque ranges").entries()) {
+  for (const [index, range] of array(
+    body.opaque_ranges,
+    "workflow opaque ranges",
+    WORKFLOW_COLLECTION_LIMITS.opaqueRanges,
+  ).entries()) {
     record(range, ["start_byte", "end_byte", "sha256", "reason"], [], `opaque range ${index}`);
     byteRange(range, `opaque range ${index}`, sourceBytes.length, [
       "sha256",
@@ -743,7 +799,11 @@ function validateWorkflowBody(artifact) {
       throw airError("AIR_SEMANTIC_INVALID", `Opaque range ${index} digest is invalid.`);
     }
   }
-  diagnostics(body.diagnostics, "workflow diagnostics");
+  diagnostics(
+    body.diagnostics,
+    "workflow diagnostics",
+    WORKFLOW_COLLECTION_LIMITS.diagnostics,
+  );
   validateWorkflowSourceTruth(body, sourceBytes);
 }
 
@@ -1602,56 +1662,18 @@ export function decodeAirMarkdownArtifact(input) {
   };
 }
 
-function isRecognizedTerminalAirCarrier(input) {
-  let text;
-  try {
-    text = UTF8_FATAL.decode(input);
-  } catch {
-    return false;
-  }
-  const terminal = text.match(
-    /(?:^|\r?\n)<!-- air:v1 ([A-Za-z0-9_-]+) -->(?:\r\n|\n)$/u,
-  );
-  if (!terminal) return false;
-  const leadingEolLength = terminal[0].startsWith("\r\n")
-    ? 2
-    : terminal[0].startsWith("\n")
-      ? 1
-      : 0;
-  const sourcePrefix = text.slice(0, terminal.index + leadingEolLength);
-  if (sourceEndsInOpenAirMarkdownContext(sourcePrefix)) return false;
-  try {
-    const manifest = parseIJson(
-      decodeBase64(terminal[1], {
-        url: true,
-        code: "AIR_CARRIER_INVALID",
-      }),
-    );
-    return manifest?.carrier === "air.md" && manifest?.carrier_version === "1";
-  } catch {
-    return false;
-  }
-}
-
 export function recognizeAirSkillCarrier(input) {
   const bytes = Buffer.from(input);
   let decoded;
   try {
     decoded = decodeAirMarkdownArtifact(bytes);
   } catch (error) {
-    if (isRecognizedTerminalAirCarrier(bytes)) throw error;
+    if (hasRecognizedAirMarkdownCarrier(bytes)) {
+      throw error;
+    }
     return null;
   }
-
-  try {
-    decodeAirMarkdownArtifact(decoded.logicalSource);
-  } catch {
-    return decoded;
-  }
-  throw airError(
-    "AIR_CARRIER_DUPLICATE",
-    "Activated Skill Markdown must contain exactly one valid terminal AIR carrier.",
-  );
+  return decoded;
 }
 
 export function importSkillBytesAsAir(

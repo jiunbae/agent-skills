@@ -282,6 +282,38 @@ test("mixed-newline carriers round-trip through CLI and integrity failures reach
         item.code === "AIR_CATALOG_IMPORT_AIR_INTEGRITY_MISMATCH",
     ),
   );
+
+  const nonterminalRoot = join(directory, "nonterminal-catalog");
+  const nonterminalPath = join(nonterminalRoot, "broken", "SKILL.md");
+  await put(
+    nonterminalPath,
+    Buffer.concat([carrier, Buffer.from("ordinary tail\n")]),
+  );
+  await assert.rejects(
+    run(process.execPath, [
+      AIR,
+      "import",
+      nonterminalPath,
+      "--out",
+      join(directory, "nonterminal.air.json"),
+    ], { cwd: ROOT }),
+    (error) => error.stderr.includes('"code":"AIR_CARRIER_INVALID"'),
+  );
+  const nonterminalCatalog = createSkillCatalog({
+    roots: [{
+      path: nonterminalRoot,
+      label: "nonterminal-carrier",
+      kind: "explicit",
+    }],
+  });
+  const nonterminalSnapshot = await nonterminalCatalog.initialize();
+  assert.equal(nonterminalSnapshot.item_count, 1);
+  assert.ok(
+    nonterminalSnapshot.items[0].diagnostics.some(
+      (item) =>
+        item.code === "AIR_CATALOG_IMPORT_AIR_CARRIER_INVALID",
+    ),
+  );
 });
 
 test("AIR read-only routes require exact token, expose bounded catalog/schema data, and return validated artifacts", async (t) => {
@@ -444,6 +476,56 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
   });
   assert.equal(integrityHead.status, 422);
   assert.equal(integrityHead.body.byteLength, 0);
+});
+
+test("AIR Skill artifact GET and HEAD preserve only allowlisted safe codes", async (t) => {
+  let failureCode = "AIR_SEMANTIC_INVALID";
+  const opaqueId = `skill_${"A".repeat(22)}`;
+  const catalog = {
+    getSnapshot() {
+      return { generation: 1 };
+    },
+    async importAirArtifact() {
+      const error = new Error("PRIVATE /absolute/path and source bytes");
+      error.code = failureCode;
+      throw error;
+    },
+  };
+  const studio = createStudioServer({
+    artifact: importSkillBytes(SKILL, { sourcePath: "bootstrap/SKILL.md" }),
+    assetsDir: ASSETS,
+    schemasDir: SCHEMAS,
+    catalog,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  const path =
+    `/air/v1/skills/${opaqueId}/artifact?token=` +
+    encodeURIComponent(studio.token);
+
+  for (const code of [
+    "AIR_INTEGRITY_MISMATCH",
+    "AIR_SEMANTIC_INVALID",
+    "AIR_CARRIER_INVALID",
+    "AIR_CARRIER_DUPLICATE",
+  ]) {
+    failureCode = code;
+    const response = await http(address, path);
+    assert.equal(response.status, 422, code);
+    const body = JSON.parse(response.body);
+    assert.equal(body.code, code);
+    assert.equal(body.status, 422);
+    assert.equal(response.body.includes("PRIVATE"), false);
+    const head = await http(address, path, { method: "HEAD" });
+    assert.equal(head.status, 422, `${code} HEAD`);
+    assert.equal(head.body.byteLength, 0);
+  }
+
+  failureCode = "AIR_NOT_ALLOWLISTED";
+  const unexpected = await http(address, path);
+  assert.equal(unexpected.status, 500);
+  assert.equal(JSON.parse(unexpected.body).code, "AIR_INTERNAL_ERROR");
+  assert.equal(unexpected.body.includes("PRIVATE"), false);
 });
 
 test("AIR Workbench starts with zero inputs, default discovery, and an explicit plaintext-LAN warning", async (t) => {

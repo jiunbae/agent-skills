@@ -789,7 +789,7 @@ fieldset {
 }
 
 .bottom-panel[data-collapsed="true"] .panel-content {
-  display: none;
+  display: none !important;
 }
 
 .panel-tabs {
@@ -1092,7 +1092,7 @@ fieldset {
   }
 
   .bottom-panel[data-collapsed="true"] .panel-content {
-    display: block;
+    display: none !important;
   }
 
   .outline-companion {

@@ -386,6 +386,8 @@ async function fixtures({ bounded = false } = {}) {
     diagnostics: [],
   };
   let snapshotCount = 0;
+  let expireNextPrior = false;
+  const snapshotRequests = [];
   const sessionRegistry = {
     capabilities: () => ({
       adapters: [{ id: "codex-rollout-jsonl", version: "1.0.0" }],
@@ -394,15 +396,40 @@ async function fixtures({ bounded = false } = {}) {
       authority: "read-only",
       limits: {},
     }),
-    catalog: async () => sessionCatalog,
-    snapshot: async (id) => {
+    catalog: async ({ refresh = false } = {}) => {
+      if (refresh) {
+        sessionCatalog = {
+          ...sessionCatalog,
+          generation: sessionCatalog.generation + 1,
+        };
+      }
+      return sessionCatalog;
+    },
+    snapshot: async ({
+      sessionId,
+      generation,
+      priorSnapshotId,
+    }) => {
+      snapshotRequests.push({ sessionId, generation, priorSnapshotId });
+      if (generation !== sessionCatalog.generation) {
+        throw Object.assign(new Error("stale generation"), {
+          code: "AIR_SESSION_STALE_GENERATION",
+        });
+      }
+      if (expireNextPrior && priorSnapshotId) {
+        expireNextPrior = false;
+        throw Object.assign(new Error("stale snapshot"), {
+          code: "AIR_SESSION_STALE_SNAPSHOT",
+        });
+      }
       snapshotCount += 1;
       return {
-        snapshot_id: SNAPSHOT,
-        session_id: id,
-        generation: 1,
+        snapshot_id:
+          `snapshot_${String(snapshotCount).padStart(22, "0")}`,
+        session_id: sessionId,
+        generation,
         source_changed: false,
-        artifact: sessionArtifact(snapshotCount === 1 ? 3 : 4),
+        artifact: sessionArtifact(snapshotCount + 2),
       };
     },
   };
@@ -426,12 +453,16 @@ async function fixtures({ bounded = false } = {}) {
         items,
       };
     },
+    expireNextSessionPrior() {
+      expireNextPrior = true;
+    },
+    snapshotRequests,
   };
   return { catalog, first, second, sessionRegistry, controls };
 }
 
 async function runPass(browser, executablePath, pass) {
-  const { catalog, first, sessionRegistry } = await fixtures();
+  const { catalog, first, sessionRegistry, controls } = await fixtures();
   const studio = createStudioServer({
     artifact: migrateLegacyToAir(first),
     assetsDir: ASSETS_DIR,
@@ -762,6 +793,25 @@ async function runPass(browser, executablePath, pass) {
       ).then((value) => value.includes("selected")),
       true,
     );
+    controls.expireNextSessionPrior();
+    await page.locator("#refreshResources").click();
+    await page.waitForFunction(
+      () => document.querySelectorAll(".evidence-row").length === 5,
+    );
+    assert.equal(
+      await page.locator('.react-flow__node[data-id="event-3"]').getAttribute(
+        "class",
+      ).then((value) => value.includes("selected")),
+      true,
+    );
+    const staleRetry = controls.snapshotRequests.slice(-2);
+    assert.equal(typeof staleRetry[0].priorSnapshotId, "string");
+    assert.equal(staleRetry[1].priorSnapshotId, undefined);
+    assert.equal(staleRetry[0].generation, staleRetry[1].generation);
+    assert.deepEqual(
+      errors.splice(0),
+      ["console: Failed to load resource: the server responded with a status of 409 (Conflict)"],
+    );
 
     await page.locator("#resourceSearch").focus();
     const f6Targets = ["graphCanvas", "inspectorRegion", "bottomPanel", "resourcesRegion"];
@@ -783,6 +833,58 @@ async function runPass(browser, executablePath, pass) {
       { width: 390, height: 844 },
     ]) {
       await page.setViewportSize(viewport);
+      if (viewport.width === 1024) {
+        await page.locator("#graphCanvas").focus();
+        if (
+          await page.evaluate(
+            () => document.body.dataset.inspectorOpen === "true",
+          )
+        ) {
+          await page.keyboard.press("Escape");
+        }
+        await page.waitForFunction(
+          () => document.querySelector("#inspectorRegion")
+            ?.getAttribute("aria-hidden") === "true",
+        );
+        assert.equal(
+          await page.locator("#inspectorRegion").getAttribute("inert"),
+          "",
+        );
+        await page.locator("#nodeTitle").evaluate((target) => target.focus());
+        assert.notEqual(
+          await page.evaluate(() => document.activeElement?.id),
+          "nodeTitle",
+        );
+        const closedTree = await accessibilitySession.send(
+          "Accessibility.getFullAXTree",
+        );
+        assert.equal(
+          closedTree.nodes.some(
+            (node) =>
+              node.role?.value === "complementary" &&
+              node.name?.value === "Inspector",
+          ),
+          false,
+        );
+        await page.locator("#graphCanvas").focus();
+        await page.keyboard.press("F6");
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.id),
+          "inspectorRegion",
+        );
+        assert.equal(
+          await page.locator("#inspectorRegion").getAttribute("aria-hidden"),
+          null,
+        );
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(
+          () => document.activeElement?.id === "graphCanvas",
+        );
+        assert.equal(
+          await page.locator("#inspectorRegion").getAttribute("aria-hidden"),
+          "true",
+        );
+      }
       assert.equal(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -861,6 +963,27 @@ async function runPass(browser, executablePath, pass) {
             expected,
           );
         }
+        await page.locator(
+          '.mobile-switcher [data-mobile-region="panel"]',
+        ).click();
+        const toggle = page.locator("#togglePanel");
+        await toggle.focus();
+        await toggle.click();
+        assert.equal(
+          await page.locator("#bottomPanel").getAttribute("data-collapsed"),
+          "true",
+        );
+        assert.equal(await toggle.getAttribute("aria-label"), "Expand bottom panel");
+        assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+        assert.equal(await page.locator("#problemsPanel").isVisible(), false);
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.id),
+          "togglePanel",
+        );
+        await toggle.click();
+        assert.equal(await toggle.getAttribute("aria-label"), "Collapse bottom panel");
+        assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+        assert.equal(await page.locator("#problemsPanel").isVisible(), true);
         await page.locator(
           '.mobile-switcher [data-mobile-region="graph"]',
         ).click();
@@ -982,6 +1105,49 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       await corruptStudio.close();
     }
 
+    const semanticCatalog = {
+      ...catalog,
+      importAirArtifact: async () => {
+        throw Object.assign(new Error("private semantic canary"), {
+          code: "AIR_SEMANTIC_INVALID",
+        });
+      },
+    };
+    const semanticStudio = createStudioServer({
+      artifact: first,
+      assetsDir: ASSETS_DIR,
+      schemasDir: SCHEMAS_DIR,
+      catalog: semanticCatalog,
+      sessionRegistry,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const semanticAddress = await semanticStudio.listen();
+    const semanticPage = await context.newPage();
+    try {
+      await semanticPage.goto(
+        `http://127.0.0.1:${semanticAddress.port}/?token=${
+          encodeURIComponent(semanticStudio.token)
+        }`,
+        { waitUntil: "domcontentloaded" },
+      );
+      await semanticPage.waitForFunction(
+        () => document.querySelector("#resourceStatus")?.textContent
+          ?.includes("AIR_SEMANTIC_INVALID"),
+      );
+      assert.match(
+        (await semanticPage.locator("#resourceStatus").textContent()) ?? "",
+        /\[AIR_SEMANTIC_INVALID\] Request failed with HTTP 422\./u,
+      );
+      assert.doesNotMatch(
+        (await semanticPage.locator("body").innerText()) ?? "",
+        /private semantic canary/u,
+      );
+    } finally {
+      await semanticPage.close();
+      await semanticStudio.close();
+    }
+
     const capabilitiesPage = await context.newPage();
     await capabilitiesPage.route(capabilitiesPattern, failDiscovery);
     await capabilitiesPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
@@ -1076,7 +1242,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     );
     assert.equal(
       await missingTokenPage.locator("#refreshResources").isDisabled(),
-      false,
+      true,
     );
     assert.match(
       (await missingTokenPage.locator("#resourceStatus").textContent()) ?? "",
