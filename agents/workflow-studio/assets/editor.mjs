@@ -62,6 +62,8 @@ let catalogStatusMessage = "";
 let pendingResource = null;
 let pendingSwitchReturnFocus = null;
 let pendingSwitchReturnResourceKey = null;
+let pendingStaleResource = null;
+let pendingStaleReturnFocus = null;
 let loadRequestEpoch = 0;
 let mobileRegion = "graph";
 let commandLineResource = null;
@@ -74,6 +76,14 @@ const history = {
 
 function resourceKey(resource) {
   return `${resource.type}:${resource.id}`;
+}
+
+function sessionLocalAlias(id) {
+  const opaqueId = String(id);
+  const localCode = opaqueId.startsWith("session_")
+    ? opaqueId.slice("session_".length)
+    : opaqueId;
+  return `S-${localCode}`;
 }
 
 function documentSnapshot() {
@@ -326,6 +336,15 @@ function clearWorkspaceSelection() {
   render();
 }
 
+function setDownloadLabel(id, longLabel, shortLabel) {
+  const button = element(id);
+  button.setAttribute("aria-label", longLabel);
+  const long = button.querySelector(".download-long");
+  const short = button.querySelector(".download-short");
+  if (long) long.textContent = longLabel;
+  if (short) short.textContent = shortLabel;
+}
+
 function renderHeader() {
   element("artifactKind").textContent = state.kind.toUpperCase();
   element("sourcePath").textContent = state.sourcePath;
@@ -346,12 +365,16 @@ function renderHeader() {
   }
   element("downloadIr").disabled = !downloadCache.allowed;
   element("downloadMarkdown").disabled = !downloadCache.allowed;
-  element("downloadIr").textContent = state.airArtifact
-    ? "Download AIR"
-    : "Download Workflow IR";
-  element("downloadMarkdown").textContent = state.airArtifact
-    ? "Download AIR Markdown"
-    : "Download Skill Markdown";
+  setDownloadLabel(
+    "downloadIr",
+    state.airArtifact ? "Download AIR JSON" : "Download Workflow IR",
+    state.airArtifact ? "AIR JSON" : "Workflow IR",
+  );
+  setDownloadLabel(
+    "downloadMarkdown",
+    state.airArtifact ? "Download AIR Markdown" : "Download Skill Markdown",
+    state.airArtifact ? "AIR Markdown" : "Skill Markdown",
+  );
   const reason =
     state.kind === "workflow"
       ? downloadCache.allowed
@@ -1016,7 +1039,9 @@ function visibleResources() {
   return resourceItems.filter((resource) => {
     const searchable = resource.type === "skill"
       ? `${resource.item.name ?? ""} ${resource.item.description ?? ""}`
-      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""}`;
+      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""} ${
+        resource.localAlias ?? ""
+      }`;
     return searchable.toLocaleLowerCase().includes(query);
   });
 }
@@ -1050,7 +1075,15 @@ function resourceButton(resource) {
       );
     }
     const open = documents.get(resourceKey(resource));
-    if (open?.stale) badges.append(create("span", "resource-badge", "stale"));
+    if (open?.stale) {
+      badges.append(
+        create(
+          "span",
+          "resource-badge",
+          open.removed ? "removed" : "changed",
+        ),
+      );
+    }
     if (badges.childNodes.length) button.append(badges);
   } else {
     const item = resource.item;
@@ -1058,7 +1091,9 @@ function resourceButton(resource) {
       create(
         "strong",
         "",
-        `${item.provider === "claude" ? "Claude" : "Codex"} ${item.stream_kind}`,
+        `${item.provider === "claude" ? "Claude" : "Codex"} ${
+          item.stream_kind
+        } · ${resource.localAlias}`,
       ),
       create(
         "span",
@@ -1330,6 +1365,9 @@ function newDocument(resource, payload, metadata = {}) {
     previousValidationSignature: validationSignature(nextState),
     downloadCache: { key: "", allowed: false },
     stale: false,
+    removed: false,
+    loadedContentHash:
+      resource.type === "skill" ? resource.item.content_hash ?? null : null,
     ...metadata,
   };
   entry.baseline = {
@@ -1355,12 +1393,15 @@ function activateDocument(key, entry, message) {
   renderResources();
 }
 
-async function loadResource(resource, { refreshSession = false } = {}) {
+async function loadResource(
+  resource,
+  { refreshSession = false, reloadSkill = false } = {},
+) {
   const epoch = ++loadRequestEpoch;
   const key = resourceKey(resource);
   if (refreshSession && key === activeResourceKey) persistActiveDocument();
   const cached = documents.get(key);
-  if (cached && !refreshSession) {
+  if (cached && !refreshSession && !reloadSkill) {
     activateDocument(key, cached, `Restored ${resource.type} from this Workbench.`);
     return;
   }
@@ -1492,21 +1533,80 @@ function completeResourceSwitch(choice) {
       render();
     }
   }
-  loadResource(target);
+  requestResourceSwitch(target, { skipDirty: true });
 }
 
-function requestResourceSwitch(resource) {
-  const key = resourceKey(resource);
-  if (key === activeResourceKey) {
-    ++loadRequestEpoch;
+function openStaleSkillDecision(resource) {
+  pendingStaleResource = resource;
+  pendingStaleReturnFocus = document.activeElement;
+  const entry = documents.get(resourceKey(resource));
+  const removed = Boolean(entry?.removed);
+  element("staleSkillMessage").textContent = removed
+    ? "This Skill is no longer in the current catalog. Keep the open version or cancel."
+    : "A newer catalog version is available. Reloading replaces the open version only after the latest source loads successfully.";
+  element("reloadStaleSkill").disabled = removed;
+  element("staleSkillDialog").showModal();
+}
+
+function completeStaleSkillDecision(choice) {
+  const requested = pendingStaleResource;
+  const returnFocus = pendingStaleReturnFocus;
+  pendingStaleResource = null;
+  pendingStaleReturnFocus = null;
+  element("staleSkillDialog").close();
+  if (!requested) return;
+  const key = resourceKey(requested);
+  const entry = documents.get(key);
+  if (choice === "cancel") {
+    setStatus("Skill source decision cancelled; the open document was preserved.");
+    requestAnimationFrame(() => returnFocus?.focus?.({ preventScroll: true }));
     return;
   }
-  if (state && (state.dirty || state.planDirty || state.draftDirty)) {
+  if (choice === "keep") {
+    if (key !== activeResourceKey && entry) {
+      activateDocument(key, entry, "Kept the currently open Skill version.");
+    } else {
+      setStatus("Kept the currently open Skill version.");
+      renderResources();
+    }
+    return;
+  }
+  if (choice !== "reload") return;
+  if (entry?.removed) {
+    setStatus("Reload unavailable because the Skill is no longer in the catalog.");
+    renderResources();
+    return;
+  }
+  const latest =
+    resourceItems.find((resource) => resourceKey(resource) === key) ?? requested;
+  loadResource(latest, { reloadSkill: true });
+}
+
+function requestResourceSwitch(resource, { skipDirty = false } = {}) {
+  const key = resourceKey(resource);
+  if (key === activeResourceKey) {
+    const active = documents.get(key);
+    if (resource.type === "skill" && active?.stale) {
+      openStaleSkillDecision(resource);
+    } else {
+      ++loadRequestEpoch;
+    }
+    return;
+  }
+  if (
+    !skipDirty &&
+    state &&
+    (state.dirty || state.planDirty || state.draftDirty)
+  ) {
     pendingResource = resource;
     pendingSwitchReturnFocus = document.activeElement;
     pendingSwitchReturnResourceKey =
       document.activeElement?.dataset?.resourceKey ?? key;
     element("dirtySwitchDialog").showModal();
+    return;
+  }
+  if (resource.type === "skill" && documents.get(key)?.stale) {
+    openStaleSkillDecision(resource);
     return;
   }
   loadResource(resource);
@@ -1525,6 +1625,7 @@ function normalizeSessionResources(catalog) {
     id: item.id,
     item,
     group: "sessions",
+    localAlias: sessionLocalAlias(item.id),
   }));
 }
 
@@ -1535,20 +1636,39 @@ function markChangedDocuments(nextResources) {
   for (const [key, entry] of documents) {
     const next = nextByKey.get(key);
     if (!next) {
-      entry.stale = true;
+      if (entry.resource.type === "skill") {
+        entry.stale = true;
+        entry.removed = true;
+      }
       continue;
     }
-    if (
-      entry.resource.type === "skill" &&
-      entry.resource.item.content_hash !== next.item.content_hash
-    ) {
-      entry.stale = true;
+    if (entry.resource.type === "skill") {
+      entry.stale =
+        entry.loadedContentHash !== null &&
+        entry.loadedContentHash !== next.item.content_hash;
+      entry.removed = false;
     }
     entry.resource = next;
   }
 }
 
+function retainOpenSkills(nextResources) {
+  const present = new Set(nextResources.map(resourceKey));
+  const retained = [];
+  for (const [key, entry] of documents) {
+    if (
+      entry.resource.type === "skill" &&
+      entry.removed &&
+      !present.has(key)
+    ) {
+      retained.push(entry.resource);
+    }
+  }
+  return [...nextResources, ...retained];
+}
+
 async function loadCatalogs({ refresh = false } = {}) {
+  if (refresh) ++loadRequestEpoch;
   element("refreshResources").disabled = true;
   element("resourceStatus").textContent =
     refresh ? "Refreshing local resources…" : "Discovering local resources…";
@@ -1583,10 +1703,11 @@ async function loadCatalogs({ refresh = false } = {}) {
       ...normalizeSkillResources(skills),
       ...normalizeSessionResources(sessions),
     ];
-    const nextResources = commandLineResource
+    const catalogResources = commandLineResource
       ? [commandLineResource, ...discoveredResources]
       : discoveredResources;
-    markChangedDocuments(nextResources);
+    markChangedDocuments(catalogResources);
+    const nextResources = retainOpenSkills(catalogResources);
     resourceItems = nextResources;
     const unavailable = [
       ...(skillsResult.status === "rejected" ? ["Skills"] : []),
@@ -1641,7 +1762,9 @@ function renderQuickOpen() {
   const matches = resourceItems.filter((resource) => {
     const label = resource.type === "skill"
       ? `${resource.item.name ?? ""} ${resource.item.description ?? ""}`
-      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""}`;
+      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""} ${
+        resource.localAlias ?? ""
+      }`;
     return !query || label.toLocaleLowerCase().includes(query);
   });
   replaceResourceRows(
@@ -1659,11 +1782,12 @@ function renderQuickOpen() {
 function showMobileRegion(region) {
   mobileRegion = region;
   document.body.dataset.mobileRegion = region;
-  for (const button of document.querySelectorAll("[data-mobile-region]")) {
-    button.setAttribute(
-      "aria-selected",
-      String(button.dataset.mobileRegion === region),
-    );
+  for (const button of document.querySelectorAll(
+    ".mobile-switcher [data-mobile-region]",
+  )) {
+    const selected = button.dataset.mobileRegion === region;
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
   }
 }
 
@@ -1674,9 +1798,7 @@ function focusRegion(region) {
     document.body.dataset.inspectorOpen = "true";
   }
   if (region === "panel") showMobileRegion("panel");
-  if (region === "resources") {
-    document.body.dataset.mobileRegion = "resources";
-  }
+  if (region === "resources") showMobileRegion("resources");
   const target =
     region === "canvas"
       ? element("graphCanvas")
@@ -1727,6 +1849,16 @@ function installHandlers() {
     completeResourceSwitch("discard"));
   element("cancelSwitch").addEventListener("click", () =>
     completeResourceSwitch("cancel"));
+  element("staleSkillDialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    completeStaleSkillDecision("cancel");
+  });
+  element("keepStaleSkill").addEventListener("click", () =>
+    completeStaleSkillDecision("keep"));
+  element("reloadStaleSkill").addEventListener("click", () =>
+    completeStaleSkillDecision("reload"));
+  element("cancelStaleSkill").addEventListener("click", () =>
+    completeStaleSkillDecision("cancel"));
 
   for (const button of document.querySelectorAll(".view-tabs [data-view]")) {
     button.addEventListener("click", () => {
@@ -1802,14 +1934,38 @@ function installHandlers() {
       collapsed ? "Collapse bottom panel" : "Expand bottom panel",
     );
   });
-  for (const button of document.querySelectorAll("[data-mobile-region]")) {
+  for (const button of document.querySelectorAll(
+    ".mobile-switcher [data-mobile-region]",
+  )) {
     button.addEventListener("click", () => {
       showMobileRegion(button.dataset.mobileRegion);
-      focusRegion(
-        button.dataset.mobileRegion === "graph"
-          ? "canvas"
-          : button.dataset.mobileRegion,
-      );
+    });
+    button.addEventListener("keydown", (event) => {
+      if (
+        !["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"]
+          .includes(event.key)
+      ) {
+        return;
+      }
+      const tabs = [
+        ...document.querySelectorAll(
+          ".mobile-switcher [data-mobile-region]",
+        ),
+      ];
+      const index = tabs.indexOf(button);
+      let target = null;
+      if (["ArrowRight", "ArrowDown"].includes(event.key)) {
+        target = tabs[(index + 1) % tabs.length];
+      }
+      if (["ArrowLeft", "ArrowUp"].includes(event.key)) {
+        target = tabs[(index - 1 + tabs.length) % tabs.length];
+      }
+      if (event.key === "Home") target = tabs[0];
+      if (event.key === "End") target = tabs[tabs.length - 1];
+      if (!target) return;
+      event.preventDefault();
+      showMobileRegion(target.dataset.mobileRegion);
+      target.focus({ preventScroll: true });
     });
   }
 
@@ -2207,7 +2363,7 @@ function settleBootstrapFailure(message) {
 
 async function loadArtifact() {
   installHandlers();
-  document.body.dataset.mobileRegion = mobileRegion;
+  showMobileRegion(mobileRegion);
   const parameters = new URLSearchParams(window.location.search);
   accessToken = parameters.get("token") ?? "";
   const explicitInitialArtifact = parameters.get("initial") === "explicit";
@@ -2217,14 +2373,30 @@ async function loadArtifact() {
     );
     return;
   }
+  if (explicitInitialArtifact) {
+    try {
+      await loadLegacyArtifact({ preserveResources: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      settleBootstrapFailure(`Could not load AIR Workbench: ${message}`);
+      return;
+    }
+    try {
+      await loadCatalogs();
+    } catch {
+      element("resourceStatus").textContent = catalogStatusMessage;
+      setStatus(
+        `${catalogStatusMessage} The command-line artifact remains open for editing.`,
+      );
+    }
+    return;
+  }
   try {
     const discovered = await loadCatalogs();
-    if (explicitInitialArtifact) {
-      await loadLegacyArtifact({ preserveResources: true });
-    } else if (discovered.length) {
+    if (discovered.length) {
       await loadResource(discovered[0]);
     } else {
-      await loadLegacyArtifact();
+      await loadLegacyArtifact({ preserveResources: true });
       if (catalogStatusMessage.startsWith("Discovery unavailable:")) {
         element("resourceStatus").textContent = catalogStatusMessage;
         setStatus(
@@ -2234,7 +2406,7 @@ async function loadArtifact() {
     }
   } catch (error) {
     try {
-      await loadLegacyArtifact();
+      await loadLegacyArtifact({ preserveResources: true });
       element("resourceStatus").textContent = catalogStatusMessage;
       setStatus(
         `${catalogStatusMessage} The command-line artifact is open for editing.`,

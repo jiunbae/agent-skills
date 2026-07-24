@@ -39,7 +39,14 @@ export async function assertConfiguredBrowserModule(
   );
 }
 
-export function assertBrowserTapSummary(output, name, expectedTests) {
+export function fixedNodeTestEnvironment(environment = process.env) {
+  const fixed = { ...environment };
+  delete fixed.NODE_OPTIONS;
+  delete fixed.NODE_TEST_CONTEXT;
+  return fixed;
+}
+
+export function assertTapSummary(output, name, expectedTests) {
   assert(
     typeof output === "string",
     `${name} did not produce a TAP result stream.`,
@@ -90,4 +97,8 @@ export function assertBrowserTapSummary(output, name, expectedTests) {
     );
   }
   return result;
+}
+
+export function assertBrowserTapSummary(output, name, expectedTests) {
+  return assertTapSummary(output, name, expectedTests);
 }

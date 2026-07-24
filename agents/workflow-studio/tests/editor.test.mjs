@@ -1657,10 +1657,12 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   assert.match(editor, /\/air\/v1\/skills/);
   assert.match(editor, /\/air\/v1\/sessions/);
   assert.match(editor, /dirtySwitchDialog/);
+  assert.match(editor, /staleSkillDialog/);
+  assert.match(editor, /sessionLocalAlias/);
   assert.match(editor, /event\.key === "F6"/);
   assert.match(
     editor,
-    /if \(key === activeResourceKey\) \{\s*\+\+loadRequestEpoch;\s*return;/u,
+    /if \(key === activeResourceKey\) \{[\s\S]*?openStaleSkillDecision\(resource\)/u,
   );
   assert.doesNotMatch(editor, /fetch\(\s*["']https?:/);
   assert.doesNotMatch(

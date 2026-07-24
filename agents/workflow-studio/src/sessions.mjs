@@ -1118,6 +1118,61 @@ export function createSessionRegistry({
         throw sessionError("AIR_SESSION_LIMIT");
       }
       const snapshotId = opaqueToken(randomBytes, "snapshot");
+
+      // Artifact construction and handle allocation can be expensive enough for
+      // either the source or catalog generation to change after the earlier
+      // checks. Join an already-started refresh, then establish one final
+      // bounded publication cut over the complete accepted prefix. No await is
+      // permitted after the final generation check and before success is
+      // retained/returned.
+      if (refreshPromise !== null) await refreshPromise;
+      if (generation !== requestedGeneration) {
+        throw sessionError("AIR_SESSION_STALE_GENERATION");
+      }
+      const publicationInfo = await handle.stat({ bigint: true });
+      if (
+        identity(publicationInfo) !== sourceIdentity ||
+        Number(publicationInfo.size) < nextOffset
+      ) {
+        return sourceChanged(sessionId, requestedGeneration);
+      }
+      const publicationFingerprint = await boundedFingerprint(
+        handle,
+        publicationInfo,
+        boundedLimits,
+        secret,
+        nextOffset,
+      );
+      const publicationContinuity = await boundedContinuityFingerprint(
+        handle,
+        publicationInfo,
+        boundedLimits,
+        secret,
+        nextOffset,
+        {
+          validatedPrefix: prior?.offset ?? 0,
+          suffixStart: offset,
+        },
+      );
+      if (
+        publicationContinuity === null ||
+        publicationContinuity.continuity !==
+          publishedContinuity.continuity ||
+        (
+          prior &&
+          publicationContinuity.validated !== prior.continuity
+        ) ||
+        publicationContinuity.suffix !== privateDigest(
+          secret,
+          "refresh\0",
+          acceptedChunk,
+        )
+      ) {
+        return sourceChanged(sessionId, requestedGeneration);
+      }
+      if (generation !== requestedGeneration) {
+        throw sessionError("AIR_SESSION_STALE_GENERATION");
+      }
       retainHandle({
         id: snapshotId,
         sessionId,
@@ -1126,9 +1181,9 @@ export function createSessionRegistry({
         sourceIdentity,
         epoch,
         offset: nextOffset,
-        head: publishedFingerprint.head,
-        checkpoint: publishedFingerprint.checkpoint,
-        continuity: publishedContinuity.continuity,
+        head: publicationFingerprint.head,
+        checkpoint: publicationFingerprint.checkpoint,
+        continuity: publicationContinuity.continuity,
         events: clonePublic(events),
         providerIds: [...providerIds],
         providerLinks,

@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import {
   assertBrowserTapSummary,
   assertConfiguredBrowserModule,
+  assertTapSummary,
+  fixedNodeTestEnvironment,
 } from "../scripts/release-gate.mjs";
 
 const COMPONENT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -120,4 +122,51 @@ test("release help and README disclose the untracked worktree boundary", () => {
     );
     assert.doesNotMatch(text, /clean tracked worktree/);
   }
+});
+
+test("omitting the schema/runtime differential fails fixed component TAP accounting", () => {
+  const fixture = resolve(
+    COMPONENT,
+    "tests/fixtures/release-selection.fixture.mjs",
+  );
+  const selectedEnvironment = {
+    ...process.env,
+    NODE_OPTIONS:
+      "--test-skip-pattern=published AIR schemas and runtime have an explicit bounded differential",
+  };
+  delete selectedEnvironment.NODE_TEST_CONTEXT;
+  const omitted = execFileSync(
+    process.execPath,
+    ["--test", "--test-reporter=tap", fixture],
+    {
+      cwd: COMPONENT,
+      encoding: "utf8",
+      env: selectedEnvironment,
+    },
+  );
+  assert.throws(
+    () => assertTapSummary(omitted, "component selection fixture", 2),
+    /required inventory|required number|did not pass|zero are allowed/,
+  );
+
+  const complete = execFileSync(
+    process.execPath,
+    ["--test", "--test-reporter=tap", fixture],
+    {
+      cwd: COMPONENT,
+      encoding: "utf8",
+      env: fixedNodeTestEnvironment(selectedEnvironment),
+    },
+  );
+  assert.deepEqual(
+    assertTapSummary(complete, "component selection fixture", 2),
+    {
+      tests: 2,
+      pass: 2,
+      fail: 0,
+      cancelled: 0,
+      skipped: 0,
+      todo: 0,
+    },
+  );
 });

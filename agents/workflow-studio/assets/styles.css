@@ -255,6 +255,10 @@ kbd {
   justify-content: flex-end;
 }
 
+.download-short {
+  display: none;
+}
+
 .kind-badge,
 .unsaved {
   display: inline-flex;
@@ -978,9 +982,6 @@ fieldset {
     grid-column: 2;
   }
 
-  .download-actions button:first-child {
-    display: none;
-  }
 }
 
 @media (max-width: 46rem), (max-height: 34rem) {
@@ -996,25 +997,49 @@ fieldset {
   }
 
   .masthead {
-    grid-template-columns: auto minmax(8rem, 1fr) auto;
+    grid-template-columns: auto auto minmax(0, 1fr);
   }
 
   .brand-subtitle,
-  .document-identity .kind-badge,
-  .download-actions,
+  .brand h1,
+  .document-identity,
   .command-button span {
     display: none;
+  }
+
+  .brand {
+    gap: 0;
   }
 
   .command-button {
     width: auto;
   }
 
+  .download-actions {
+    min-width: 0;
+    gap: 0.3rem;
+    justify-self: end;
+  }
+
+  .download-actions button {
+    min-height: 1.75rem;
+    padding-inline: 0.42rem;
+    white-space: nowrap;
+  }
+
+  .download-long {
+    display: none;
+  }
+
+  .download-short {
+    display: inline;
+  }
+
   .mobile-switcher {
     display: grid;
     grid-column: 1;
     grid-row: 2;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     border-bottom: 1px solid var(--line);
   }
 

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { constants as fsConstants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
+import { access, copyFile, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import process from "node:process";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -32,6 +33,19 @@ const SKILL_A = "skill_AAAAAAAAAAAAAAAAAAAAAA";
 const SKILL_B = "skill_BBBBBBBBBBBBBBBBBBBBBB";
 const SESSION = "session_CCCCCCCCCCCCCCCCCCCCCC";
 const SNAPSHOT = "snapshot_DDDDDDDDDDDDDDDDDDDDDD";
+const AIR_CLI = resolve(STUDIO_ROOT, "scripts/air.mjs");
+
+function validateWithCli(path) {
+  const result = spawnSync(process.execPath, [AIR_CLI, "validate", path], {
+    cwd: STUDIO_ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(
+    result.status,
+    0,
+    `AIR CLI validation failed for ${path}: ${result.stderr || result.stdout}`,
+  );
+}
 
 function boundedSkillId(index) {
   const bytes = Buffer.alloc(16);
@@ -80,6 +94,19 @@ async function browserRuntime() {
       "Configured Chromium is unavailable. Set WORKFLOW_STUDIO_PLAYWRIGHT_MODULE " +
       "and WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE.",
   };
+}
+
+async function downloadAndValidate(page, selector, filename) {
+  const pending = page.waitForEvent("download");
+  await page.locator(selector).click();
+  const download = await pending;
+  assert.equal(download.suggestedFilename(), filename);
+  const path = await download.path();
+  assert.ok(path);
+  const validationPath = resolve(dirname(path), filename);
+  await copyFile(path, validationPath);
+  validateWithCli(validationPath);
+  return path;
 }
 
 function skillItem(id, hash, sourceKind) {
@@ -197,6 +224,10 @@ async function fixtures({ bounded = false } = {}) {
     ),
     { sourcePath: "synthetic-installed/background-implementer/SKILL.md" },
   );
+  const skillArtifacts = new Map([
+    [SKILL_A, first],
+    [SKILL_B, second],
+  ]);
   const items = bounded
     ? Array.from({ length: 1_000 }, (_, index) => ({
         ...skillItem(
@@ -212,7 +243,7 @@ async function fixtures({ bounded = false } = {}) {
         skillItem(SKILL_A, "a".repeat(64), "repository"),
         skillItem(SKILL_B, "b".repeat(64), "user"),
       ];
-  const catalogSnapshot = {
+  let catalogSnapshot = {
     format: "air-skill-catalog",
     version: "1.0.0",
     generation: 1,
@@ -225,8 +256,7 @@ async function fixtures({ bounded = false } = {}) {
     getSnapshot: () => catalogSnapshot,
     refresh: async () => catalogSnapshot,
     importArtifact: async (id) => {
-      if (id === SKILL_A) return first;
-      if (id === SKILL_B) return second;
+      if (skillArtifacts.has(id)) return skillArtifacts.get(id);
       if (bounded && items.some((item) => item.id === id)) return first;
       throw Object.assign(new Error("missing"), {
         code: "AIR_CATALOG_ITEM_NOT_FOUND",
@@ -235,7 +265,7 @@ async function fixtures({ bounded = false } = {}) {
     importAirArtifact: async (id) =>
       migrateLegacyToAir(await catalog.importArtifact(id)),
   };
-  const sessionCatalog = {
+  let sessionCatalog = {
     format: "air-session-catalog",
     version: "1.0.0",
     generation: 1,
@@ -263,18 +293,39 @@ async function fixtures({ bounded = false } = {}) {
       limits: {},
     }),
     catalog: async () => sessionCatalog,
-    snapshot: async () => {
+    snapshot: async (id) => {
       snapshotCount += 1;
       return {
         snapshot_id: SNAPSHOT,
-        session_id: SESSION,
+        session_id: id,
         generation: 1,
         source_changed: false,
         artifact: sessionArtifact(snapshotCount === 1 ? 3 : 4),
       };
     },
   };
-  return { catalog, first, sessionRegistry };
+  const controls = {
+    setSkillCatalog(items, generation) {
+      catalogSnapshot = {
+        ...catalogSnapshot,
+        generation,
+        item_count: items.length,
+        items,
+      };
+    },
+    setSkillArtifact(id, artifact) {
+      skillArtifacts.set(id, artifact);
+    },
+    setSessionCatalog(items, generation, { truncated = false } = {}) {
+      sessionCatalog = {
+        ...sessionCatalog,
+        generation,
+        truncated,
+        items,
+      };
+    },
+  };
+  return { catalog, first, second, sessionRegistry, controls };
 }
 
 async function runPass(browser, executablePath, pass) {
@@ -503,7 +554,21 @@ async function runPass(browser, executablePath, pass) {
       "Decompose into a task DAG",
     );
 
-    await page.locator("#sessionList .resource-row").first().click();
+    const sessionRow = page.locator("#sessionList .resource-row").first();
+    const sessionAlias = `S-${SESSION.slice("session_".length)}`;
+    assert.match(
+      (await sessionRow.textContent()) ?? "",
+      new RegExp(sessionAlias, "u"),
+    );
+    assert.doesNotMatch((await sessionRow.textContent()) ?? "", /session_/u);
+    await page.locator("#resourceSearch").fill(sessionAlias);
+    assert.equal(await page.locator("#sessionList .resource-row").count(), 1);
+    await page.locator("#resourceSearch").fill("");
+    await page.locator("#quickOpen").click();
+    await page.locator("#quickOpenSearch").fill(sessionAlias);
+    assert.equal(await page.locator("#quickOpenList .resource-row").count(), 1);
+    await page.keyboard.press("Escape");
+    await sessionRow.click();
     await page.waitForFunction(
       () => document.querySelectorAll(".evidence-row").length === 3,
     );
@@ -604,6 +669,11 @@ async function runPass(browser, executablePath, pass) {
         target,
       );
     }
+    await page.locator("#workspaceSkillList .resource-row").first().click();
+    await page.waitForFunction(
+      () => document.querySelector("#workspaceSkillList .resource-row")
+        ?.getAttribute("aria-current") === "true",
+    );
     for (const viewport of [
       { width: 1024, height: 768 },
       { width: 720, height: 450 },
@@ -616,8 +686,79 @@ async function runPass(browser, executablePath, pass) {
         ),
         true,
       );
+      for (const selector of ["#downloadIr", "#downloadMarkdown"]) {
+        assert.equal(await page.locator(selector).isVisible(), true);
+        assert.equal(await page.locator(selector).isEnabled(), true);
+      }
+      await page.locator("#downloadIr").focus();
+      assert.equal(await page.evaluate(() => document.activeElement?.id), "downloadIr");
+      await page.keyboard.press("Tab");
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.id),
+        "downloadMarkdown",
+      );
+      await downloadAndValidate(page, "#downloadIr", "workflow.air.json");
+      await downloadAndValidate(page, "#downloadMarkdown", "workflow.air.md");
+      if (viewport.width <= 720) {
+        const mobileTabs = page.locator(
+          ".mobile-switcher [data-mobile-region]",
+        );
+        assert.equal(
+          await mobileTabs.evaluateAll(
+            (tabs) => tabs.filter((tab) => tab.tabIndex === 0).length,
+          ),
+          1,
+        );
+        await page.locator(
+          '.mobile-switcher [data-mobile-region="graph"]',
+        ).focus();
+        await page.keyboard.press("ArrowRight");
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.dataset?.mobileRegion),
+          "inspector",
+        );
+        assert.equal(
+          await page.locator('.mobile-switcher [data-mobile-region="inspector"]')
+            .getAttribute("aria-selected"),
+          "true",
+        );
+        assert.equal(await page.locator("#inspectorRegion").isVisible(), true);
+        await page.keyboard.press("End");
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.dataset?.mobileRegion),
+          "resources",
+        );
+        assert.equal(
+          await page.locator('.mobile-switcher [data-mobile-region="resources"]')
+            .getAttribute("aria-selected"),
+          "true",
+        );
+        assert.equal(await page.locator("#resourcesRegion").isVisible(), true);
+        await page.keyboard.press("Home");
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.dataset?.mobileRegion),
+          "graph",
+        );
+        assert.equal(await page.locator("#workspace").isVisible(), true);
+        await page.keyboard.press("ArrowLeft");
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.dataset?.mobileRegion),
+          "resources",
+        );
+        assert.equal(
+          await mobileTabs.evaluateAll(
+            (tabs) => tabs.filter((tab) => tab.tabIndex === 0).length,
+          ),
+          1,
+        );
+        await page.locator(
+          '.mobile-switcher [data-mobile-region="graph"]',
+        ).click();
+      }
     }
-    await page.locator('[data-mobile-region="panel"]').click();
+    await page.locator(
+      '.mobile-switcher [data-mobile-region="panel"]',
+    ).click();
     assert.equal(await page.locator("#bottomPanel").isVisible(), true);
     assert.deepEqual(errors, []);
   } finally {
@@ -655,7 +796,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     t.skip(runtime.skip);
     return;
   }
-  const { catalog, first, sessionRegistry } = await fixtures();
+  const { catalog, first, second, sessionRegistry, controls } = await fixtures();
   const studio = createStudioServer({
     artifact: first,
     assetsDir: ASSETS_DIR,
@@ -706,7 +847,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     await capabilitiesPage.locator("#refreshResources").click();
     await capabilitiesPage.waitForFunction(
       () => document.querySelector("#resourceStatus")?.textContent ===
-        "3 resources",
+        "4 resources",
     );
     assert.equal(
       await capabilitiesPage.locator("#refreshResources").isDisabled(),
@@ -756,7 +897,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     await unavailablePage.locator("#refreshResources").click();
     await unavailablePage.waitForFunction(
       () => document.querySelector("#resourceStatus")?.textContent ===
-        "3 resources",
+        "4 resources",
     );
     await unavailablePage.close();
 
@@ -815,6 +956,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     const explicitAddress = await explicitStudio.listen();
     const explicitPage = await context.newPage();
     try {
+      await explicitPage.route(capabilitiesPattern, failDiscovery);
       await explicitPage.goto(
         `http://127.0.0.1:${explicitAddress.port}/?token=${
           encodeURIComponent(explicitStudio.token)
@@ -824,19 +966,72 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       await explicitPage.locator(".react-flow.air-flow-ready")
         .waitFor({ state: "visible" });
       assert.equal(await explicitPage.locator(".react-flow__node").count(), 2);
+      await explicitPage.waitForFunction(
+        () => document.querySelector("#resourceStatus")?.textContent
+          ?.includes("capabilities request failed"),
+      );
+      assert.equal(
+        await explicitPage.locator(".resource-tree .resource-row").count(),
+        1,
+      );
+      assert.equal(
+        await explicitPage.locator('.resource-row[aria-current="true"]')
+          .getAttribute("data-resource-key"),
+        "skill:legacy-artifact",
+      );
+      await explicitPage.unroute(capabilitiesPattern);
+      await explicitPage.route(skillsPattern, failDiscovery);
+      await explicitPage.locator("#refreshResources").click();
+      await explicitPage.waitForFunction(
+        () => document.querySelector("#resourceStatus")?.textContent
+          ?.startsWith("Partial discovery: Skills catalog failed."),
+      );
+      assert.equal(
+        await explicitPage.locator(".resource-tree .resource-row").count(),
+        2,
+      );
+      await explicitPage.route(sessionsPattern, failDiscovery);
+      await explicitPage.locator("#refreshResources").click();
+      await explicitPage.waitForFunction(
+        () => document.querySelector("#resourceStatus")?.textContent
+          ?.startsWith("Discovery unavailable: Skills and sessions catalogs failed."),
+      );
+      assert.equal(
+        await explicitPage.locator(".resource-tree .resource-row").count(),
+        1,
+      );
+      await explicitPage.unroute(skillsPattern);
+      await explicitPage.unroute(sessionsPattern);
+      await explicitPage.locator("#refreshResources").click();
+      await explicitPage.waitForFunction(
+        () => document.querySelectorAll(".resource-tree .resource-row").length === 4,
+      );
       assert.equal(await explicitPage.locator(".resource-tree .resource-row").count(), 4);
       assert.equal(
         await explicitPage.locator('.resource-row[aria-current="true"]')
           .getAttribute("data-resource-key"),
         "skill:legacy-artifact",
       );
-      await explicitPage.locator("#refreshResources").click();
-      await explicitPage.waitForFunction(
-        () =>
-          document.querySelectorAll(".resource-tree .resource-row").length === 4 &&
-          document.querySelector(
-            '.resource-row[data-resource-key="skill:legacy-artifact"]',
-          )?.getAttribute("aria-current") === "true",
+      await explicitPage.locator("#nodeTitle").fill("Dirty explicit document");
+      await explicitPage.locator(
+        `.resource-row[data-resource-key="skill:${SKILL_A}"]`,
+      ).click();
+      await explicitPage.locator("#dirtySwitchDialog")
+        .waitFor({ state: "visible" });
+      await explicitPage.locator("#cancelSwitch").click();
+      assert.equal(
+        await explicitPage.locator("#nodeTitle").inputValue(),
+        "Dirty explicit document",
+      );
+      assert.equal(
+        await explicitPage.locator('.resource-row[aria-current="true"]')
+          .getAttribute("data-resource-key"),
+        "skill:legacy-artifact",
+      );
+      await explicitPage.locator("#undoEdit").click();
+      assert.equal(
+        await explicitPage.locator("#nodeTitle").inputValue(),
+        "Keep the explicit AIR document",
       );
       const jsonDownloadReady = explicitPage.waitForEvent("download");
       await explicitPage.locator("#downloadIr").click();
@@ -856,6 +1051,247 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     } finally {
       await explicitPage.close();
       await explicitStudio.close();
+    }
+
+    const skillSource = await readFile(BACKGROUND_IMPLEMENTER, "utf8");
+    const changedSkill = (title, sourcePath) => importSkillBytes(
+      Buffer.from(
+        skillSource.replace("Decompose into a task DAG", title),
+        "utf8",
+      ),
+      { sourcePath },
+    );
+    const catalogItems = (hash) => [
+      skillItem(SKILL_A, hash.repeat(64), "repository"),
+      skillItem(SKILL_B, "b".repeat(64), "user"),
+    ];
+    const stalePage = await context.newPage();
+    try {
+      await stalePage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+      await stalePage.locator(".react-flow.air-flow-ready")
+        .waitFor({ state: "visible" });
+      const activeSkillRow = stalePage.locator(
+        `.resource-row[data-resource-key="skill:${SKILL_A}"]`,
+      );
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose into a task DAG",
+      );
+
+      const changed = changedSkill(
+        "Decompose the refreshed task DAG",
+        "synthetic-refresh-v2/SKILL.md",
+      );
+      controls.setSkillArtifact(SKILL_A, changed);
+      controls.setSkillCatalog(catalogItems("c"), 2);
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("changed"),
+        `skill:${SKILL_A}`,
+      );
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose into a task DAG",
+      );
+      await activeSkillRow.click();
+      await stalePage.locator("#staleSkillDialog").waitFor({ state: "visible" });
+      await stalePage.locator("#cancelStaleSkill").click();
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose into a task DAG",
+      );
+      await activeSkillRow.click();
+      await stalePage.locator("#keepStaleSkill").click();
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose into a task DAG",
+      );
+      await activeSkillRow.click();
+      await stalePage.locator("#reloadStaleSkill").click();
+      await stalePage.waitForFunction(
+        () => document.querySelector("#nodeTitle")?.value ===
+          "Decompose the refreshed task DAG",
+      );
+      assert.equal(await stalePage.locator("#undoEdit").isDisabled(), true);
+
+      await stalePage.locator("#nodeTitle").fill("Keep this dirty local title");
+      const third = changedSkill(
+        "Decompose the third task DAG",
+        "synthetic-refresh-v3/SKILL.md",
+      );
+      controls.setSkillArtifact(SKILL_A, third);
+      controls.setSkillCatalog(catalogItems("d"), 3);
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("changed"),
+        `skill:${SKILL_A}`,
+      );
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Keep this dirty local title",
+      );
+      await activeSkillRow.click();
+      await stalePage.locator("#cancelStaleSkill").click();
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Keep this dirty local title",
+      );
+      await activeSkillRow.click();
+      await stalePage.locator("#reloadStaleSkill").click();
+      await stalePage.waitForFunction(
+        () => document.querySelector("#nodeTitle")?.value ===
+          "Decompose the third task DAG",
+      );
+      assert.equal(await stalePage.locator("#undoEdit").isDisabled(), true);
+
+      const fourth = changedSkill(
+        "Decompose the fourth task DAG",
+        "synthetic-refresh-v4/SKILL.md",
+      );
+      controls.setSkillArtifact(SKILL_A, fourth);
+      controls.setSkillCatalog(catalogItems("e"), 4);
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.locator("#refreshResources").click();
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose the third task DAG",
+      );
+
+      let releaseArtifact;
+      const artifactGate = new Promise((resolveGate) => {
+        releaseArtifact = resolveGate;
+      });
+      let markArtifactRequested;
+      const artifactRequested = new Promise((resolveRequest) => {
+        markArtifactRequested = resolveRequest;
+      });
+      let markArtifactFinished;
+      const artifactFinished = new Promise((resolveRequest) => {
+        markArtifactFinished = resolveRequest;
+      });
+      const artifactPattern =
+        `**/air/v1/skills/${SKILL_A}/artifact*`;
+      await stalePage.route(artifactPattern, async (route) => {
+        markArtifactRequested();
+        await artifactGate;
+        await route.continue();
+        markArtifactFinished();
+      });
+      await activeSkillRow.click();
+      await stalePage.locator("#reloadStaleSkill").click();
+      await artifactRequested;
+      controls.setSkillCatalog([], 5);
+      await stalePage.locator("#refreshResources").click();
+      releaseArtifact();
+      await artifactFinished;
+      await stalePage.unroute(artifactPattern);
+      await stalePage.waitForTimeout(100);
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose the third task DAG",
+      );
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("removed"),
+        `skill:${SKILL_A}`,
+      );
+      await activeSkillRow.click();
+      assert.equal(
+        await stalePage.locator("#reloadStaleSkill").isDisabled(),
+        true,
+      );
+      await stalePage.locator("#cancelStaleSkill").click();
+      await activeSkillRow.click();
+      await stalePage.locator("#keepStaleSkill").click();
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose the third task DAG",
+      );
+
+      controls.setSkillCatalog(catalogItems("e"), 6);
+      await stalePage.locator("#refreshResources").click();
+      await activeSkillRow.click();
+      await stalePage.locator("#reloadStaleSkill").click();
+      await stalePage.waitForFunction(
+        () => document.querySelector("#nodeTitle")?.value ===
+          "Decompose the fourth task DAG",
+      );
+
+      const duplicateSessions = [
+        SESSION,
+        "session_EEEEEEEEEEEEEEEEEEEEEE",
+        "session_FFFFFFFFFFFFFFFFFFFFFF",
+      ].map((id) => ({
+        id,
+        provider: "codex",
+        stream_kind: "rollout",
+        lifecycle: "unknown",
+        snapshot_available: true,
+      }));
+      controls.setSessionCatalog(duplicateSessions, 2, { truncated: true });
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.waitForFunction(
+        () => document.querySelectorAll("#sessionList .resource-row").length === 3,
+      );
+      const sessionRows = stalePage.locator("#sessionList .resource-row");
+      const aliases = await sessionRows.locator("strong").allTextContents();
+      assert.equal(new Set(aliases).size, 3);
+      assert.equal(aliases.every((label) => label.includes(" · S-")), true);
+      assert.equal(aliases.every((label) => !label.includes("session_")), true);
+      const selectedAlias = `S-${duplicateSessions[1].id.slice("session_".length)}`;
+      await stalePage.locator("#resourceSearch").fill(selectedAlias);
+      assert.equal(await stalePage.locator("#sessionList .resource-row").count(), 1);
+      await stalePage.locator("#resourceSearch").fill("");
+      await stalePage.locator(
+        `.resource-row[data-resource-key="session:${duplicateSessions[1].id}"]`,
+      ).click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.getAttribute("aria-current") === "true",
+        `session:${duplicateSessions[1].id}`,
+      );
+      await stalePage.locator(".evidence-row").nth(1).click();
+      controls.setSessionCatalog(duplicateSessions.slice(1), 3, {
+        truncated: true,
+      });
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.getAttribute("aria-current") === "true",
+        `session:${duplicateSessions[1].id}`,
+      );
+      assert.match(
+        (await stalePage.locator(
+          `.resource-row[data-resource-key="session:${duplicateSessions[1].id}"]`,
+        ).textContent()) ?? "",
+        new RegExp(selectedAlias, "u"),
+      );
+      assert.equal(
+        await stalePage.locator('.react-flow__node[data-id="event-2"]')
+          .getAttribute("class")
+          .then((value) => value.includes("selected")),
+        true,
+      );
+      await stalePage.locator("#quickOpen").click();
+      await stalePage.locator("#quickOpenSearch").fill(selectedAlias);
+      assert.equal(
+        await stalePage.locator("#quickOpenList .resource-row").count(),
+        1,
+      );
+      assert.doesNotMatch(
+        (await stalePage.locator("#quickOpenList").textContent()) ?? "",
+        /session_/u,
+      );
+      await stalePage.keyboard.press("Escape");
+    } finally {
+      await stalePage.close();
     }
   } finally {
     await context.close();

@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  closeSync,
+  openSync,
+  writeSync,
+} from "node:fs";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,6 +27,14 @@ import {
 const SCHEMAS = resolve(import.meta.dirname, "../schemas");
 const SESSION_ID = "session_AAAAAAAAAAAAAAAAAAAAAA";
 const SNAPSHOT_ID = "snapshot_BBBBBBBBBBBBBBBBBBBBBB";
+
+function fixedRecord(type, slot, byteLength = 128) {
+  const prefix = `{"type":"${type}","slot":${slot},"pad":"`;
+  const suffix = '"}\n';
+  const padding = byteLength - Buffer.byteLength(prefix + suffix, "utf8");
+  assert.ok(padding >= 0);
+  return Buffer.from(`${prefix}${"x".repeat(padding)}${suffix}`, "utf8");
+}
 
 async function assets(t) {
   const directory = await mkdtemp(join(tmpdir(), "air-session-api-"));
@@ -374,6 +394,131 @@ test("session errors and explicit wildcard LAN remain sanitized and read-only", 
     });
     assert.equal(dns.status, 421);
   }, { host: "0.0.0.0" });
+});
+
+test("port-0 HTTP rejects an accepted rewrite at the final publication cut", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-http-rewrite-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceRoot = join(directory, "codex");
+  const source = join(sourceRoot, "publication-rewrite.jsonl");
+  const records = Array.from(
+    { length: 200 },
+    (_, index) => fixedRecord("event_msg", index),
+  );
+  await mkdir(sourceRoot, { recursive: true });
+  await writeFile(source, Buffer.concat(records));
+  let randomCalls = 0;
+  const registry = createSessionRegistry({
+    roots: [{ path: sourceRoot, provider: "codex" }],
+    randomBytes(length) {
+      randomCalls += 1;
+      if (randomCalls === 4) {
+        const writer = openSync(source, "r+");
+        try {
+          writeSync(
+            writer,
+            fixedRecord("session_meta", 100),
+            0,
+            records[100].byteLength,
+            100 * records[100].byteLength,
+          );
+        } finally {
+          closeSync(writer);
+        }
+      }
+      return Buffer.alloc(length, randomCalls);
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  assert.ok(address.port > 0);
+  const path =
+    `/air/v1/sessions/${sessionId}/snapshots?token=${encodeURIComponent(studio.token)}`;
+  const firstResponse = await http(address, {
+    method: "POST",
+    path,
+    body: JSON.stringify({ generation: catalog.generation }),
+    headers: { "Content-Type": "application/json" },
+  });
+  assert.equal(firstResponse.status, 200);
+  const first = JSON.parse(firstResponse.body);
+  await appendFile(source, fixedRecord("event_msg", records.length));
+
+  const changed = await http(address, {
+    method: "POST",
+    path,
+    body: JSON.stringify({
+      generation: catalog.generation,
+      prior_snapshot_id: first.snapshot_id,
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+  assert.equal(randomCalls, 4);
+  assert.equal(changed.status, 409);
+  assert.equal(JSON.parse(changed.body).code, "AIR_SESSION_SOURCE_CHANGED");
+  assert.equal(changed.body.includes(directory), false);
+});
+
+test("port-0 HTTP rejects a refresh committed at the final publication cut", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-http-refresh-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceRoot = join(directory, "codex");
+  await mkdir(sourceRoot, { recursive: true });
+  await writeFile(
+    join(sourceRoot, "publication-refresh.jsonl"),
+    fixedRecord("session_meta", 0),
+  );
+  let randomCalls = 0;
+  let registry;
+  let refresh;
+  registry = createSessionRegistry({
+    roots: [{ path: sourceRoot, provider: "codex" }],
+    randomBytes(length) {
+      randomCalls += 1;
+      if (randomCalls === 3) {
+        refresh = registry.catalog({ refresh: true });
+      }
+      return Buffer.alloc(length, randomCalls);
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  assert.ok(address.port > 0);
+
+  const response = await http(address, {
+    method: "POST",
+    path:
+      `/air/v1/sessions/${sessionId}/snapshots?token=${encodeURIComponent(studio.token)}`,
+    body: JSON.stringify({ generation: catalog.generation }),
+    headers: { "Content-Type": "application/json" },
+  });
+  const refreshed = await refresh;
+  assert.equal(randomCalls, 3);
+  assert.equal(refreshed.generation, catalog.generation + 1);
+  assert.equal(response.status, 409);
+  assert.equal(
+    JSON.parse(response.body).code,
+    "AIR_SESSION_STALE_GENERATION",
+  );
+  assert.equal(response.body.includes(directory), false);
 });
 
 test("snapshot POST enforces the published global request concurrency bound", async (t) => {

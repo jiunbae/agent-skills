@@ -32,6 +32,8 @@ import { fileURLToPath } from "node:url";
 import {
   assertBrowserTapSummary,
   assertConfiguredBrowserModule,
+  assertTapSummary,
+  fixedNodeTestEnvironment,
 } from "./release-gate.mjs";
 
 const COMPONENT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -41,6 +43,24 @@ const INSTALLER = join(REPOSITORY, "install.sh");
 const PRIVACY_FILE_BYTES = 2 * 1024 * 1024;
 const PRIVACY_TOTAL_BYTES = 64 * 1024 * 1024;
 const PRIVACY_TIME_MS = 5_000;
+const COMPONENT_TEST_INVENTORY = Object.freeze({
+  "adapters.test.mjs": 31,
+  "air-cli-server.test.mjs": 6,
+  "air-spec.test.mjs": 2,
+  "air.test.mjs": 11,
+  "catalog.test.mjs": 6,
+  "cli.test.mjs": 16,
+  "core.test.mjs": 31,
+  "editor.test.mjs": 41,
+  "identity.test.mjs": 4,
+  "package-notices.test.mjs": 1,
+  "r3-integration.test.mjs": 7,
+  "release-gate.test.mjs": 4,
+  "schema-runtime-differential.test.mjs": 1,
+  "server.test.mjs": 12,
+  "session-api.test.mjs": 7,
+  "sessions.test.mjs": 15,
+});
 const NON_TEXT_EXTENSIONS = new Set([
   ".7z",
   ".avi",
@@ -128,14 +148,34 @@ async function verifyPackageAndSource() {
   run("Recheck deterministic generated assets", "npm", ["run", "check:generated"], COMPONENT);
 
   const testTmp = temporary("air-release-tests-");
-  const tests = readdirSync(join(COMPONENT, "tests"))
+  const testNames = readdirSync(join(COMPONENT, "tests"))
     .filter((name) => name.endsWith(".test.mjs"))
-    .sort()
-    .map((name) => join(COMPONENT, "tests", name));
-  run(`Run isolated component suite (${tests.length} files)`, process.execPath, ["--test", ...tests], COMPONENT, {
-    ...process.env,
-    TMPDIR: testTmp,
-  });
+    .sort();
+  assert.deepEqual(
+    testNames,
+    Object.keys(COMPONENT_TEST_INVENTORY).sort(),
+    "The component test file inventory changed without release accounting.",
+  );
+  const expectedTests = Object.values(COMPONENT_TEST_INVENTORY).reduce(
+    (total, count) => total + count,
+    0,
+  );
+  const componentOutput = run(
+    `Run isolated component suite (${testNames.length} files, ${expectedTests} tests)`,
+    process.execPath,
+    [
+      "--test",
+      "--test-reporter=tap",
+      ...testNames.map((name) => join(COMPONENT, "tests", name)),
+    ],
+    COMPONENT,
+    {
+      ...fixedNodeTestEnvironment(process.env),
+      TMPDIR: testTmp,
+    },
+    true,
+  );
+  assertTapSummary(componentOutput, "component suite", expectedTests);
   assert.deepEqual(readdirSync(testTmp), [], "The component suite left TMPDIR residue.");
   removeTemporary(testTmp);
 

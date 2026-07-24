@@ -31,9 +31,14 @@
           <span id="unsavedIndicator" class="unsaved" hidden>Modified</span>
         </div>
         <div class="download-actions">
-          <button id="downloadIr" type="button" disabled>Download AIR</button>
+          <button id="downloadIr" type="button" aria-label="Download AIR JSON"
+            disabled>
+            <span class="download-long">Download AIR</span>
+            <span class="download-short" aria-hidden="true">AIR JSON</span>
+          </button>
           <button id="downloadMarkdown" type="button" class="primary" disabled>
-            Download AIR Markdown
+            <span class="download-long">Download AIR Markdown</span>
+            <span class="download-short" aria-hidden="true">AIR Markdown</span>
           </button>
         </div>
       </header>
@@ -42,9 +47,11 @@
         <button type="button" data-mobile-region="graph" role="tab"
           aria-selected="true">Graph</button>
         <button type="button" data-mobile-region="inspector" role="tab"
-          aria-selected="false">Inspector</button>
+          aria-selected="false" tabindex="-1">Inspector</button>
         <button type="button" data-mobile-region="panel" role="tab"
-          aria-selected="false">Panel</button>
+          aria-selected="false" tabindex="-1">Panel</button>
+        <button type="button" data-mobile-region="resources" role="tab"
+          aria-selected="false" tabindex="-1">Resources</button>
       </div>
 
       <aside id="resourcesRegion" class="resources region" data-region="resources"
@@ -348,6 +355,19 @@
         <button id="keepSwitch" type="button" class="primary">Keep changes &amp; switch</button>
         <button id="discardSwitch" type="button" class="danger">Discard changes &amp; switch</button>
         <button id="cancelSwitch" type="button">Cancel</button>
+      </div>
+    </dialog>
+
+    <dialog id="staleSkillDialog" class="decision-dialog"
+      aria-labelledby="staleSkillHeading">
+      <h2 id="staleSkillHeading">Skill source changed</h2>
+      <p id="staleSkillMessage">
+        A newer catalog version is available. Choose which version to keep open.
+      </p>
+      <div class="dialog-actions">
+        <button id="keepStaleSkill" type="button" class="primary">Keep current</button>
+        <button id="reloadStaleSkill" type="button">Reload latest</button>
+        <button id="cancelStaleSkill" type="button">Cancel</button>
       </div>
     </dialog>
 

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  openSync,
+  writeSync,
+} from "node:fs";
+import {
   appendFile,
   mkdir,
   mkdtemp,
@@ -479,6 +484,93 @@ test("snapshot revalidates accepted bytes after lifecycle evidence", async (t) =
     priorSnapshotId: first.snapshot_id,
   });
   assert.equal(changed.source_changed, true);
+});
+
+test("snapshot rejects an accepted middle rewrite at the final publication cut", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "publication-rewrite.jsonl");
+  const records = Array.from(
+    { length: 200 },
+    (_, index) => fixedRecord("event_msg", index),
+  );
+  await writeFile(source, Buffer.concat(records));
+  const baseRandom = deterministicRandom();
+  let randomCalls = 0;
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes(length) {
+      randomCalls += 1;
+      if (randomCalls === 4) {
+        const writer = openSync(source, "r+");
+        try {
+          writeSync(
+            writer,
+            fixedRecord("session_meta", 100),
+            0,
+            records[100].byteLength,
+            100 * records[100].byteLength,
+          );
+        } finally {
+          closeSync(writer);
+        }
+      }
+      return baseRandom(length);
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const first = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  await appendFile(source, fixedRecord("event_msg", records.length));
+
+  const changed = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(randomCalls, 4);
+  assert.deepEqual(changed, {
+    snapshot_id: null,
+    session_id: catalog.items[0].id,
+    generation: catalog.generation,
+    source_changed: true,
+    artifact: null,
+  });
+});
+
+test("snapshot rejects a catalog refresh committed at the final publication cut", async (t) => {
+  const dirs = await fixture(t);
+  await writeFile(
+    join(dirs.codex, "publication-refresh.jsonl"),
+    fixedRecord("session_meta", 0),
+  );
+  const baseRandom = deterministicRandom();
+  let randomCalls = 0;
+  let registry;
+  let refresh;
+  registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes(length) {
+      randomCalls += 1;
+      if (randomCalls === 3) {
+        refresh = registry.catalog({ refresh: true });
+      }
+      return baseRandom(length);
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+
+  await assert.rejects(
+    registry.snapshot({
+      sessionId: catalog.items[0].id,
+      generation: catalog.generation,
+    }),
+    (error) => error?.code === "AIR_SESSION_STALE_GENERATION",
+  );
+  const refreshed = await refresh;
+  assert.equal(randomCalls, 3);
+  assert.equal(refreshed.generation, catalog.generation + 1);
 });
 
 test("oversized newline records advance in bounded chunks and emit one omission", async (t) => {
