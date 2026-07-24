@@ -4,6 +4,8 @@ import {
   addNode,
   approvePlan,
   approvedPlanArtifact,
+  buildAirArtifact,
+  buildAirMarkdownBytes,
   buildCandidateBytes,
   buildCandidateMarkdown,
   buildPlanArtifact,
@@ -27,6 +29,7 @@ import {
   setActiveView,
   structuralEditBlockReason,
   traceSummaryMetrics,
+  traceEdgeSemantics,
   validationAnnouncement,
 } from "./editor-model.mjs";
 import { mountGraphCanvas } from "./generated/graph-canvas.mjs";
@@ -35,6 +38,8 @@ const MAX_INTERACTIVE_NODES = 1_000;
 const MAX_INTERACTIVE_EDGES = 1_000;
 const MAX_FALLBACK_ROWS = 100;
 const HISTORY_LIMIT = 50;
+const TRACE_READ_ONLY_FALLBACK =
+  "Trace evidence is read-only, not hidden reasoning, and not causality.";
 const elements = {};
 
 let state = null;
@@ -59,6 +64,7 @@ let pendingSwitchReturnFocus = null;
 let pendingSwitchReturnResourceKey = null;
 let loadRequestEpoch = 0;
 let mobileRegion = "graph";
+let commandLineResource = null;
 const documents = new Map();
 const history = {
   undo: [],
@@ -340,11 +346,17 @@ function renderHeader() {
   }
   element("downloadIr").disabled = !downloadCache.allowed;
   element("downloadMarkdown").disabled = !downloadCache.allowed;
+  element("downloadIr").textContent = state.airArtifact
+    ? "Download AIR"
+    : "Download Workflow IR";
+  element("downloadMarkdown").textContent = state.airArtifact
+    ? "Download AIR Markdown"
+    : "Download Skill Markdown";
   const reason =
     state.kind === "workflow"
       ? downloadCache.allowed
         ? ""
-        : "Fix Workflow IR validation errors before downloading."
+        : `Fix ${state.airArtifact ? "AIR" : "Workflow IR"} validation errors before downloading.`
       : "These downloads are available only for workflow artifacts.";
   element("downloadIr").title = reason;
   element("downloadMarkdown").title = reason;
@@ -397,6 +409,10 @@ function graphOptions() {
       source: edge.from,
       target: edge.to,
       kind: edge.air_kind || edge.kind,
+      assertion: edge.assertion || edge.provenance || "declared",
+      provenance: edge.provenance || edge.assertion || "declared",
+      traceSemantics:
+        state.kind === "trace" ? traceEdgeSemantics(edge) : null,
       readOnly: Boolean(edge.readOnly),
     })),
     readOnly: canvasReadOnly(),
@@ -567,7 +583,8 @@ function renderOutline() {
           (node.readOnly ? " · read only" : ""),
       ),
     );
-    button.addEventListener("click", () => selectNodeInWorkspace(node.id));
+    button.addEventListener("click", () =>
+      selectNodeInWorkspace(node.id, button.id));
     installRovingHandler(button, '[data-outline-type="node"]', true);
     item.append(button);
     return item;
@@ -608,11 +625,12 @@ function renderOutline() {
         "span",
         "outline-meta",
         state.kind === "trace"
-          ? `${edge.air_kind || edge.kind} · ${edge.provenance || "inferred"} · not causality`
+          ? traceEdgeSemantics(edge).outline
           : `${edge.kind} · ${edge.provenance || "declared"}`,
       ),
     );
-    button.addEventListener("click", () => selectEdgeInWorkspace(edge.id));
+    button.addEventListener("click", () =>
+      selectEdgeInWorkspace(edge.id, button.id));
     installRovingHandler(button, '[data-outline-type="edge"]', true);
     item.append(button);
     return item;
@@ -701,19 +719,19 @@ function renderInspector() {
   }
 
   if (edge) {
+    const traceSemantics =
+      state.kind === "trace" ? traceEdgeSemantics(edge) : null;
     element("inspectorEyebrow").textContent =
-      state.kind === "trace" ? "Inferred order selection" : "Dependency selection";
+      traceSemantics?.eyebrow ?? "Dependency selection";
     element("inspectorHeading").textContent =
-      state.kind === "trace" ? "Order inspector" : "Dependency inspector";
+      traceSemantics?.heading ?? "Dependency inspector";
     element("selectionBadge").textContent =
       state.kind === "trace" ? "Evidence" : "Edge";
     element("edgeIdentity").textContent =
       `${edge.id} · ${edge.air_kind || edge.kind}`;
     element("edgeProvenance").textContent = edge.provenance || "declared";
     element("edgeTruth").textContent =
-      state.kind === "trace"
-        ? "Inferred event order; not hidden reasoning or causality"
-        : "Declared workflow dependency";
+      traceSemantics?.truth ?? "Declared workflow dependency";
     const controls = edgeControlPolicy(state);
     const disabled = !controls.editable || Boolean(edge.readOnly);
     if (controls.editable) {
@@ -735,7 +753,8 @@ function renderInspector() {
     element("selectedEdgeNotice").hidden = !disabled;
     element("selectedEdgeNotice").textContent =
       edge.readOnly
-        ? "Observed events and inferred trace ordering are read-only evidence."
+        ? traceSemantics?.truth ??
+          TRACE_READ_ONLY_FALLBACK
         : controls.reason;
     return;
   }
@@ -1560,10 +1579,13 @@ async function loadCatalogs({ refresh = false } = {}) {
       : { items: [] };
     catalogGeneration = skills.generation ?? catalogGeneration;
     sessionGeneration = sessions.generation ?? sessionGeneration;
-    const nextResources = [
+    const discoveredResources = [
       ...normalizeSkillResources(skills),
       ...normalizeSessionResources(sessions),
     ];
+    const nextResources = commandLineResource
+      ? [commandLineResource, ...discoveredResources]
+      : discoveredResources;
     markChangedDocuments(nextResources);
     resourceItems = nextResources;
     const unavailable = [
@@ -2006,20 +2028,38 @@ function installHandlers() {
       setStatus(validationAnnouncement(state));
       return;
     }
-    downloadJson(buildWorkflowArtifact(state), "workflow.ir.json");
-    setStatus("Downloaded the Workflow IR.");
+    if (state.airArtifact) {
+      downloadJson(buildAirArtifact(state), "workflow.air.json");
+      setStatus("Downloaded the validated AIR workflow.");
+    } else {
+      downloadJson(buildWorkflowArtifact(state), "workflow.ir.json");
+      setStatus("Downloaded the Workflow IR.");
+    }
   });
   element("downloadMarkdown").addEventListener("click", () => {
     if (!canDownloadArtifact(state)) {
       setStatus(validationAnnouncement(state));
       return;
     }
-    downloadBlob(
-      [buildCandidateBytes(state)],
-      "text/markdown;charset=utf-8",
-      `draft-${safeFileStem(state.sourcePath)}`,
-    );
-    setStatus("Downloaded a Markdown draft; no local source file was written.");
+    if (state.airArtifact) {
+      try {
+        downloadBlob(
+          [buildAirMarkdownBytes(state)],
+          "text/markdown;charset=utf-8",
+          "workflow.air.md",
+        );
+        setStatus("Downloaded a validated AIR Markdown carrier.");
+      } catch (error) {
+        setStatus(`AIR Markdown download unavailable: ${error.message}`);
+      }
+    } else {
+      downloadBlob(
+        [buildCandidateBytes(state)],
+        "text/markdown;charset=utf-8",
+        `draft-${safeFileStem(state.sourcePath)}`,
+      );
+      setStatus("Downloaded a Skill Markdown draft; no local source file was written.");
+    }
   });
   element("downloadPlan").addEventListener("click", () => {
     const artifact = approvedPlanArtifact(state);
@@ -2110,7 +2150,7 @@ function installHandlers() {
   });
 }
 
-async function loadLegacyArtifact() {
+async function loadLegacyArtifact({ preserveResources = false } = {}) {
   const response = await fetch(
     `/api/artifact?token=${encodeURIComponent(accessToken)}`,
     {
@@ -2140,9 +2180,12 @@ async function loadLegacyArtifact() {
     },
   };
   const entry = newDocument(resource, payload);
+  if (preserveResources) commandLineResource = resource;
   resource.item.workflow_node_count = entry.state.nodes.length;
   resource.item.workflow_edge_count = entry.state.edges.length;
-  resourceItems = [resource];
+  resourceItems = preserveResources
+    ? [resource, ...resourceItems]
+    : [resource];
   activateDocument(
     resourceKey(resource),
     entry,
@@ -2165,7 +2208,9 @@ function settleBootstrapFailure(message) {
 async function loadArtifact() {
   installHandlers();
   document.body.dataset.mobileRegion = mobileRegion;
-  accessToken = new URLSearchParams(window.location.search).get("token") ?? "";
+  const parameters = new URLSearchParams(window.location.search);
+  accessToken = parameters.get("token") ?? "";
+  const explicitInitialArtifact = parameters.get("initial") === "explicit";
   if (!accessToken) {
     settleBootstrapFailure(
       "Missing session token. Reopen AIR Workbench from its CLI URL.",
@@ -2174,7 +2219,9 @@ async function loadArtifact() {
   }
   try {
     const discovered = await loadCatalogs();
-    if (discovered.length) {
+    if (explicitInitialArtifact) {
+      await loadLegacyArtifact({ preserveResources: true });
+    } else if (discovered.length) {
       await loadResource(discovered[0]);
     } else {
       await loadLegacyArtifact();

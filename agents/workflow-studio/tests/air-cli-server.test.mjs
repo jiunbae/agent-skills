@@ -8,7 +8,10 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { validateAirArtifact } from "../src/air.mjs";
+import {
+  decodeAirMarkdownArtifact,
+  validateAirArtifact,
+} from "../src/air.mjs";
 import { CATALOG_LIMITS, createSkillCatalog } from "../src/catalog.mjs";
 import { importSkillBytes } from "../src/core.mjs";
 import { createStudioServer } from "../src/server.mjs";
@@ -189,6 +192,39 @@ test("AIR namespace and canonical wrapper share import, validate, convert, migra
   );
 });
 
+test("air import recognizes an activated carrier by bytes and does not nest it", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-activated-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const carrier = await readFile(join(
+    ROOT,
+    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+  ));
+  const expected = decodeAirMarkdownArtifact(carrier).artifact;
+  let activated = join(directory, "ACTIVATED.md");
+  await writeFile(activated, carrier);
+
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    const jsonPath = join(directory, `cycle-${cycle}.air.json`);
+    const nextCarrier = join(directory, `cycle-${cycle}.air.md`);
+    const imported = await invoke(AIR, ["import", activated, "--out", jsonPath]);
+    assert.equal(imported.artifact_id, expected.artifact_id);
+    const artifact = JSON.parse(await readFile(jsonPath, "utf8"));
+    assert.equal(
+      JSON.stringify(artifact.body.graph),
+      JSON.stringify(expected.body.graph),
+    );
+    await invoke(AIR, ["convert", jsonPath, "--out", nextCarrier]);
+    const output = await readFile(nextCarrier);
+    assert.deepEqual(output, carrier);
+    assert.equal(
+      (output.toString("utf8").match(/<!-- air:v1 /gu) ?? []).length,
+      1,
+    );
+    activated = nextCarrier.replace(/\.air\.md$/u, ".activated.md");
+    await writeFile(activated, output);
+  }
+});
+
 test("AIR read-only routes require exact token, expose bounded catalog/schema data, and return validated artifacts", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-server-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -348,6 +384,54 @@ test("AIR Workbench starts with zero inputs, default discovery, and an explicit 
   assert.match(stderr, /Skill catalog/u);
   assert.match(stderr, /metadata-only session catalog\/snapshots/u);
   assert.match(stderr, /bearer authority/u);
+});
+
+test("AIR Workbench URL preserves explicit initial artifact authority", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-workbench-explicit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const artifact = join(
+    ROOT,
+    "agents/workflow-studio/examples/hello-agent/workflow.air.json",
+  );
+  const child = spawn(process.execPath, [
+    AIR,
+    "workbench",
+    artifact,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "0",
+  ], {
+    cwd: directory,
+    env: { ...process.env, HOME: directory },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const url = await new Promise((resolvePromise, rejectPromise) => {
+    let stdout = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      rejectPromise(new Error("AIR Workbench did not print its URL."));
+    }, 8_000);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      const line = stdout.split("\n")[0];
+      if (!line.startsWith("http://")) return;
+      clearTimeout(timer);
+      resolvePromise(line);
+    });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      rejectPromise(error);
+    });
+  });
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get("initial"), "explicit");
+  assert.match(parsed.searchParams.get("token"), /^[A-Za-z0-9_-]{43}$/u);
+  child.kill("SIGINT");
+  assert.equal(await new Promise((resolvePromise) => {
+    child.once("exit", (code) => resolvePromise(code));
+  }), 0);
 });
 
 test("AIR Workbench handles immediate shutdown signals under bounded parallel load", async (t) => {

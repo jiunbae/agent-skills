@@ -17,6 +17,8 @@ import {
   createSkillCatalog,
   resolveSkillRoots,
 } from "../src/catalog.mjs";
+import { decodeAirMarkdownArtifact } from "../src/air.mjs";
+import { stableStringify } from "../src/core.mjs";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
 
@@ -127,6 +129,44 @@ test("catalog deduplicates physical and exact copies, discloses conflicts, and l
   assert.equal(artifact.source.path, source.sourcePath);
   assert.equal(artifact.graph.nodes.length, 1);
   assert.doesNotMatch(JSON.stringify(artifact.source.path), new RegExp(directory, "u"));
+});
+
+test("catalog recognizes activated AIR carriers without reparsing their graph", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-catalog-carrier-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const carrier = await readFile(join(
+    ROOT,
+    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+  ));
+  const expected = decodeAirMarkdownArtifact(carrier).artifact;
+  await put(join(directory, "hello-agent", "SKILL.md"), carrier);
+  const catalog = createSkillCatalog({
+    roots: [{ label: "carrier", kind: "explicit", path: directory }],
+    randomIdBytes: ids(),
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, 1);
+  assert.equal(
+    snapshot.items[0].workflow_node_count,
+    expected.body.graph.nodes.length,
+  );
+  assert.equal(
+    snapshot.items[0].workflow_edge_count,
+    expected.body.graph.edges.length,
+  );
+  const air = await catalog.importAirArtifact(snapshot.items[0].id);
+  assert.equal(air.artifact_id, expected.artifact_id);
+  assert.equal(
+    stableStringify(air.body.graph),
+    stableStringify(expected.body.graph),
+  );
+  const legacy = await catalog.importArtifact(snapshot.items[0].id);
+  assert.equal(
+    stableStringify(legacy.graph),
+    stableStringify(expected.extensions[
+      "https://open330.github.io/air/extensions/legacy-workflow-ir-v1"
+    ].artifact_without_source_bytes.graph),
+  );
 });
 
 test("refresh coalesces, preserves stable IDs, uses duplicates after races, and tombstones stale IDs", async (t) => {

@@ -10,6 +10,8 @@ import {
   addNode,
   approvePlan,
   approvedPlanArtifact,
+  buildAirArtifact,
+  buildAirMarkdownBytes,
   buildCandidateBytes,
   buildCandidateMarkdown,
   buildFullDiff,
@@ -31,6 +33,7 @@ import {
   removeEdge,
   structuralEditBlockReason,
   traceProvenanceSummary,
+  traceEdgeSemantics,
   traceSummaryMetrics,
   validationAnnouncement,
   validateState,
@@ -47,6 +50,12 @@ import {
   renderWorkflow,
   validateArtifact,
 } from "../src/core.mjs";
+import {
+  decodeAirMarkdownArtifact,
+  importSkillBytesAsAir,
+  migrateLegacyToAir,
+  validateAirArtifact,
+} from "../src/air.mjs";
 
 const ASSET_ROOT = new URL("../assets/", import.meta.url);
 
@@ -1428,6 +1437,130 @@ test("native AIR workflow projection preserves graph and source instead of openi
   assert.equal(state.validation.valid, true);
 });
 
+test("native AIR no-op and edited JSON/Markdown remain authoritative and valid", async () => {
+  const air = JSON.parse(
+    await readFile(
+      new URL("../examples/hello-agent/workflow.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const noOp = createEditorState(air);
+  assert.deepEqual(buildAirArtifact(noOp), air);
+
+  let edited = editNode(
+    noOp,
+    noOp.nodes[0].id,
+    "title",
+    "Inspect native AIR carefully",
+  );
+  const json = buildAirArtifact(edited);
+  assert.equal(json.format, "air");
+  assert.notEqual(json.artifact_id, air.artifact_id);
+  assert.equal(
+    json.extensions[
+      "https://open330.github.io/air/extensions/legacy-workflow-ir-v1"
+    ],
+    undefined,
+  );
+  validateAirArtifact(json);
+
+  const carrier = decodeAirMarkdownArtifact(buildAirMarkdownBytes(edited));
+  validateAirArtifact(carrier.artifact);
+  assert.equal(carrier.artifact.artifact_id, json.artifact_id);
+  assert.match(
+    carrier.logicalSource.toString("utf8"),
+    /Inspect native AIR carefully/u,
+  );
+
+  edited = editNode(
+    createEditorState(carrier.artifact),
+    carrier.artifact.body.graph.nodes[1].id,
+    "title",
+    "Report native AIR",
+  );
+  const repeated = buildAirArtifact(edited);
+  validateAirArtifact(repeated);
+  assert.equal(repeated.body.graph.nodes[1].title, "Report native AIR");
+});
+
+test("browser AIR Markdown export matches native context safety", () => {
+  for (const source of [
+    Buffer.from("---\nname: open\ndescription: Open frontmatter\n", "utf8"),
+    Buffer.from(
+      "---\nname: fenced\ndescription: Open fence\n---\n\n```text",
+      "utf8",
+    ),
+  ]) {
+    const state = createEditorState(
+      migrateLegacyToAir(importSkillBytes(source, {
+        sourcePath: "context/SKILL.md",
+      })),
+    );
+    assert.throws(
+      () => buildAirMarkdownBytes(state),
+      /open frontmatter or fenced-code context/u,
+    );
+  }
+
+  for (const source of [
+    Buffer.from(
+      "---\nname: closed\ndescription: Closed fence\n---\n\n```text\nok\n```\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\r\nname: closed\r\ndescription: Closed fence\r\n---\r\n\r\n~~~text\r\nok\r\n~~~\r\n",
+      "utf8",
+    ),
+  ]) {
+    const state = createEditorState(
+      migrateLegacyToAir(importSkillBytes(source, {
+        sourcePath: "context/SKILL.md",
+      })),
+    );
+    const decoded = decodeAirMarkdownArtifact(buildAirMarkdownBytes(state));
+    assert.deepEqual(decoded.logicalSource, source);
+    validateAirArtifact(decoded.artifact);
+  }
+});
+
+test("background implementer AIR carrier activates and reopens for a second edit", async () => {
+  const sourcePath = "agents/background-implementer/SKILL.md";
+  const source = await readFile(
+    new URL("../../background-implementer/SKILL.md", import.meta.url),
+  );
+  let state = createEditorState(
+    migrateLegacyToAir(importSkillBytes(source, { sourcePath })),
+  );
+  assert.match(state.nodes[0].title, /Decompose/u);
+  state = editNode(state, state.nodes[0].id, "title", "Decompose the reviewed DAG");
+  const firstCarrier = buildAirMarkdownBytes(state);
+  assert.equal(
+    Buffer.from(firstCarrier).toString("utf8").match(/<!-- air:v1 /gu)?.length,
+    1,
+  );
+  const activated = importSkillBytesAsAir(firstCarrier, { sourcePath });
+  state = createEditorState(activated);
+  assert.equal(state.nodes[0].title, "Decompose the reviewed DAG");
+  state = editNode(
+    state,
+    state.nodes[1].id,
+    "title",
+    "Implement the reviewed DAG safely",
+  );
+  const second = buildAirArtifact(state);
+  validateAirArtifact(second);
+  const secondCarrier = buildAirMarkdownBytes(state);
+  assert.equal(
+    Buffer.from(secondCarrier).toString("utf8").match(/<!-- air:v1 /gu)?.length,
+    1,
+  );
+  assert.equal(
+    createEditorState(importSkillBytesAsAir(secondCarrier, { sourcePath }))
+      .nodes[1].title,
+    "Implement the reviewed DAG safely",
+  );
+});
+
 test("unsupported AIR profiles fail closed and native sessions remain read only", () => {
   assert.throws(
     () =>
@@ -1490,6 +1623,20 @@ test("unsupported AIR profiles fail closed and native sessions remain read only"
   assert.deepEqual(session.nodes.map((node) => node.id), ["event-a", "event-b"]);
   assert.equal(session.nodes.every((node) => node.readOnly), true);
   assert.equal(session.edges[0].air_kind, "provider-link");
+  assert.equal(
+    traceEdgeSemantics(session.edges[0]).category,
+    "observed-provider",
+  );
+  assert.match(traceEdgeSemantics(session.edges[0]).truth, /Observed provider-link/u);
+  assert.equal(
+    traceEdgeSemantics({
+      id: "temporal",
+      air_kind: "temporal",
+      assertion: "inferred",
+      provenance: "inferred",
+    }).category,
+    "inferred-temporal",
+  );
   assert.equal(structuralEditBlockReason(session).includes("read-only"), true);
 });
 

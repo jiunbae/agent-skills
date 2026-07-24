@@ -20,12 +20,16 @@ import {
   decodeAirMarkdownArtifact,
   encodeAirMarkdownArtifact,
   createSessionAirArtifact,
+  importSkillBytesAsAir,
   migrateLegacyToAir,
+  recognizeAirSkillCarrier,
   validateAirArtifact,
 } from "../src/air.mjs";
 import {
+  applyOperation,
   importSkillBytes,
   importSkillFile,
+  renderWorkflow,
   stableStringify,
   validateArtifact,
 } from "../src/core.mjs";
@@ -245,6 +249,122 @@ test("AIR Markdown retains LF, CRLF, final-newline, Unicode, and marker prose", 
   expectCode(
     () => decodeAirMarkdownArtifact(forged),
     "AIR_CARRIER_INVALID",
+  );
+});
+
+test("activated AIR Markdown reopens by bytes with stable authoritative semantics", async () => {
+  const carrier = await readFile(
+    resolve(
+      ROOT,
+      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    ),
+  );
+  const expected = decodeAirMarkdownArtifact(carrier);
+  const recognized = recognizeAirSkillCarrier(carrier);
+  assert.ok(recognized);
+  assert.deepEqual(recognized.logicalSource, expected.logicalSource);
+  assert.equal(
+    stableStringify(recognized.artifact),
+    stableStringify(expected.artifact),
+  );
+
+  let activated = carrier;
+  for (let cycle = 0; cycle < 4; cycle += 1) {
+    const reopened = importSkillBytesAsAir(activated, {
+      sourcePath: `cycle-${cycle}/SKILL.md`,
+    });
+    assert.equal(reopened.artifact_id, expected.artifact.artifact_id);
+    assert.equal(
+      stableStringify(reopened.body.graph),
+      stableStringify(expected.artifact.body.graph),
+    );
+    activated = encodeAirMarkdownArtifact(reopened);
+    assert.deepEqual(activated, carrier);
+    assert.equal(
+      (activated.toString("utf8").match(/<!-- air:v1 /gu) ?? []).length,
+      1,
+    );
+  }
+
+  const legacy = airToLegacy(importSkillBytesAsAir(activated));
+  const edited = applyOperation(legacy, {
+    type: "edit-node",
+    node_id: legacy.graph.nodes[0].id,
+    title: "Inspect the reviewed request",
+  });
+  const editedSource = renderWorkflow(edited);
+  const editedCarrier = encodeAirMarkdownArtifact(
+    migrateLegacyToAir(importSkillBytes(editedSource, {
+      sourcePath: "edited/SKILL.md",
+    })),
+  );
+  let editedActivated = editedCarrier;
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    const editedReopened = importSkillBytesAsAir(editedActivated, {
+      sourcePath: `edited-cycle-${cycle}/SKILL.md`,
+    });
+    assert.equal(
+      editedReopened.body.graph.nodes[0].title,
+      "Inspect the reviewed request",
+    );
+    assert.equal(
+      (editedActivated.toString("utf8").match(/<!-- air:v1 /gu) ?? []).length,
+      1,
+    );
+    assert.ok(editedActivated.byteLength < carrier.byteLength * 2);
+    const next = encodeAirMarkdownArtifact(editedReopened);
+    assert.deepEqual(next, editedCarrier);
+    editedActivated = next;
+  }
+});
+
+test("activated Skill recognition preserves hostile carrier-like Markdown or fails closed", async () => {
+  const carrier = await readFile(
+    resolve(
+      ROOT,
+      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    ),
+  );
+  const marker = carrier.toString("utf8").match(
+    /<!-- air:v1 ([A-Za-z0-9_-]+) -->\n$/u,
+  );
+  assert.ok(marker);
+  const logical = decodeAirMarkdownArtifact(carrier).logicalSource;
+  const invalid = Buffer.from(
+    `${logical.toString("utf8")}\n<!-- air:v1 ${marker[1].slice(0, -1)}A -->\n`,
+    "utf8",
+  );
+  const fenced = Buffer.from(
+    `${logical.toString("utf8")}\n\`\`\`text\n<!-- air:v1 ${marker[1]} -->\n`,
+    "utf8",
+  );
+  const markerProse = Buffer.from(
+    `${logical.toString("utf8")}\n<!-- air:v1 ordinary-prose -->\n`,
+    "utf8",
+  );
+  for (const source of [invalid, fenced, markerProse]) {
+    assert.equal(recognizeAirSkillCarrier(source), null);
+    const imported = importSkillBytesAsAir(source, {
+      sourcePath: "hostile/SKILL.md",
+    });
+    assert.deepEqual(
+      Buffer.from(imported.body.source.bytes_base64, "base64"),
+      source,
+    );
+  }
+
+  const nested = encodeAirMarkdownArtifact(
+    migrateLegacyToAir(importSkillBytes(carrier, {
+      sourcePath: "nested/SKILL.md",
+    })),
+  );
+  expectCode(
+    () => recognizeAirSkillCarrier(nested),
+    "AIR_CARRIER_DUPLICATE",
+  );
+  expectCode(
+    () => importSkillBytesAsAir(nested),
+    "AIR_CARRIER_DUPLICATE",
   );
 });
 

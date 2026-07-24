@@ -41,6 +41,7 @@ export const SESSION_LIMITS = Object.freeze({
   maxSnapshotHandles: 256,
   maxStableIds: 1_000,
   maxConcurrentReaders: 4,
+  maxContinuityBytes: 8 * 1024 * 1024,
   headFingerprintBytes: 4_096,
   checkpointBytes: 4_096,
 });
@@ -216,6 +217,62 @@ async function boundedFingerprint(handle, info, limits, secret, offset = 0) {
     head: privateDigest(secret, "head\0", head),
     checkpoint: privateDigest(secret, "checkpoint\0", checkpoint),
     checkpointLength,
+  };
+}
+
+async function boundedContinuityFingerprint(
+  handle,
+  info,
+  limits,
+  secret,
+  offset,
+  {
+    validatedPrefix = 0,
+    suffixStart = offset,
+  } = {},
+) {
+  const size = Number(info.size);
+  if (
+    !Number.isSafeInteger(size) ||
+    !Number.isSafeInteger(offset) ||
+    !Number.isSafeInteger(validatedPrefix) ||
+    !Number.isSafeInteger(suffixStart) ||
+    offset < 0 ||
+    offset > size ||
+    offset > limits.maxContinuityBytes ||
+    validatedPrefix < 0 ||
+    validatedPrefix > offset ||
+    suffixStart < 0 ||
+    suffixStart > offset
+  ) {
+    return null;
+  }
+
+  const continuity = createHmac("sha256", secret).update("continuity\0");
+  const validated = createHmac("sha256", secret).update("continuity\0");
+  const suffix = createHmac("sha256", secret).update("refresh\0");
+  const buffer = Buffer.alloc(Math.min(64 * 1024, Math.max(1, offset)));
+  let position = 0;
+  while (position < offset) {
+    const length = Math.min(buffer.byteLength, offset - position);
+    const { bytesRead } = await handle.read(buffer, 0, length, position);
+    if (bytesRead !== length) return null;
+    const bytes = buffer.subarray(0, bytesRead);
+    continuity.update(bytes);
+    if (position < validatedPrefix) {
+      validated.update(
+        bytes.subarray(0, Math.min(bytesRead, validatedPrefix - position)),
+      );
+    }
+    if (position + bytesRead > suffixStart) {
+      suffix.update(bytes.subarray(Math.max(0, suffixStart - position)));
+    }
+    position += bytesRead;
+  }
+  return {
+    continuity: continuity.digest("hex"),
+    validated: validated.digest("hex"),
+    suffix: suffix.digest("hex"),
   };
 }
 
@@ -673,11 +730,23 @@ export function createSessionRegistry({
         secret,
         offset,
       );
+      const beforeContinuity = prior
+        ? await boundedContinuityFingerprint(
+            handle,
+            before,
+            boundedLimits,
+            secret,
+            offset,
+            { validatedPrefix: offset },
+          )
+        : null;
       if (
         prior &&
         (
           prior.head !== beforeFingerprint.head ||
-          prior.checkpoint !== beforeFingerprint.checkpoint
+          prior.checkpoint !== beforeFingerprint.checkpoint ||
+          beforeContinuity === null ||
+          prior.continuity !== beforeContinuity.continuity
         )
       ) {
         return sourceChanged(sessionId, requestedGeneration);
@@ -860,13 +929,32 @@ export function createSessionRegistry({
 
       const epoch = prior?.epoch ?? 0;
       const finalInfo = await handle.stat({ bigint: true });
-      const finalFingerprint = await boundedFingerprint(
+      const finalContinuity = await boundedContinuityFingerprint(
         handle,
         finalInfo,
         boundedLimits,
         secret,
         nextOffset,
+        {
+          validatedPrefix: prior?.offset ?? 0,
+          suffixStart: offset,
+        },
       );
+      const acceptedChunk = chunk.subarray(0, nextOffset - offset);
+      if (
+        finalContinuity === null ||
+        (
+          prior &&
+          finalContinuity.validated !== prior.continuity
+        ) ||
+        finalContinuity.suffix !== privateDigest(
+          secret,
+          "refresh\0",
+          acceptedChunk,
+        )
+      ) {
+        return sourceChanged(sessionId, requestedGeneration);
+      }
       const prefixLength = Math.min(
         nextOffset,
         boundedLimits.headFingerprintBytes,
@@ -882,6 +970,45 @@ export function createSessionRegistry({
       }).catch(() => null);
       if (generation !== requestedGeneration) {
         throw sessionError("AIR_SESSION_STALE_GENERATION");
+      }
+      const publishedInfo = await handle.stat({ bigint: true });
+      if (
+        identity(publishedInfo) !== sourceIdentity ||
+        Number(publishedInfo.size) < nextOffset
+      ) {
+        return sourceChanged(sessionId, requestedGeneration);
+      }
+      const publishedFingerprint = await boundedFingerprint(
+        handle,
+        publishedInfo,
+        boundedLimits,
+        secret,
+        nextOffset,
+      );
+      const publishedContinuity = await boundedContinuityFingerprint(
+        handle,
+        publishedInfo,
+        boundedLimits,
+        secret,
+        nextOffset,
+        {
+          validatedPrefix: prior?.offset ?? 0,
+          suffixStart: offset,
+        },
+      );
+      if (
+        publishedContinuity === null ||
+        (
+          prior &&
+          publishedContinuity.validated !== prior.continuity
+        ) ||
+        publishedContinuity.suffix !== privateDigest(
+          secret,
+          "refresh\0",
+          acceptedChunk,
+        )
+      ) {
+        return sourceChanged(sessionId, requestedGeneration);
       }
       const hasTornTail =
         committedLength < chunk.byteLength && !discardingOversized;
@@ -999,8 +1126,9 @@ export function createSessionRegistry({
         sourceIdentity,
         epoch,
         offset: nextOffset,
-        head: finalFingerprint.head,
-        checkpoint: finalFingerprint.checkpoint,
+        head: publishedFingerprint.head,
+        checkpoint: publishedFingerprint.checkpoint,
+        continuity: publishedContinuity.continuity,
         events: clonePublic(events),
         providerIds: [...providerIds],
         providerLinks,

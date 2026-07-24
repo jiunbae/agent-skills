@@ -324,12 +324,12 @@ WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE=/path/to/chromium \
 node agents/workflow-studio/scripts/verify-release.mjs
 ```
 
-The default delivery mode also requires a clean tracked worktree, a good
-signature on `HEAD`, and `HEAD == origin/main`. While preparing that commit,
-use `--precommit` (or `--source`) to run the same source, package, offline,
-privacy, and non-skipping browser gates without those delivery assertions.
-The command may also be run as `node scripts/verify-release.mjs` from this
-component directory.
+The default delivery mode also requires a clean worktree, including all
+untracked and unignored files, a good signature on `HEAD`, and
+`HEAD == origin/main`. While preparing that commit, use `--precommit` (or
+`--source`) to run the same source, package, offline, privacy, and exact-count
+browser gates without those delivery assertions. The command may also be run
+as `node scripts/verify-release.mjs` from this component directory.
 
 ## Outputs and safety
 

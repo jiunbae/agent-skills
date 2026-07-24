@@ -29,6 +29,11 @@ import {
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import {
+  assertBrowserTapSummary,
+  assertConfiguredBrowserModule,
+} from "./release-gate.mjs";
+
 const COMPONENT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY = resolve(COMPONENT, "../..");
 const COMPONENT_PATHSPEC = relative(REPOSITORY, COMPONENT);
@@ -75,10 +80,11 @@ const usage = `AIR Workbench release verification
 Usage:
   node scripts/verify-release.mjs [--precommit|--source]
 
-Default delivery mode also verifies a clean tracked worktree, a good signed
-HEAD, and HEAD == origin/main. --precommit and --source omit only those delivery
-assertions. Browser gates require WORKFLOW_STUDIO_PLAYWRIGHT_MODULE and
-WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE; a skipped browser test fails the release.
+Default delivery mode also verifies a clean worktree, including all untracked
+and unignored files, a good signed HEAD, and HEAD == origin/main. --precommit
+and --source omit only those delivery assertions. Browser gates require
+WORKFLOW_STUDIO_PLAYWRIGHT_MODULE and WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE;
+skipped, cancelled, todo, failed, or missing browser tests fail the release.
 `;
 
 const argument = process.argv[2];
@@ -101,7 +107,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 try {
-  verifyPackageAndSource();
+  await verifyPackageAndSource();
   await verifyCopiedInstall();
   verifyPrivacySurfaces();
   run("Check patch whitespace", "git", ["diff", "--check"], REPOSITORY);
@@ -115,7 +121,7 @@ try {
   cleanup();
 }
 
-function verifyPackageAndSource() {
+async function verifyPackageAndSource() {
   run("Install exact build dependencies", "npm", ["ci", "--ignore-scripts"], COMPONENT);
   run("Check generated assets before writing", "npm", ["run", "check:generated"], COMPONENT);
   run("Build browser assets", "npm", ["run", "build"], COMPONENT);
@@ -176,16 +182,26 @@ function verifyPackageAndSource() {
   };
   assert(browserEnvironment.module, "WORKFLOW_STUDIO_PLAYWRIGHT_MODULE is required.");
   assert(browserEnvironment.executable, "WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE is required.");
+  await assertConfiguredBrowserModule(browserEnvironment.module, {
+    cwd: COMPONENT,
+  });
   accessSync(browserEnvironment.executable, fsConstants.X_OK);
-  for (const name of [
-    "browser-air-workbench.mjs",
-    "browser-r10.mjs",
-    "browser-exact-bound.mjs",
+  for (const [name, expectedTests] of [
+    ["browser-air-workbench.mjs", 3],
+    ["browser-r10.mjs", 1],
+    ["browser-exact-bound.mjs", 1],
   ]) {
     const path = join(COMPONENT, "tests", name);
     accessSync(path, fsConstants.R_OK);
-    const output = run(`Run configured ${name}`, process.execPath, [path], COMPONENT, process.env, true);
-    assert(!/#\s*SKIP\b/i.test(output), `${name} skipped a configured browser gate.`);
+    const output = run(
+      `Run configured ${name}`,
+      process.execPath,
+      ["--test", "--test-reporter=tap", path],
+      COMPONENT,
+      process.env,
+      true,
+    );
+    assertBrowserTapSummary(output, name, expectedTests);
   }
 
   run("Run Korean editor tests", "python3", [

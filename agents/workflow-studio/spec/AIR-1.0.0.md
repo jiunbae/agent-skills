@@ -184,12 +184,17 @@ identity; otherwise it is `unknown`. Modification time alone is never
 lifecycle evidence.
 
 Append state is server-private and binds the provider, stream kind, adapter
-major, open-file identity, epoch, committed newline offset, a bounded head
-fingerprint, and a bounded checkpoint ending at that offset. A torn suffix is
-discarded and retried from the last committed newline. Truncation, replacement,
-checkpoint mismatch, or adapter-major change returns a typed source change and
-never joins observations from different source epochs. Public opaque snapshot
-handles, not caller-supplied cursors or paths, select continuation state.
+major, open-file identity, epoch, committed newline offset, bounded head and
+checkpoint samples, and a cryptographic continuity fingerprint covering every
+byte through that offset. Before prior observations are retained, the complete
+previously accepted prefix is reread and matched within the published
+`maxContinuityBytes` limit; the accepted prefix is checked again before the
+next snapshot is returned. A continuation that would exceed that limit fails
+closed as a typed source change. A torn suffix is discarded and retried from
+the last committed newline. Truncation, replacement, any accepted-prefix
+mismatch, or adapter-major change returns a typed source change and never joins
+observations from different source epochs. Public opaque snapshot handles, not
+caller-supplied cursors or paths, select continuation state.
 The stable session-ID registry retains only the bounded current catalog
 generation; removed or truncated identities are pruned and are never aliased
 to a different source.

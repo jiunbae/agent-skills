@@ -490,6 +490,16 @@ kbd {
   min-height: 0;
 }
 
+.graph-canvas .air-trace-edge--observed-provider .react-flow__edge-text {
+  fill: #155f57;
+  font-weight: 700;
+}
+
+.graph-canvas .air-trace-edge--inferred-temporal .react-flow__edge-text {
+  fill: #8a4d0d;
+  font-style: italic;
+}
+
 .react-flow.air-flow-loading {
   visibility: hidden;
 }

@@ -33,10 +33,16 @@ const SHA256_CONSTANTS = new Uint32Array([
 ]);
 const MANAGED_INLINE_PREFIX = "<!-- workflow-studio:v1 ";
 const AIR_VERSION = "1.0.0";
+const AIR_SCHEMA =
+  "https://open330.github.io/air/schema/1.0.0/air.schema.json";
 const AIR_WORKFLOW_PROFILE =
   "https://open330.github.io/air/profiles/1.0.0/workflow-skill";
 const AIR_SESSION_PROFILE =
   "https://open330.github.io/air/profiles/1.0.0/trace-session-snapshot";
+const AIR_CONTENT_DOMAIN = "AIR-CONTENT-V1\n";
+const AIR_ENVELOPE_DOMAIN = "AIR-ENVELOPE-V1\n";
+const AIR_LEGACY_EXTENSION =
+  "https://open330.github.io/air/extensions/legacy-workflow-ir-v1";
 
 function clone(value) {
   return structuredClone(value);
@@ -642,6 +648,13 @@ export function projectAirArtifact(payload) {
 }
 
 export function normalizeArtifact(payload) {
+  const inputArtifact =
+    payload && payload.artifact && typeof payload.artifact === "object"
+      ? payload.artifact
+      : payload;
+  const authoritativeAir = isAirArtifact(inputArtifact)
+    ? clone(inputArtifact)
+    : null;
   const projected = projectAirArtifact(payload);
   const artifact =
     projected && projected.artifact && typeof projected.artifact === "object"
@@ -677,6 +690,7 @@ export function normalizeArtifact(payload) {
   const edges = asArray(rawEdges).map(normalizeEdge);
   return {
     artifact: clone(artifact),
+    airArtifact: authoritativeAir,
     workflowArtifact: clone(workflow),
     kind: String(firstDefined(artifact.kind, "workflow")),
     irVersion: String(firstDefined(artifact.ir_version, artifact.version, "1.0")),
@@ -939,20 +953,22 @@ export function graphSemantics(state) {
     return {
       graphEyebrow: "Observed execution evidence",
       graphHeading: "Trace event graph",
-      graphLegend: "Nodes = observed events · Arrows = inferred order, not causality",
-      graphAriaLabel: "Observed trace events with inferred ordering",
+      graphLegend:
+        "Solid teal = observed provider link · Dashed amber = inferred order from temporal evidence · not causality or hidden reasoning",
+      graphAriaLabel:
+        "Observed trace events with distinct observed provider links and inferred temporal ordering",
       graphTitle: "Observed trace event graph",
       graphDescription:
-        "Observed provider events connected by inferred order without asserting causal relationships.",
+        "Observed provider events connected by provenance-labelled provider evidence or inferred temporal order without recovering hidden reasoning.",
       outlineEyebrow: "Keyboard evidence path",
       outlineHeading: "Observed event outline",
       outlineAriaLabel: "Observed trace events",
       inspectorEyebrow: "Event selection",
       inspectorHeading: "Event inspector",
-      edgeEyebrow: "Inferred order",
-      edgeHeading: "Inferred event order",
-      edgeAriaLabel: "Inferred event ordering, not causality",
-      emptyEdges: "No inferred event-order edges.",
+      edgeEyebrow: "Trace evidence links",
+      edgeHeading: "Trace evidence edges",
+      edgeAriaLabel: "Observed provider links and inferred temporal edges",
+      emptyEdges: "No trace evidence edges.",
     };
   }
   return {
@@ -972,6 +988,44 @@ export function graphSemantics(state) {
     edgeHeading: "Edges",
     edgeAriaLabel: "Workflow edges",
     emptyEdges: "No dependency edges.",
+  };
+}
+
+export function traceEdgeSemantics(edge) {
+  const kind = String(firstDefined(edge?.air_kind, edge?.kind, "temporal"));
+  const assertion = String(firstDefined(edge?.assertion, edge?.provenance, "inferred"));
+  const provenance = String(firstDefined(edge?.provenance, assertion));
+  if (kind === "provider-link" && assertion === "observed") {
+    return {
+      category: "observed-provider",
+      eyebrow: "Observed provider link",
+      heading: "Provider evidence inspector",
+      truth:
+        "Observed provider-link evidence; read-only, not hidden reasoning, and not causality.",
+      ariaLabel: `Observed provider link ${edge?.id ?? ""}`.trim(),
+      outline:
+        `${kind} · observed provider evidence · ${provenance} · read only`,
+    };
+  }
+  if (kind === "temporal" && assertion === "inferred") {
+    return {
+      category: "inferred-temporal",
+      eyebrow: "Inferred temporal order",
+      heading: "Temporal order inspector",
+      truth:
+        "Inferred temporal event order; read-only, not hidden reasoning, and not causality.",
+      ariaLabel: `Inferred temporal order ${edge?.id ?? ""}`.trim(),
+      outline: `${kind} · inferred order · ${provenance} · not causality`,
+    };
+  }
+  return {
+    category: assertion === "observed" ? "observed-other" : "inferred-other",
+    eyebrow: assertion === "observed" ? "Observed evidence link" : "Inferred evidence link",
+    heading: "Trace evidence inspector",
+    truth:
+      `${assertion === "observed" ? "Observed" : "Inferred"} ${kind} evidence; read-only, not hidden reasoning, and not causality.`,
+    ariaLabel: `${assertion} ${kind} ${edge?.id ?? ""}`.trim(),
+    outline: `${kind} · ${assertion} · ${provenance} · read only`,
   };
 }
 
@@ -1659,6 +1713,15 @@ export function canDownloadArtifact(state) {
   if (!(state.kind === "workflow" && validateState(state).valid)) return false;
   try {
     buildCandidateBytes(state);
+    if (state.airArtifact) {
+      const air = buildAirArtifact(state);
+      return (
+        air.format === "air" &&
+        air.kind === "workflow" &&
+        air.artifact_id ===
+          `urn:air:sha256:${air.integrity.content_digest}`
+      );
+    }
     return validateDownloadWorkflow(buildWorkflowArtifact(state));
   } catch {
     return false;
@@ -2037,6 +2100,327 @@ function opaqueCoverage(state) {
     });
   }
   return opaque;
+}
+
+function mappedPatches(state) {
+  if (!state.dirty || state.structuralDirty) return [];
+  const patches = [];
+  for (const node of state.nodes) {
+    if (!node.added && node.sourceMap.title && node.title !== node.original.title) {
+      patches.push({
+        ...node.sourceMap.title,
+        length: UTF8.encode(node.title).length,
+      });
+    }
+    if (!node.added && node.sourceMap.body && node.body !== node.original.body) {
+      const needsBoundaryNewline =
+        node.sourceMap.body.end < state.sourceBytes.length &&
+        UTF8.encode(node.body).length > 0 &&
+        !node.body.endsWith("\n");
+      const newline = state.sourceNewline === "crlf" ? "\r\n" : "\n";
+      patches.push({
+        ...node.sourceMap.body,
+        length: UTF8.encode(
+          needsBoundaryNewline ? `${node.body}${newline}` : node.body,
+        ).length,
+      });
+    }
+  }
+  return patches.sort((left, right) => left.start - right.start);
+}
+
+function transformOffset(offset, patches) {
+  return offset + patches
+    .filter((patch) => patch.end <= offset)
+    .reduce((total, patch) => total + patch.length - (patch.end - patch.start), 0);
+}
+
+function transformedRange(value, patches) {
+  const range = spanFrom(value);
+  if (!range) return null;
+  return {
+    start_byte: transformOffset(range.start, patches),
+    end_byte: transformOffset(range.end, patches),
+  };
+}
+
+function structuralSourceMaps(state, candidateBytes, sourceId) {
+  const text = UTF8_DECODER.decode(candidateBytes);
+  const maps = [];
+  let searchFrom = 0;
+  for (const [index, node] of state.nodes.entries()) {
+    const escaped = node.title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const expression = new RegExp(
+      `^(#{2,6}) Step ${index + 1}: ${escaped}(?:\\r?\\n)`,
+      "gmu",
+    );
+    expression.lastIndex = searchFrom;
+    const match = expression.exec(text);
+    if (!match) return [];
+    const headingStart = UTF8.encode(text.slice(0, match.index)).length;
+    const headingText = match[0].replace(/\r?\n$/u, "");
+    const headingEnd = headingStart + UTF8.encode(headingText).length;
+    const titleStart =
+      headingStart + UTF8.encode(`${match[1]} Step ${index + 1}: `).length;
+    const titleEnd = titleStart + UTF8.encode(node.title).length;
+    const bodyStart = headingStart + UTF8.encode(match[0]).length;
+    const bodyValue =
+      node.body.length > 0 && !/\r?\n$/u.test(node.body)
+        ? `${node.body}${state.sourceNewline === "crlf" ? "\r\n" : "\n"}`
+        : node.body;
+    const bodyEnd = bodyStart + UTF8.encode(bodyValue).length;
+    maps.push({
+      node_id: node.id,
+      source_id: sourceId,
+      span: { start_byte: headingStart, end_byte: bodyEnd },
+      heading: { start_byte: headingStart, end_byte: headingEnd },
+      title: { start_byte: titleStart, end_byte: titleEnd },
+      body: { start_byte: bodyStart, end_byte: bodyEnd },
+    });
+    searchFrom = match.index + match[0].length + node.body.length;
+  }
+  return maps;
+}
+
+function candidateSourceMaps(state, candidateBytes, sourceId) {
+  if (state.structuralDirty) {
+    return structuralSourceMaps(state, candidateBytes, sourceId);
+  }
+  const patches = mappedPatches(state);
+  return state.nodes.flatMap((node) => {
+    const sourceMap = asObject(node.source_map);
+    const span = transformedRange(sourceMap.span, patches);
+    const heading = transformedRange(sourceMap.heading, patches);
+    const title = transformedRange(sourceMap.title, patches);
+    const body = transformedRange(sourceMap.body, patches);
+    return span && heading && title && body
+      ? [{
+          node_id: node.id,
+          source_id: sourceId,
+          span,
+          heading,
+          title,
+          body,
+        }]
+      : [];
+  });
+}
+
+function airOpaqueRanges(candidateBytes, sourceMaps) {
+  const spans = sourceMaps
+    .map((mapping) => spanFrom(mapping.span))
+    .filter(Boolean)
+    .sort((left, right) => left.start - right.start);
+  const ranges = [];
+  let cursor = 0;
+  for (const span of spans) {
+    if (span.start > cursor) {
+      ranges.push({
+        start_byte: cursor,
+        end_byte: span.start,
+        sha256: sha256HexBytes(candidateBytes.subarray(cursor, span.start)),
+        reason: "unparsed-or-unsupported-source",
+      });
+    }
+    cursor = Math.max(cursor, span.end);
+  }
+  if (cursor < candidateBytes.length) {
+    ranges.push({
+      start_byte: cursor,
+      end_byte: candidateBytes.length,
+      sha256: sha256HexBytes(candidateBytes.subarray(cursor)),
+      reason: "unparsed-or-unsupported-source",
+    });
+  }
+  return ranges;
+}
+
+function sourceNewline(bytes) {
+  const text = UTF8_DECODER.decode(bytes);
+  const hasCrlf = /\r\n/u.test(text);
+  const hasLf = /(?<!\r)\n/u.test(text);
+  return hasCrlf && hasLf ? "mixed" : hasCrlf ? "crlf" : "lf";
+}
+
+function airWorkflowBody(state, original) {
+  const candidateBytes = buildCandidateBytes(state);
+  const originalSource = asObject(original.body?.source);
+  const sourceId = String(firstDefined(originalSource.source_id, "source-skill"));
+  const sourceMaps = candidateSourceMaps(state, candidateBytes, sourceId);
+  const inbound = new Set(state.edges.map((edge) => edge.to));
+  return {
+    source: {
+      source_id: sourceId,
+      media_type: "text/markdown",
+      encoding: "utf-8",
+      bytes_base64: bytesToBase64(candidateBytes),
+      byte_length: candidateBytes.length,
+      sha256: sha256HexBytes(candidateBytes),
+      newline: sourceNewline(candidateBytes),
+      final_newline:
+        candidateBytes.length > 0 &&
+        candidateBytes[candidateBytes.length - 1] === 0x0a,
+      ...(originalSource.locator
+        ? { locator: clone(originalSource.locator) }
+        : {}),
+    },
+    graph: {
+      entry_node_ids: state.nodes
+        .filter((node) => !inbound.has(node.id))
+        .map((node) => node.id),
+      nodes: state.nodes.map((node, order) => ({
+        id: node.id,
+        kind: "step",
+        order,
+        title: node.title,
+        body: node.body,
+        assertion: "declared",
+        confidence: clone(node.confidence),
+        evidence_refs: clone(asArray(node.evidence_refs)),
+      })),
+      edges: state.edges.map((edge) => ({
+        id: edge.id,
+        from: edge.from,
+        to: edge.to,
+        kind: edge.kind,
+        assertion:
+          edge.assertion === "inferred" || edge.provenance === "inferred"
+            ? "inferred"
+            : "declared",
+        confidence: clone(edge.confidence),
+        evidence_refs: clone(asArray(edge.evidence_refs)),
+      })),
+    },
+    source_maps: sourceMaps,
+    opaque_ranges: airOpaqueRanges(candidateBytes, sourceMaps),
+    diagnostics: clone(asArray(original.body?.diagnostics)),
+  };
+}
+
+function airDomainDigest(domain, value) {
+  return sha256HexBytes(UTF8.encode(`${domain}${canonicalJson(value)}`));
+}
+
+export function buildAirArtifact(state) {
+  const original = state.airArtifact;
+  if (!original || original.kind !== "workflow") {
+    throw new Error("This document is not an AIR workflow.");
+  }
+  if (!state.dirty) return clone(original);
+  if (asArray(original.required_extensions).includes(AIR_LEGACY_EXTENSION)) {
+    throw new Error("This workflow requires the legacy bridge and cannot be edited safely.");
+  }
+  const projection = {
+    format: "air",
+    air_version: AIR_VERSION,
+    kind: "workflow",
+    profile: AIR_WORKFLOW_PROFILE,
+    body: airWorkflowBody(state, original),
+  };
+  const contentDigest = airDomainDigest(AIR_CONTENT_DOMAIN, projection);
+  const extensions = clone(asObject(original.extensions));
+  delete extensions[AIR_LEGACY_EXTENSION];
+  const envelope = {
+    $schema: AIR_SCHEMA,
+    ...projection,
+    artifact_id: `urn:air:sha256:${contentDigest}`,
+    provenance: {
+      created_by: { name: "air-workbench", version: AIR_VERSION },
+      origins: clone(asArray(original.provenance?.origins)),
+      derived_from: [
+        ...clone(asArray(original.provenance?.derived_from)),
+        {
+          artifact_id: original.artifact_id,
+          content_digest: original.integrity.content_digest,
+          relationship: "render",
+        },
+      ],
+      migrations: clone(asArray(original.provenance?.migrations)),
+    },
+    integrity: {
+      canonicalization: "RFC8785",
+      algorithm: "sha-256",
+      content_digest: contentDigest,
+    },
+    required_extensions: clone(asArray(original.required_extensions)).filter(
+      (key) => key !== AIR_LEGACY_EXTENSION,
+    ),
+    extensions,
+  };
+  envelope.integrity.envelope_digest = airDomainDigest(
+    AIR_ENVELOPE_DOMAIN,
+    {
+      ...envelope,
+      integrity: { ...envelope.integrity },
+    },
+  );
+  return envelope;
+}
+
+function sourceEndsInOpenAirMarkdownContext(sourceText) {
+  let fence = null;
+  let firstLine = true;
+  let frontmatter = false;
+  for (const line of sourceText.split(/\r\n|\n/u)) {
+    if (firstLine && line === "---") {
+      frontmatter = true;
+      firstLine = false;
+      continue;
+    }
+    firstLine = false;
+    if (frontmatter) {
+      if (line === "---") frontmatter = false;
+      continue;
+    }
+    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
+    if (!match) continue;
+    const marker = match[1][0];
+    if (fence === null) {
+      fence = { marker, length: match[1].length };
+    } else if (
+      fence.marker === marker &&
+      match[1].length >= fence.length &&
+      match[2].trim().length === 0
+    ) {
+      fence = null;
+    }
+  }
+  return frontmatter || fence !== null;
+}
+
+export function buildAirMarkdownBytes(state) {
+  const artifact = buildAirArtifact(state);
+  const sourceBytes = decodeBase64(artifact.body.source.bytes_base64);
+  if (artifact.body.source.newline === "mixed") {
+    throw new Error("Mixed-newline sources cannot use the AIR Markdown carrier.");
+  }
+  const withoutSource = clone(artifact);
+  delete withoutSource.body.source.bytes_base64;
+  const manifest = {
+    carrier: "air.md",
+    carrier_version: "1",
+    envelope_without_source_content: withoutSource,
+    logical_source: {
+      byte_length: sourceBytes.length,
+      sha256: artifact.body.source.sha256,
+    },
+  };
+  const token = bytesToBase64(UTF8.encode(canonicalJson(manifest)))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+  const eol = artifact.body.source.newline === "crlf" ? "\r\n" : "\n";
+  const sourceText = UTF8_DECODER.decode(sourceBytes);
+  if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
+    throw new Error(
+      "Source ends in an open frontmatter or fenced-code context.",
+    );
+  }
+  const separator = sourceText.endsWith(eol) ? eol : `${eol}${eol}`;
+  return concatBytes([
+    sourceBytes,
+    UTF8.encode(`${separator}<!-- air:v1 ${token} -->${eol}`),
+  ]);
 }
 
 export function buildWorkflowArtifact(state) {

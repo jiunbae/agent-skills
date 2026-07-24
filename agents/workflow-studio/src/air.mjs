@@ -20,6 +20,7 @@ import {
 } from "../shared/air-codec.mjs";
 import {
   artifactHash,
+  importSkillBytes,
   stableStringify,
   validateArtifact,
 } from "./core.mjs";
@@ -1432,6 +1433,35 @@ export function decodeAirMarkdownArtifact(input) {
     logicalSource: Buffer.from(decoded.logicalSource),
     carrierBytes: Buffer.from(decoded.carrierBytes),
   };
+}
+
+export function recognizeAirSkillCarrier(input) {
+  const bytes = Buffer.from(input);
+  let decoded;
+  try {
+    decoded = decodeAirMarkdownArtifact(bytes);
+  } catch {
+    return null;
+  }
+
+  try {
+    decodeAirMarkdownArtifact(decoded.logicalSource);
+  } catch {
+    return decoded;
+  }
+  throw airError(
+    "AIR_CARRIER_DUPLICATE",
+    "Activated Skill Markdown must contain exactly one valid terminal AIR carrier.",
+  );
+}
+
+export function importSkillBytesAsAir(
+  input,
+  { sourcePath = "SKILL.md" } = {},
+) {
+  const carrier = recognizeAirSkillCarrier(input);
+  if (carrier !== null) return carrier.artifact;
+  return migrateLegacyToAir(importSkillBytes(input, { sourcePath }));
 }
 
 export function parseAndInspectAir(input) {

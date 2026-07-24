@@ -993,6 +993,7 @@
           "maxSnapshotHandles",
           "maxStableIds",
           "maxConcurrentReaders",
+          "maxContinuityBytes",
           "headFingerprintBytes",
           "checkpointBytes",
           "session_request_max_bytes",
@@ -1056,6 +1057,9 @@
           },
           "maxConcurrentReaders": {
             "const": 4
+          },
+          "maxContinuityBytes": {
+            "const": 8388608
           },
           "headFingerprintBytes": {
             "const": 4096

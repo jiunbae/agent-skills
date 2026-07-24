@@ -27,6 +27,7 @@ import {
   airToLegacy,
   decodeAirMarkdownArtifact,
   encodeAirMarkdownArtifact,
+  importSkillBytesAsAir,
   migrateLegacyToAir,
   validateAirArtifact,
 } from "../src/air.mjs";
@@ -379,8 +380,10 @@ async function airImportCommand(parsed) {
   if (airExtension(parsed.positionals[0]) !== null) {
     throw cliError("ALREADY_AIR", "AIR input does not need to be imported.");
   }
-  const workflow = await importSkillFile(parsed.positionals[0]);
-  const artifact = migrateLegacyToAir(workflow);
+  const absolute = await assertInputFile(parsed.positionals[0]);
+  const artifact = importSkillBytesAsAir(await readFile(absolute), {
+    sourcePath: absolute,
+  });
   const written = await publishAir(option(parsed, "out"), artifact, {
     jsonOnly: true,
   });
@@ -577,9 +580,15 @@ async function readStudioArtifact(path) {
 
 async function readWorkbenchArtifact(path) {
   if (airExtension(path) !== null) {
-    return airToLegacy((await readAir(path)).artifact);
+    return (await readAir(path)).artifact;
   }
-  return readStudioArtifact(path);
+  if (isSkillPath(path)) {
+    const absolute = await assertInputFile(path);
+    return importSkillBytesAsAir(await readFile(absolute), {
+      sourcePath: absolute,
+    });
+  }
+  return migrateLegacyToAir(await readStudioArtifact(path));
 }
 
 function studioHost(value) {
@@ -616,6 +625,7 @@ async function serveWorkbench({
   host,
   port,
   lanWarning,
+  initialArtifactExplicit = false,
 }) {
   if (lanWarning && host === "0.0.0.0") {
     process.stderr.write(
@@ -663,7 +673,9 @@ async function serveWorkbench({
         ? `[${address.address}]`
         : address.address;
       const url =
-        `http://${literal}:${address.port}/?token=${encodeURIComponent(studio.token)}`;
+        `http://${literal}:${address.port}/?token=${encodeURIComponent(studio.token)}${
+          initialArtifactExplicit ? "&initial=explicit" : ""
+        }`;
       await new Promise((resolvePromise, rejectPromise) => {
         process.stdout.write(`${url}\n`, (error) => {
           if (error) rejectPromise(error);
@@ -697,6 +709,7 @@ async function studioCommand(parsed) {
     host,
     port,
     lanWarning: false,
+    initialArtifactExplicit: true,
   });
 }
 
@@ -740,9 +753,9 @@ async function airWorkbenchCommand(parsed) {
   if (parsed.positionals.length === 1) {
     artifact = await readWorkbenchArtifact(parsed.positionals[0]);
   } else if (snapshot.items.length > 0) {
-    artifact = await catalog.importArtifact(snapshot.items[0].id);
+    artifact = await catalog.importAirArtifact(snapshot.items[0].id);
   } else {
-    artifact = emptyWorkbenchArtifact();
+    artifact = migrateLegacyToAir(emptyWorkbenchArtifact());
   }
   await serveWorkbench({
     artifact,
@@ -751,6 +764,7 @@ async function airWorkbenchCommand(parsed) {
     host,
     port,
     lanWarning: true,
+    initialArtifactExplicit: parsed.positionals.length === 1,
   });
 }
 

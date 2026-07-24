@@ -8,6 +8,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { importSkillBytes, importSkillFile } from "../src/core.mjs";
 import { createStudioServer } from "../src/server.mjs";
+import {
+  buildAirArtifact,
+  createEditorState,
+  editNode,
+} from "../assets/editor-model.mjs";
+import {
+  decodeAirMarkdownArtifact,
+  migrateLegacyToAir,
+  validateAirArtifact,
+} from "../src/air.mjs";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const STUDIO_ROOT = resolve(TEST_DIR, "..");
@@ -222,6 +232,8 @@ async function fixtures({ bounded = false } = {}) {
         code: "AIR_CATALOG_ITEM_NOT_FOUND",
       });
     },
+    importAirArtifact: async (id) =>
+      migrateLegacyToAir(await catalog.importArtifact(id)),
   };
   const sessionCatalog = {
     format: "air-session-catalog",
@@ -268,7 +280,7 @@ async function fixtures({ bounded = false } = {}) {
 async function runPass(browser, executablePath, pass) {
   const { catalog, first, sessionRegistry } = await fixtures();
   const studio = createStudioServer({
-    artifact: first,
+    artifact: migrateLegacyToAir(first),
     assetsDir: ASSETS_DIR,
     schemasDir: SCHEMAS_DIR,
     catalog,
@@ -392,6 +404,24 @@ async function runPass(browser, executablePath, pass) {
     await firstNode.click();
     await page.locator("#nodeTitle").fill(`Edited in pass ${pass}`);
     await page.locator("#nodeTitle").blur();
+    const airDownloadPromise = page.waitForEvent("download");
+    await page.locator("#downloadIr").click();
+    const airDownload = await airDownloadPromise;
+    assert.equal(airDownload.suggestedFilename(), "workflow.air.json");
+    validateAirArtifact(
+      JSON.parse(await readFile(await airDownload.path(), "utf8")),
+    );
+    const markdownDownloadPromise = page.waitForEvent("download");
+    await page.locator("#downloadMarkdown").click();
+    const markdownDownload = await markdownDownloadPromise;
+    assert.equal(markdownDownload.suggestedFilename(), "workflow.air.md");
+    const carrier = decodeAirMarkdownArtifact(
+      await readFile(await markdownDownload.path()),
+    );
+    assert.match(
+      carrier.logicalSource.toString("utf8"),
+      new RegExp(`Edited in pass ${pass}`, "u"),
+    );
 
     const installed = page.locator("#installedSkillList .resource-row").first();
     await installed.click();
@@ -479,6 +509,67 @@ async function runPass(browser, executablePath, pass) {
     );
     assert.equal(await page.locator(".react-flow__node").count(), 3);
     assert.equal(await page.locator(".react-flow__edge").count(), 2);
+    assert.match(
+      (await page.locator("#graphLegend").textContent()) ?? "",
+      /observed provider link.*inferred order/iu,
+    );
+    const observedEdge = page.locator(
+      '.react-flow__edge[data-id="event-link-1"]',
+    );
+    await observedEdge.focus();
+    await observedEdge.click();
+    assert.match(await observedEdge.getAttribute("class"), /observed-provider/u);
+    assert.match(
+      (await page.locator("#edgeTruth").textContent()) ?? "",
+      /Observed provider-link evidence.*read-only.*not causality/iu,
+    );
+    assert.equal(await page.locator("#edgeProvenance").textContent(), "observed");
+    assert.match(
+      (await page.locator("#outline-edge-event-link-1").textContent()) ?? "",
+      /observed provider evidence.*read only/iu,
+    );
+    assert.equal(
+      await page.locator("#outline-edge-event-link-1").getAttribute("aria-pressed"),
+      "true",
+    );
+    await page.locator("#outlineDetails").evaluate((details) => {
+      details.open = true;
+    });
+    await page.locator("#outline-edge-event-link-1").click();
+    await page.waitForFunction(
+      () => document.activeElement?.id === "outline-edge-event-link-1",
+    );
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.id),
+      "outline-edge-event-link-1",
+    );
+    const inferredEdge = page.locator(
+      '.react-flow__edge[data-id="event-link-2"]',
+    );
+    await inferredEdge.focus();
+    await inferredEdge.click();
+    assert.match(await inferredEdge.getAttribute("class"), /inferred-temporal/u);
+    assert.match(
+      (await page.locator("#edgeTruth").textContent()) ?? "",
+      /Inferred temporal event order.*read-only.*not causality/iu,
+    );
+    assert.equal(await page.locator("#edgeProvenance").textContent(), "inferred");
+    assert.match(
+      (await page.locator("#outline-edge-event-link-2").textContent()) ?? "",
+      /inferred order.*not causality/iu,
+    );
+    assert.equal(
+      await page.locator("#outline-edge-event-link-2").getAttribute("aria-pressed"),
+      "true",
+    );
+    await page.locator("#outline-edge-event-link-2").click();
+    await page.waitForFunction(
+      () => document.activeElement?.id === "outline-edge-event-link-2",
+    );
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.id),
+      "outline-edge-event-link-2",
+    );
     await page.locator(".evidence-row").nth(2).click();
     assert.equal(
       await page.locator('.react-flow__node[data-id="event-3"]').getAttribute(
@@ -693,6 +784,79 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       /Loading local resources|Waiting for artifact|Loading artifact/u,
     );
     await missingTokenPage.close();
+
+    const example = JSON.parse(
+      await readFile(
+        resolve(STUDIO_ROOT, "examples/hello-agent/workflow.air.json"),
+        "utf8",
+      ),
+    );
+    const explicitArtifact = buildAirArtifact(editNode(
+      createEditorState(example),
+      example.body.graph.nodes[0].id,
+      "title",
+      "Keep the explicit AIR document",
+    ));
+    assert.equal(
+      explicitArtifact.extensions[
+        "https://open330.github.io/air/extensions/legacy-workflow-ir-v1"
+      ],
+      undefined,
+    );
+    const explicitStudio = createStudioServer({
+      artifact: explicitArtifact,
+      assetsDir: ASSETS_DIR,
+      schemasDir: SCHEMAS_DIR,
+      catalog,
+      sessionRegistry,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const explicitAddress = await explicitStudio.listen();
+    const explicitPage = await context.newPage();
+    try {
+      await explicitPage.goto(
+        `http://127.0.0.1:${explicitAddress.port}/?token=${
+          encodeURIComponent(explicitStudio.token)
+        }&initial=explicit`,
+        { waitUntil: "domcontentloaded" },
+      );
+      await explicitPage.locator(".react-flow.air-flow-ready")
+        .waitFor({ state: "visible" });
+      assert.equal(await explicitPage.locator(".react-flow__node").count(), 2);
+      assert.equal(await explicitPage.locator(".resource-tree .resource-row").count(), 4);
+      assert.equal(
+        await explicitPage.locator('.resource-row[aria-current="true"]')
+          .getAttribute("data-resource-key"),
+        "skill:legacy-artifact",
+      );
+      await explicitPage.locator("#refreshResources").click();
+      await explicitPage.waitForFunction(
+        () =>
+          document.querySelectorAll(".resource-tree .resource-row").length === 4 &&
+          document.querySelector(
+            '.resource-row[data-resource-key="skill:legacy-artifact"]',
+          )?.getAttribute("aria-current") === "true",
+      );
+      const jsonDownloadReady = explicitPage.waitForEvent("download");
+      await explicitPage.locator("#downloadIr").click();
+      const jsonDownload = await jsonDownloadReady;
+      assert.deepEqual(
+        JSON.parse(await readFile(await jsonDownload.path(), "utf8")),
+        explicitArtifact,
+      );
+      const markdownDownloadReady = explicitPage.waitForEvent("download");
+      await explicitPage.locator("#downloadMarkdown").click();
+      const markdownDownload = await markdownDownloadReady;
+      const decoded = decodeAirMarkdownArtifact(
+        await readFile(await markdownDownload.path()),
+      );
+      assert.equal(decoded.artifact.artifact_id, explicitArtifact.artifact_id);
+      assert.equal(decoded.artifact.body.graph.nodes.length, 2);
+    } finally {
+      await explicitPage.close();
+      await explicitStudio.close();
+    }
   } finally {
     await context.close();
     await instance.close();

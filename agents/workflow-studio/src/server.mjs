@@ -5,7 +5,6 @@ import { isIP } from "node:net";
 import { isAbsolute, resolve } from "node:path";
 
 import { AIR_PROFILES, parseIJson } from "../shared/air-codec.mjs";
-import { migrateLegacyToAir } from "./air.mjs";
 import { CATALOG_LIMITS } from "./catalog.mjs";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -651,9 +650,7 @@ export function createStudioServer({
           return;
         }
         if (skillItemMatch) {
-          const air = migrateLegacyToAir(
-            await catalog.importArtifact(skillItemMatch[1]),
-          );
+          const air = await catalog.importAirArtifact(skillItemMatch[1]);
           send(response, method, 200, encodeJson(air), {
             "Content-Type":
               `application/json; profile="${AIR_PROFILES.workflow}"`,

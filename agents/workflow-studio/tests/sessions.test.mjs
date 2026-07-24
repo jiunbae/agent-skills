@@ -4,6 +4,7 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  open,
   rename,
   rm,
   symlink,
@@ -21,6 +22,14 @@ import {
 } from "../src/sessions.mjs";
 
 const SENTINEL = "AIR_PRIVATE_CANARY_63fcf4";
+
+function fixedRecord(type, slot, byteLength = 128) {
+  const prefix = `{"type":"${type}","slot":${slot},"pad":"`;
+  const suffix = '"}\n';
+  const padding = byteLength - Buffer.byteLength(prefix + suffix, "utf8");
+  assert.ok(padding >= 0);
+  return Buffer.from(`${prefix}${"x".repeat(padding)}${suffix}`, "utf8");
+}
 
 function deterministicRandom() {
   let index = 0;
@@ -197,6 +206,161 @@ test("continuation detects replacement without joining source epochs", async (t)
   assert.equal(changed.artifact, null);
 });
 
+test("continuation detects a same-inode middle rewrite of the accepted prefix", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "middle-rewrite.jsonl");
+  const records = Array.from(
+    { length: 200 },
+    (_, index) => fixedRecord("event_msg", index),
+  );
+  await writeFile(source, Buffer.concat(records));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const first = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.equal(first.artifact.body.events.length, 200);
+
+  const handle = await open(source, "r+");
+  try {
+    await handle.write(
+      fixedRecord("session_meta", 100),
+      0,
+      128,
+      100 * 128,
+    );
+  } finally {
+    await handle.close();
+  }
+  const changed = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(changed.source_changed, true);
+  assert.equal(changed.artifact, null);
+});
+
+test("continuation detects a same-inode middle rewrite followed by append", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "rewrite-append.jsonl");
+  const records = Array.from(
+    { length: 200 },
+    (_, index) => fixedRecord("event_msg", index),
+  );
+  await writeFile(source, Buffer.concat(records));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const first = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+
+  const handle = await open(source, "r+");
+  try {
+    await handle.write(
+      fixedRecord("session_meta", 100),
+      0,
+      128,
+      100 * 128,
+    );
+  } finally {
+    await handle.close();
+  }
+  await appendFile(source, fixedRecord("event_msg", 200));
+  const changed = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(changed.source_changed, true);
+  assert.equal(changed.artifact, null);
+});
+
+test("continuation detects a same-inode rewrite inside an oversized record", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "oversized-rewrite.jsonl");
+  const oversized = Buffer.concat([
+    Buffer.alloc(SESSION_LIMITS.maxLineBytes + 8_192, 0x78),
+    Buffer.from("\n"),
+  ]);
+  await writeFile(source, oversized);
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const first = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.deepEqual(
+    first.artifact.body.events.map(({ type }) => type),
+    ["record.oversized-omitted"],
+  );
+
+  const handle = await open(source, "r+");
+  try {
+    await handle.write(
+      Buffer.from("y"),
+      0,
+      1,
+      SESSION_LIMITS.headFingerprintBytes + 4_096,
+    );
+  } finally {
+    await handle.close();
+  }
+  const changed = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(changed.source_changed, true);
+  assert.equal(changed.artifact, null);
+});
+
+test("continuity validation accepts its exact bound and fails closed at bound plus one", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "continuity-bound.jsonl");
+  const maxContinuityBytes = 256;
+  await writeFile(source, fixedRecord("event_msg", 0, maxContinuityBytes));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    limits: { ...SESSION_LIMITS, maxContinuityBytes },
+    randomBytes: deterministicRandom(),
+  });
+  assert.equal(
+    registry.capabilities().limits.maxContinuityBytes,
+    maxContinuityBytes,
+  );
+  const catalog = await registry.catalog({ refresh: true });
+  const first = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.equal(first.source_changed, false);
+  assert.equal(
+    first.artifact.body.capture.snapshot_cursor.byte_offset,
+    maxContinuityBytes,
+  );
+
+  await appendFile(source, "\n");
+  const changed = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(changed.source_changed, true);
+  assert.equal(changed.artifact, null);
+});
+
 test("first snapshot is bound to catalog identity and refuses symlink swaps", async (t) => {
   const dirs = await fixture(t);
   const source = join(dirs.codex, "catalogued.jsonl");
@@ -268,6 +432,53 @@ test("snapshot generation cannot be relabelled by a concurrent refresh", async (
     pending,
     (error) => error?.code === "AIR_SESSION_STALE_GENERATION",
   );
+});
+
+test("snapshot revalidates accepted bytes after lifecycle evidence", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "evidence-race.jsonl");
+  const records = [
+    fixedRecord("session_meta", 0),
+    fixedRecord("event_msg", 1),
+    fixedRecord("event_msg", 2),
+  ];
+  const replacement = fixedRecord("response_item", 1);
+  assert.equal(replacement.byteLength, records[1].byteLength);
+  await writeFile(source, Buffer.concat(records));
+  let evidenceCalls = 0;
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+    processEvidence: async () => {
+      evidenceCalls += 1;
+      if (evidenceCalls !== 2) return null;
+      const writer = await open(source, "r+");
+      try {
+        await writer.write(
+          replacement,
+          0,
+          replacement.byteLength,
+          records[0].byteLength,
+        );
+      } finally {
+        await writer.close();
+      }
+      return null;
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const first = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.equal(first.source_changed, false);
+  await appendFile(source, fixedRecord("event_msg", 3));
+  const changed = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(changed.source_changed, true);
 });
 
 test("oversized newline records advance in bounded chunks and emit one omission", async (t) => {

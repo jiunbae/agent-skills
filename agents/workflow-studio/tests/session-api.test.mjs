@@ -352,6 +352,22 @@ test("session errors and explicit wildcard LAN remain sanitized and read-only", 
     assert.equal(response.body.includes("private locator"), false);
     assert.equal(response.headers["access-control-allow-origin"], undefined);
 
+    sessionRegistry.snapshot = async () => ({
+      session_id: SESSION_ID,
+      generation: 1,
+      source_changed: true,
+    });
+    const changed = await http(address, {
+      host: literalHost,
+      method: "POST",
+      path:
+        `/air/v1/sessions/${SESSION_ID}/snapshots?token=${encodeURIComponent(studio.token)}`,
+      body: '{"generation":1}',
+      headers: { "Content-Type": "application/json" },
+    });
+    assert.equal(changed.status, 409);
+    assert.equal(JSON.parse(changed.body).code, "AIR_SESSION_SOURCE_CHANGED");
+
     const dns = await http(address, {
       host: `air.local:${bound.port}`,
       path: `/air/v1/sessions?token=${encodeURIComponent(studio.token)}`,

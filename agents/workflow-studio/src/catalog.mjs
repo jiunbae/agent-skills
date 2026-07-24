@@ -17,7 +17,8 @@ import {
   resolve,
 } from "node:path";
 
-import { importSkillBytes } from "./core.mjs";
+import { importSkillBytesAsAir } from "./air.mjs";
+import { airToLegacy } from "./air.mjs";
 
 export const CATALOG_LIMITS = Object.freeze({
   maxRoots: 16,
@@ -352,13 +353,13 @@ function parseMetadata(bytes, limits) {
 
 function importSummary(bytes, syntheticId) {
   try {
-    const artifact = importSkillBytes(bytes, {
+    const artifact = importSkillBytesAsAir(bytes, {
       sourcePath: `air-catalog/${syntheticId}/SKILL.md`,
     });
     return {
-      nodeCount: artifact.graph.nodes.length,
-      edgeCount: artifact.graph.edges.length,
-      diagnostics: artifact.diagnostics.map((item) => Object.freeze({
+      nodeCount: artifact.body.graph.nodes.length,
+      edgeCount: artifact.body.graph.edges.length,
+      diagnostics: artifact.body.diagnostics.map((item) => Object.freeze({
         severity: item.severity === "error" ? "error" : "warning",
         code: importDiagnosticCode(item.code),
         message: byteTruncate(String(item.message), 512),
@@ -1070,8 +1071,14 @@ class SkillCatalog {
   }
 
   async importArtifact(id) {
+    return airToLegacy(await this.importAirArtifact(id));
+  }
+
+  async importAirArtifact(id) {
     const source = await this.readArtifactSource(id);
-    return importSkillBytes(source.bytes, { sourcePath: source.sourcePath });
+    return importSkillBytesAsAir(source.bytes, {
+      sourcePath: source.sourcePath,
+    });
   }
 }
 

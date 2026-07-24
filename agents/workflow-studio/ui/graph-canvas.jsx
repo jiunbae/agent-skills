@@ -226,21 +226,49 @@ function GraphCanvas({
 
   const flowEdges = useMemo(
     () =>
-      domainEdges.map((edge) => ({
-        id: safeText(edge.id),
-        source: safeText(edge.source),
-        target: safeText(edge.target),
-        label: safeText(edge.kind, "sequence"),
-        markerEnd: { type: MarkerType.ArrowClosed },
-        selected: edge.id === selectedEdgeId,
-        type: "smoothstep",
-        deletable: !readOnly && !edge.readOnly,
-        reconnectable: !readOnly && !edge.readOnly,
-        style:
-          edge.kind === "parallel"
-            ? { stroke: "#946122", strokeDasharray: "7 5" }
-            : undefined,
-      })),
+      domainEdges.map((edge) => {
+        const category = safeText(edge.traceSemantics?.category);
+        const observedProvider = category === "observed-provider";
+        const inferredTemporal = category === "inferred-temporal";
+        return {
+          id: safeText(edge.id),
+          source: safeText(edge.source),
+          target: safeText(edge.target),
+          label: safeText(edge.kind, "sequence"),
+          ariaLabel: safeText(
+            edge.traceSemantics?.ariaLabel,
+            `${safeText(edge.kind, "sequence")} edge ${safeText(edge.id)}`,
+          ),
+          className: category ? `air-trace-edge air-trace-edge--${category}` : "",
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: observedProvider
+              ? "#1f766c"
+              : inferredTemporal
+                ? "#a56216"
+                : undefined,
+          },
+          selected: edge.id === selectedEdgeId,
+          type: "smoothstep",
+          deletable: !readOnly && !edge.readOnly,
+          reconnectable: !readOnly && !edge.readOnly,
+          data: {
+            assertion: safeText(edge.assertion),
+            provenance: safeText(edge.provenance),
+          },
+          style: observedProvider
+            ? { stroke: "#1f766c", strokeWidth: 2.5 }
+            : inferredTemporal
+              ? {
+                  stroke: "#a56216",
+                  strokeWidth: 2.25,
+                  strokeDasharray: "5 5",
+                }
+              : edge.kind === "parallel"
+                ? { stroke: "#946122", strokeDasharray: "7 5" }
+                : undefined,
+        };
+      }),
     [domainEdges, readOnly, selectedEdgeId],
   );
 
@@ -249,7 +277,7 @@ function GraphCanvas({
   }, []);
 
   const notifySelection = useCallback(
-    (type, id) => {
+    (type, id, focusSelected = false) => {
       const nextId = safeText(id);
       if (!nextId) return;
       const current = selectionRef.current;
@@ -264,6 +292,9 @@ function GraphCanvas({
         return;
       }
       rememberGraphFocus();
+      if (focusSelected) {
+        focusRestoreRef.current = { id: nextId, type };
+      }
       selectionRef.current =
         type === "node"
           ? { edgeId: null, nodeId: nextId }
@@ -360,7 +391,7 @@ function GraphCanvas({
           : (edges) => edges.forEach((edge) => onDeleteEdge?.(edge.id))
       }
       onEdgesChange={handleEdgeChanges}
-      onEdgeClick={(_, edge) => notifySelection("edge", edge.id)}
+      onEdgeClick={(_, edge) => notifySelection("edge", edge.id, true)}
       onInit={registerInstance}
       onNodesChange={handleNodeChanges}
       onNodesDelete={
@@ -368,7 +399,7 @@ function GraphCanvas({
           ? undefined
           : (nodes) => nodes.forEach((node) => onDeleteNode?.(node.id))
       }
-      onNodeClick={(_, node) => notifySelection("node", node.id)}
+      onNodeClick={(_, node) => notifySelection("node", node.id, true)}
       onPaneClick={clearSelection}
       onReconnect={
         readOnly
