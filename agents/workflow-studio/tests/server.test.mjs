@@ -212,6 +212,23 @@ test("requires the per-process token for the source-bearing artifact", async (t)
   });
 });
 
+test("reports unavailable optional AIR resources without probing absent catalogs", async (t) => {
+  await withServer(t, async ({ address, studio }) => {
+    const response = await httpRequest(address, {
+      path:
+        `/air/v1/capabilities?token=${encodeURIComponent(studio.token)}`,
+    });
+    assert.equal(response.status, 200);
+    const capabilities = JSON.parse(response.body);
+    assert.equal(capabilities.operations["capabilities.read"], "available");
+    assert.equal(capabilities.operations["schemas.read"], "unavailable");
+    assert.equal(capabilities.operations["skills.catalog.read"], "unavailable");
+    assert.equal(capabilities.operations["sessions.catalog.read"], "unavailable");
+    assert.equal(capabilities.catalog_generation, 0);
+    assert.equal(capabilities.session_generation, 0);
+  });
+});
+
 test("HEAD returns matching metadata without a response body", async (t) => {
   await withServer(t, async ({ address, studio }) => {
     const getResponse = await httpRequest(address, { path: "/editor.mjs" });

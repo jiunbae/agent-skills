@@ -162,13 +162,37 @@ Its adapter ID is `codex-rollout-jsonl` or `claude-project-jsonl`, with an
 adapter version, source-schema fingerprint, append-safe byte cursor, bounded
 source-prefix digest, completeness, and explicit lifecycle evidence.
 
-Privacy is always `metadata-only`. Event evidence may contain only generic raw
-type, top-level key names, byte range and length, digest, and `omitted:true`.
+Privacy is always `metadata-only`. Event evidence may contain only an
+adapter-owned generic record type, the fixed `content-omitted` marker, byte
+range and length, digest, and `omitted:true`.
 Prompt, message, reasoning, command, arguments, results, stdout/stderr,
 attachments, file contents, environment, credentials, full paths, branches,
 and raw provider IDs MUST NOT appear. Recent mtime alone is neither active nor
 complete evidence. Lifecycle claims MUST retain their observed,
 provider-declared, or inferred provenance.
+
+The redaction manifest contains every privacy category defined by the trace
+schema exactly once, in canonical schema order. Session adapters construct
+public records only from adapter-owned literals; unknown provider types, keys,
+identifiers, and errors are represented by generic omission records and are
+never copied into AIR.
+
+Codex session lifecycle is `unknown` unless a version-tested provider signal
+establishes a narrower state. Claude lifecycle may be `active` or `idle` only
+when injected process evidence verifies both process identity and start
+identity; otherwise it is `unknown`. Modification time alone is never
+lifecycle evidence.
+
+Append state is server-private and binds the provider, stream kind, adapter
+major, open-file identity, epoch, committed newline offset, a bounded head
+fingerprint, and a bounded checkpoint ending at that offset. A torn suffix is
+discarded and retried from the last committed newline. Truncation, replacement,
+checkpoint mismatch, or adapter-major change returns a typed source change and
+never joins observations from different source epochs. Public opaque snapshot
+handles, not caller-supplied cursors or paths, select continuation state.
+The stable session-ID registry retains only the bounded current catalog
+generation; removed or truncated identities are pruned and are never aliased
+to a different source.
 
 ## 5. Canonicalization and identity
 

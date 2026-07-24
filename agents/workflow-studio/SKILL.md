@@ -36,9 +36,11 @@ node scripts/air.mjs workbench
 The catalog scans standard project, user, system, and repository Skill roots
 with finite read-only bounds and exposes only opaque item IDs through the local
 API. It opens the first discovered Skill, or an empty document when none is
-available. Never accept a browser-supplied path, root, glob, URL, or output
-destination. The integrated Resources list is not implemented in this
-foundation wave.
+available. The four-region shell keeps Resources, the React Flow canvas,
+Properties / Run setup, and Problems / Evidence / Source / Diff in one
+workspace. Use the Resources filter, **Quick Open** (`Command/Ctrl+P`), and
+manual **Refresh resources** as needed. Never accept a browser-supplied path,
+root, glob, URL, or output destination.
 
 Open a specific Skill or AIR artifact by supplying one input:
 
@@ -47,9 +49,10 @@ node scripts/air.mjs workbench /path/to/skill/SKILL.md
 node scripts/air.mjs workbench /path/to/workflow.air.json
 ```
 
-Do not claim that Codex or Claude session adapters, a session history view, or
-the full Resources workbench shell are implemented until their later
-integration gates pass.
+Discovery is enabled at launch. It is snapshot-based: do not claim a watcher,
+live follow, provider signal, or managed run. Modified documents are isolated
+in memory, and a resource switch requires Keep, Discard, or Cancel instead of
+silently replacing edits.
 
 Default binding is loopback. An explicit `--host 0.0.0.0` is informed consent
 to expose the same token-protected, read-only catalog over plaintext HTTP to
@@ -65,7 +68,32 @@ Tell the user to replace `0.0.0.0` in the printed URL with
 trusted network/firewall, keep the token URL private, and stop the process
 after review. Do not describe `0.0.0.0` as local-user-only.
 
-## 2. Choose the AIR representation
+## 2. Inspect metadata-only Codex and Claude sessions
+
+The default Resources catalog includes bounded Codex rollout streams and
+Claude main/subagent streams. Selecting a session creates an in-memory,
+read-only AIR `trace` snapshot. Its graph and Evidence timeline contain
+observed record envelopes plus separately inferred temporal order.
+`hidden_reasoning_recovered` is always `false`.
+
+All public surfaces omit raw prompts, messages, reasoning, commands and
+arguments, results, stdout/stderr, attachments, file content, environment and
+credentials, branches, filesystem paths, and provider identifiers. Use only
+opaque server-instance session/snapshot IDs. The artifact must retain the
+metadata-only privacy manifest and omission counts.
+
+**Refresh resources** takes another bounded catalog snapshot and, for the
+selected session, requests continuation from the last server-owned cursor.
+Incomplete trailing JSONL remains uncommitted until a later manual refresh.
+If the source was truncated, replaced, rotated, or rewritten, report the source
+change instead of joining histories. Provider lifecycle evidence is
+asymmetric; `unknown` is correct when no authoritative evidence exists.
+
+Session graphs are evidence, not editable workflows. Do not enable step/edge
+editing, plan setup, Markdown export, source, or diff for them, and never expose
+raw provider JSONL to the browser.
+
+## 3. Choose the AIR representation
 
 - `.air.json` is the complete AIR 1 artifact for `workflow`, `plan`, and
   `trace`.
@@ -88,7 +116,7 @@ node scripts/air.mjs convert /path/to/workflow.air.json \
   --out /path/to/workflow.air.md
 ```
 
-## 3. Migrate legacy artifacts explicitly
+## 4. Migrate legacy artifacts explicitly
 
 AIR Workbench reads Workflow IR `1.0`, exact `workflow-studio:v1` Skill
 metadata, plain `SKILL.md`, and saved legacy workflow/plan/trace artifacts.
@@ -105,7 +133,7 @@ node scripts/air.mjs migrate /path/to/legacy.json \
   --out /path/to/migrated.air.json
 ```
 
-## 4. Review and edit a workflow
+## 5. Review and edit a workflow
 
 Keep the graph canvas, semantic outline, selection inspector, source, and diff
 in one review context:
@@ -137,7 +165,7 @@ node scripts/workflow-studio.mjs studio \
 An unchanged Skill round-trip must preserve its source bytes exactly.
 Unsupported or ambiguous Markdown remains opaque rather than being guessed.
 
-## 5. Use the legacy native-run compatibility path
+## 6. Use the legacy native-run compatibility path
 
 The established Workflow IR `1.0` native-run commands remain available
 unchanged while AIR-native plan/run support is developed:
@@ -160,13 +188,15 @@ Use `--agent claude` for Claude Code. Default to `read-only`;
 CLI authorization. Any prompt, graph, agent, working-directory, safety, or
 command change requires new approval.
 
-Before a native run, state that the graph is supplied to the selected CLI but
+The browser's **Run setup** prepares and downloads a reviewed plan; it is not a
+Run control and does not grant native approval. Before a native run, state that
+the graph is supplied to the selected CLI but
 is not enforced node by node. A trace includes observable provider events and
 explicitly inferred sequence, not hidden reasoning or causal truth. Missing
 CLIs fail explicitly; never install, silently fall back, add bypass flags, or
 accept arbitrary passthrough arguments.
 
-## 6. Promote a reviewed legacy plan or trace
+## 7. Promote a reviewed legacy plan or trace
 
 Promotion always writes a new Skill draft and never overwrites a source:
 
@@ -190,8 +220,10 @@ describe observed history, not guaranteed future behavior.
 - The server has no browser file-write, Skill-install, or agent-run endpoint.
 - Native execution remains delegated to installed Codex and Claude CLIs; AIR
   Workbench is not a managed node-by-node orchestrator.
-- Session discovery/snapshot conversion and the full React Resources shell are
-  later delivery waves, not capabilities of this foundation release.
+- The default Resources catalog discovers bounded Skills plus metadata-only
+  Codex rollout and Claude main/subagent sessions. Session snapshots and
+  timelines are read-only and refresh manually; there is no watcher or live
+  follow.
 - The installed runtime uses checked-in same-origin assets and needs no npm,
   CDN, registry, telemetry, remote service, or global executable.
 

@@ -34,10 +34,11 @@ SKILL.md ⇄ AIR workflow ⇄ AIR Workbench graph
 The normative specification is `spec/AIR-1.0.0.md`; schemas and deterministic
 examples live in `schemas/` and `examples/`.
 
-The foundation release publishes the AIR contract, pure codec, conversion and
-migration CLI, zero-input launcher, and bounded local Skill catalog/API. The
-integrated Resources shell and metadata-only Codex/Claude session adapters are
-later delivery waves and are not claimed here.
+The current V1 publishes the AIR contract, pure codec, conversion and migration
+CLI, zero-input launcher, bounded local Skill and session catalogs, and the
+integrated four-region AIR Workbench. Codex rollout sessions and Claude
+main/subagent sessions are exposed only through metadata-only, read-only
+snapshots.
 
 ## Start with automatic Skill discovery
 
@@ -47,10 +48,11 @@ node scripts/air.mjs workbench
 
 AIR Workbench scans the standard project, user, system, and repository Skill
 roots at startup within finite read-only budgets. It opens the first discovered
-Skill, or an empty document when none is available. The current foundation
-exposes the full metadata-only catalog and explicit refresh through its
-tokenized `/air/v1` API; the visual Resources list arrives with the unified
-workbench shell.
+Skill, or an empty document when none is available. The **Resources** region
+groups workspace and installed Skills alongside recent Codex and Claude
+sessions. Filter it in place, use **Quick Open** (`Command/Ctrl+P`), or choose
+**Refresh resources** to take another bounded snapshot. Discovery is on by
+default; there is no watcher or live-follow process.
 
 To open one specific Skill or AIR artifact instead:
 
@@ -58,6 +60,50 @@ To open one specific Skill or AIR artifact instead:
 node scripts/air.mjs workbench /path/to/skill/SKILL.md
 node scripts/air.mjs workbench /path/to/workflow.air.json
 ```
+
+The main workspace remains visible while you move among its four regions:
+
+- **Resources** for Skills, sessions, search, source variants, and refresh;
+- the persistent **React Flow graph** and keyboard semantic outline;
+- **Properties / Run setup** for the current selection or downloadable plan;
+  and
+- **Problems / Evidence / Source / Diff** for linked review context.
+
+Selecting a problem or evidence row returns to the related graph element.
+Resource documents retain independent in-memory state. If a modified document
+would be replaced, AIR Workbench asks whether to keep it in memory, discard it,
+or cancel the switch.
+
+## Inspect a current or recent agent session
+
+Start AIR Workbench with the same zero-input command, then choose an item under
+**Sessions**:
+
+```bash
+node scripts/air.mjs workbench
+```
+
+AIR Workbench discovers bounded Codex rollout JSONL and Claude main/subagent
+JSONL streams through server-owned roots. Opening an item creates an in-memory
+AIR `trace` snapshot. The graph and **Evidence** timeline show only observed
+record envelopes and separately inferred temporal order; they are read only.
+`hidden_reasoning_recovered` is always `false`.
+
+Session catalogs, artifacts, diagnostics, UI, and downloads omit raw prompts,
+messages, reasoning, commands and arguments, results, stdout/stderr,
+attachments, file contents, environment and credentials, branches, filesystem
+paths, and provider identifiers. Opaque server-instance item/snapshot IDs are
+used instead. The AIR artifact includes the metadata-only privacy manifest
+and omission counts.
+
+**Refresh resources** performs a new bounded catalog scan and refreshes the
+selected session snapshot from its last server-owned cursor when possible.
+Incomplete trailing JSONL is not committed until a later manual refresh.
+Truncation, replacement, rotation, or a mismatched prefix is reported as a
+source change instead of joining different histories. AIR Workbench does not
+watch files, follow a session live, signal a provider process, or infer that
+Codex has completed. Provider lifecycle evidence remains asymmetric and may be
+`unknown`.
 
 ## Legacy compatibility
 
@@ -91,20 +137,14 @@ path. Nothing is installed globally.
 ## Skill → graph → skill
 
 ```bash
-mkdir -p /tmp/workflow-studio-demo
-
-node scripts/workflow-studio.mjs import \
-  ../background-implementer/SKILL.md \
-  --out /tmp/workflow-studio-demo/workflow.json
-
-node scripts/workflow-studio.mjs studio \
-  /tmp/workflow-studio-demo/workflow.json
+node scripts/air.mjs workbench ../background-implementer/SKILL.md
 ```
 
-Open the printed loopback URL. AIR Workbench keeps the interactive
-React Flow canvas, semantic outline, and selection inspector together:
+Open the printed loopback URL. AIR Workbench keeps Resources, the interactive
+React Flow canvas, selection inspector, and review panel together:
 
-- select a step or dependency on the canvas or keyboard-operable outline;
+- open `background-implementer` from **Resources** or **Quick Open**, then
+  select a step or dependency on the canvas or keyboard-operable outline;
 - edit the selected step or dependency in the inspector;
 - connect handles to add a sequence dependency, reconnect an existing edge, or
   delete selected graph elements;
@@ -115,17 +155,17 @@ React Flow canvas, semantic outline, and selection inspector together:
 - open **Review source** or **Review diff** in the side drawer without leaving
   the graph.
 
-Canvas positions are view state and are not written into Workflow IR. **Download
-IR** saves the edited workflow JSON; **Download Markdown draft** exports
-directly in the browser. The HTTP server has no file-write or agent-run
-endpoint.
+Canvas positions are view state and are not written into Workflow IR.
+**Download AIR** saves the edited artifact; **Download Markdown** exports a
+workflow carrier directly in the browser. **Run setup** can prepare and
+download a browser-reviewed plan, but it does not run an agent or grant native
+approval. The HTTP server has no file-write or agent-run endpoint.
 
 To open Studio from another device on the same IPv4 network, bind explicitly
 to all interfaces:
 
 ```bash
-node scripts/workflow-studio.mjs studio \
-  /tmp/workflow-studio-demo/workflow.json \
+node scripts/air.mjs workbench ../background-implementer/SKILL.md \
   --host 0.0.0.0
 ```
 
@@ -138,25 +178,31 @@ token URL private, use a trusted network/firewall, and stop the process when
 the review is finished. Never paste a real session token into documentation,
 issues, or chat logs.
 
-To export a downloaded edited IR through the no-overwrite CLI:
+To convert a downloaded edited AIR artifact into the workflow-only Markdown
+carrier through the no-overwrite CLI:
 
 ```bash
-node scripts/workflow-studio.mjs export \
-  /path/to/downloaded-workflow.json \
-  --out /tmp/workflow-studio-demo/SKILL.draft.md
+node scripts/air.mjs convert \
+  /path/to/downloaded-workflow.air.json \
+  --out /tmp/background-implementer.air.md
 ```
 
 Without semantic edits, the exported bytes are identical to the imported
-source. Portable V1 does not support in-place export because the Node runtime
-cannot atomically replace a pathname only if its imported hash still matches.
-Always choose a new `--out` path; `--in-place` and an `--out` path that resolves
-to the imported source are explicitly refused.
+source. To activate the reviewed carrier as a native Skill, place its bytes at
+`<skill-directory>/SKILL.md`. Portable V1 does not overwrite any output; always
+choose a new `--out` path.
 
 ## Prompt → approved plan → native run → trace
 
 Write the exact request bytes to a file:
 
 ```bash
+mkdir -p /tmp/workflow-studio-demo
+
+node scripts/workflow-studio.mjs import \
+  ../background-implementer/SKILL.md \
+  --out /tmp/workflow-studio-demo/workflow.json
+
 printf '%s\n' 'Audit this repository using the declared workflow.' \
   > /tmp/workflow-studio-demo/prompt.txt
 
@@ -285,9 +331,11 @@ All artifact and draft destinations are explicit `--out` paths, except that
 AIR Workbench binds an ephemeral loopback port by default. Explicit
 `--host 0.0.0.0` binds all IPv4 interfaces for LAN access and accepts only
 IPv4-literal `Host` headers on the selected port. It serves bundled assets plus
-the selected in-memory artifact. Source-bearing reads require a random session
-token; CORS, telemetry, write endpoints, and run endpoints are absent. The
-serialized UTF-8 artifact response has an explicit 32 MiB
+tokenized bounded Skill catalogs/artifacts, session catalogs/snapshots, and the
+selected compatibility artifact. Source-bearing reads require a random session
+token; CORS, telemetry, filesystem/provider writes, watchers, process signals,
+and run endpoints are absent. The serialized UTF-8 compatibility artifact
+response has an explicit 32 MiB
 (33,554,432-byte) ceiling; this admits the canonical 30,000-node/29,999-edge
 fixture (26,145,305 bytes), while larger artifacts fail before the server
 listens. Browser exports are local client downloads.
@@ -296,15 +344,19 @@ listens. Browser exports are local client downloads.
 
 - The approved graph is context for native Codex/Claude execution; it is not
   enforced node by node. Pause/branch/retry orchestration is out of scope.
-- Post-run graphs contain only emitted CLI events and explicitly inferred
-  sequence edges. They do not expose hidden model reasoning or causal truth.
+- Native post-run graphs contain emitted CLI events and explicitly inferred
+  sequence edges. Metadata-only session snapshots contain only closed
+  record-envelope metadata and inferred temporal order. Neither exposes hidden
+  model reasoning or causal truth.
 - Provider event formats and safety behavior differ and can change. Raw unknown
-  events are retained rather than silently normalized away.
+  native-run events may be retained by the legacy compatibility trace; session
+  discovery never exposes them and uses a generic omitted-record event.
 - The interactive React Flow canvas is mounted only when the artifact has at
   most 1,000 nodes and at most 1,000 edges. Above either limit it is not
   mounted; the bounded fallback shows the first 100 step rows and first 100
   dependency rows while full-artifact downloads remain available.
-- Only Codex CLI and Claude Code CLI adapters exist in V1.
+- V1 session discovery supports Codex rollout streams and Claude main/subagent
+  streams; native execution supports the installed Codex and Claude CLIs.
 - No global install, remote execution, shared server, or managed orchestration.
 - V1 was tested on macOS with Node 26.5.0, Codex CLI 0.144.6, and Claude Code
   2.1.218. Other platforms and Node releases need separate validation.

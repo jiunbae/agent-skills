@@ -119,7 +119,7 @@
         "x-air-availability": "foundation",
         "parameters": [
           {
-            "$ref": "#/components/parameters/OpaqueId"
+            "$ref": "#/components/parameters/SkillId"
           }
         ],
         "responses": {
@@ -144,7 +144,19 @@
         "operationId": "listAirSessions",
         "summary": "List bounded metadata-only Codex and Claude session records",
         "x-air-capability": "sessions.catalog.read",
-        "x-air-availability": "planned",
+        "x-air-availability": "foundation",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "description": "Set to 1 to perform one coalesced bounded metadata-only refresh. HEAD never refreshes.",
+            "schema": {
+              "type": "string",
+              "const": "1"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Metadata-only session catalog",
@@ -167,10 +179,10 @@
         "operationId": "createAirSessionSnapshot",
         "summary": "Create an in-memory metadata-only session snapshot",
         "x-air-capability": "sessions.snapshot.create",
-        "x-air-availability": "planned",
+        "x-air-availability": "foundation",
         "parameters": [
           {
-            "$ref": "#/components/parameters/OpaqueId"
+            "$ref": "#/components/parameters/SessionId"
           }
         ],
         "requestBody": {
@@ -184,9 +196,12 @@
                 ],
                 "properties": {
                   "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "prior_snapshot_id": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128
+                    "pattern": "^snapshot_[A-Za-z0-9_-]{22}$"
                   }
                 },
                 "unevaluatedProperties": false
@@ -200,7 +215,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "https://open330.github.io/air/schema/1.0.0/trace.schema.json"
+                  "$ref": "#/components/schemas/SessionSnapshot"
                 }
               }
             }
@@ -369,13 +384,22 @@
           ]
         }
       },
-      "OpaqueId": {
+      "SkillId": {
         "name": "opaque-id",
         "in": "path",
         "required": true,
         "schema": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{16,256}$"
+          "pattern": "^skill_[A-Za-z0-9_-]{22}$"
+        }
+      },
+      "SessionId": {
+        "name": "opaque-id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^session_[A-Za-z0-9_-]{22}$"
         }
       }
     },
@@ -391,11 +415,17 @@
           "profiles",
           "operations",
           "catalog_generation",
+          "session_generation",
           "provider_adapters",
+          "session_adapters",
+          "session_privacy_profile",
+          "session_refresh",
+          "session_authority",
           "read_only",
           "write",
           "run",
-          "limits"
+          "limits",
+          "session_limits"
         ],
         "properties": {
           "api_version": {
@@ -431,29 +461,51 @@
                 "const": "available"
               },
               "schemas.read": {
-                "const": "available"
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
               },
               "skills.catalog.read": {
-                "const": "available"
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
               },
               "skills.catalog.refresh": {
-                "const": "available"
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
               },
               "skills.artifact.read": {
-                "const": "available"
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
               },
               "sessions.catalog.read": {
-                "const": "unavailable"
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
               },
               "sessions.snapshot.create": {
-                "const": "unavailable"
+                "enum": [
+                  "available",
+                  "unavailable"
+                ]
               }
             },
             "unevaluatedProperties": false
           },
           "catalog_generation": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 0
+          },
+          "session_generation": {
+            "type": "integer",
+            "minimum": 0
           },
           "provider_adapters": {
             "type": "object",
@@ -476,6 +528,32 @@
               }
             },
             "unevaluatedProperties": false
+          },
+          "session_adapters": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/SessionAdapter"
+            }
+          },
+          "session_privacy_profile": {
+            "enum": [
+              "metadata-only",
+              "unavailable"
+            ]
+          },
+          "session_refresh": {
+            "enum": [
+              "snapshot-manual",
+              "unavailable"
+            ]
+          },
+          "session_authority": {
+            "enum": [
+              "server-owned-read-only",
+              "unavailable"
+            ]
           },
           "read_only": {
             "const": true
@@ -522,6 +600,16 @@
                 "catalog_max_response_bytes"
               ]
             }
+          },
+          "session_limits": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionLimits"
+              },
+              {
+                "$ref": "#/components/schemas/SessionRequestLimits"
+              }
+            ]
           }
         },
         "unevaluatedProperties": false
@@ -794,6 +882,199 @@
         },
         "unevaluatedProperties": false
       },
+      "SessionAdapter": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "version",
+              "provider",
+              "stream_kinds"
+            ],
+            "properties": {
+              "id": {
+                "const": "codex-rollout-jsonl"
+              },
+              "version": {
+                "const": "1.0.0"
+              },
+              "provider": {
+                "const": "codex"
+              },
+              "stream_kinds": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "const": "rollout"
+                  }
+                ],
+                "minItems": 1,
+                "maxItems": 1
+              }
+            },
+            "unevaluatedProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "version",
+              "provider",
+              "stream_kinds"
+            ],
+            "properties": {
+              "id": {
+                "const": "claude-project-jsonl"
+              },
+              "version": {
+                "const": "1.0.0"
+              },
+              "provider": {
+                "const": "claude"
+              },
+              "stream_kinds": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "const": "main"
+                  },
+                  {
+                    "const": "subagent"
+                  }
+                ],
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "unevaluatedProperties": false
+          }
+        ]
+      },
+      "SessionRequestLimits": {
+        "type": "object",
+        "required": [
+          "session_request_max_bytes",
+          "session_request_timeout_ms",
+          "session_request_concurrency"
+        ],
+        "properties": {
+          "session_request_max_bytes": {
+            "const": 4096
+          },
+          "session_request_timeout_ms": {
+            "const": 2000
+          },
+          "session_request_concurrency": {
+            "const": 4
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SessionLimits": {
+        "type": "object",
+        "required": [
+          "maxRoots",
+          "maxDepth",
+          "maxEntries",
+          "maxFiles",
+          "maxCatalogItems",
+          "maxCatalogBytes",
+          "maxDurationMs",
+          "maxLineBytes",
+          "maxReadBytesPerRefresh",
+          "maxRecords",
+          "maxJsonDepth",
+          "maxJsonValues",
+          "maxArtifactBytes",
+          "maxEvidencePerEvent",
+          "maxGraphEdges",
+          "maxDiagnostics",
+          "maxSnapshotHandles",
+          "maxStableIds",
+          "maxConcurrentReaders",
+          "headFingerprintBytes",
+          "checkpointBytes",
+          "session_request_max_bytes",
+          "session_request_timeout_ms",
+          "session_request_concurrency"
+        ],
+        "properties": {
+          "maxRoots": {
+            "const": 8
+          },
+          "maxDepth": {
+            "const": 8
+          },
+          "maxEntries": {
+            "const": 10000
+          },
+          "maxFiles": {
+            "const": 2000
+          },
+          "maxCatalogItems": {
+            "const": 1000
+          },
+          "maxCatalogBytes": {
+            "const": 2097152
+          },
+          "maxDurationMs": {
+            "const": 2000
+          },
+          "maxLineBytes": {
+            "const": 262144
+          },
+          "maxReadBytesPerRefresh": {
+            "const": 1048576
+          },
+          "maxRecords": {
+            "const": 10000
+          },
+          "maxJsonDepth": {
+            "const": 64
+          },
+          "maxJsonValues": {
+            "const": 50000
+          },
+          "maxArtifactBytes": {
+            "const": 6291456
+          },
+          "maxEvidencePerEvent": {
+            "const": 1
+          },
+          "maxGraphEdges": {
+            "const": 9999
+          },
+          "maxDiagnostics": {
+            "const": 1000
+          },
+          "maxSnapshotHandles": {
+            "const": 256
+          },
+          "maxStableIds": {
+            "const": 1000
+          },
+          "maxConcurrentReaders": {
+            "const": 4
+          },
+          "headFingerprintBytes": {
+            "const": 4096
+          },
+          "checkpointBytes": {
+            "const": 4096
+          },
+          "session_request_max_bytes": {
+            "const": 4096
+          },
+          "session_request_timeout_ms": {
+            "const": 2000
+          },
+          "session_request_concurrency": {
+            "const": 4
+          }
+        },
+        "unevaluatedProperties": false
+      },
       "SessionCatalog": {
         "type": "object",
         "required": [
@@ -804,22 +1085,123 @@
         ],
         "properties": {
           "generation": {
-            "type": "string"
+            "type": "integer",
+            "minimum": 1
           },
           "items": {
             "type": "array",
+            "maxItems": 1000,
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/SessionCatalogItem"
             }
           },
           "diagnostics": {
             "type": "array",
+            "maxItems": 1000,
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/SessionCatalogDiagnostic"
             }
           },
           "truncated": {
             "type": "boolean"
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SessionCatalogItem": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "stream_kind",
+          "lifecycle",
+          "snapshot_available"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^session_[A-Za-z0-9_-]{22}$"
+          },
+          "provider": {
+            "enum": [
+              "codex",
+              "claude"
+            ]
+          },
+          "stream_kind": {
+            "enum": [
+              "rollout",
+              "main",
+              "subagent"
+            ]
+          },
+          "lifecycle": {
+            "enum": [
+              "unknown",
+              "active",
+              "idle"
+            ]
+          },
+          "snapshot_available": {
+            "type": "boolean"
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SessionCatalogDiagnostic": {
+        "type": "object",
+        "required": [
+          "severity",
+          "code",
+          "count"
+        ],
+        "properties": {
+          "severity": {
+            "const": "warning"
+          },
+          "code": {
+            "enum": [
+              "AIR_SESSION_ROOT_UNAVAILABLE",
+              "AIR_SESSION_ENTRY_LIMIT",
+              "AIR_SESSION_FILE_LIMIT",
+              "AIR_SESSION_CATALOG_LIMIT",
+              "AIR_SESSION_TIME_LIMIT"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "SessionSnapshot": {
+        "type": "object",
+        "required": [
+          "snapshot_id",
+          "session_id",
+          "generation",
+          "source_changed",
+          "artifact"
+        ],
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "pattern": "^snapshot_[A-Za-z0-9_-]{22}$"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^session_[A-Za-z0-9_-]{22}$"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_changed": {
+            "const": false
+          },
+          "artifact": {
+            "$ref": "https://open330.github.io/air/schema/1.0.0/trace.schema.json"
           }
         },
         "unevaluatedProperties": false

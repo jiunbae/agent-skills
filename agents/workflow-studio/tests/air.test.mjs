@@ -19,6 +19,7 @@ import {
   airToLegacy,
   decodeAirMarkdownArtifact,
   encodeAirMarkdownArtifact,
+  createSessionAirArtifact,
   migrateLegacyToAir,
   validateAirArtifact,
 } from "../src/air.mjs";
@@ -343,7 +344,7 @@ test("native AIR validates without the optional legacy bridge, including session
   const emptyDigest = createHash("sha256").update(Buffer.alloc(0)).digest("hex");
   const session = nativeEnvelope("trace", AIR_PROFILES.session, {
     capture: {
-      adapter: { id: "codex-rollout-jsonl", version: "1" },
+      adapter: { id: "codex-rollout-jsonl", version: "1.0.0" },
       source_schema_fingerprint: "3".repeat(64),
       snapshot_cursor: { epoch: 0, byte_offset: 0 },
       completeness: "complete-prefix",
@@ -351,7 +352,11 @@ test("native AIR validates without the optional legacy bridge, including session
     },
     privacy: {
       profile: "metadata-only",
-      redaction_manifest: [{ category: "prompt", disposition: "omitted" }],
+      redaction_manifest: [
+        "prompt", "message", "reasoning", "command", "arguments", "results",
+        "stdout", "stderr", "attachments", "file-content", "environment",
+        "credentials", "paths", "branches", "provider-identifiers",
+      ].map((category) => ({ category, disposition: "omitted", count: 0 })),
     },
     events: [],
     event_graph: { entry_event_ids: [], nodes: [], edges: [] },
@@ -360,8 +365,8 @@ test("native AIR validates without the optional legacy bridge, including session
       complete: false,
       confidence: {
         level: "unknown",
-        rule_id: "test.session",
-        reason: "No lifecycle evidence.",
+        rule_id: "session.lifecycle-unavailable",
+        reason: "No authoritative provider lifecycle evidence is available.",
       },
       evidence: [],
     },
@@ -369,6 +374,67 @@ test("native AIR validates without the optional legacy bridge, including session
     hidden_reasoning_recovered: false,
   });
   assert.equal(validateAirArtifact(session), true);
+  const incompletePrivacy = structuredClone(session);
+  incompletePrivacy.body.privacy.redaction_manifest.pop();
+  expectCode(
+    () => validateAirArtifact(resealContent(incompletePrivacy)),
+    "AIR_SEMANTIC_INVALID",
+  );
+
+  const sessionWithEvent = structuredClone(session);
+  const sessionEventId = "event_AAAAAAAAAAAAAAAAAAAAAA";
+  const eventBytes = Buffer.from("{}\n");
+  sessionWithEvent.body.events.push({
+    id: sessionEventId,
+    order: 0,
+    type: "record.observed",
+    assertion: "observed",
+    confidence: {
+      level: "explicit",
+      rule_id: "session.complete-jsonl-line",
+      reason: "A complete newline-delimited source record was observed.",
+    },
+    evidence_refs: [],
+    evidence: [{
+      raw_type: "record.observed",
+      top_level_keys: ["content-omitted"],
+      byte_range: { start_byte: 0, end_byte: eventBytes.byteLength },
+      byte_length: eventBytes.byteLength,
+      sha256: createHash("sha256").update(eventBytes).digest("hex"),
+      omitted: true,
+    }],
+  });
+  sessionWithEvent.body.event_graph = {
+    entry_event_ids: [sessionEventId],
+    nodes: [sessionEventId],
+    edges: [],
+  };
+  assert.equal(validateAirArtifact(resealContent(sessionWithEvent)), true);
+  for (const mutate of [
+    (body) => { body.capture.adapter.version = "AIR_PRIVATE_CANARY"; },
+    (body) => {
+      body.events[0].id = "AIR_PRIVATE_CANARY";
+      body.event_graph.entry_event_ids = ["AIR_PRIVATE_CANARY"];
+      body.event_graph.nodes = ["AIR_PRIVATE_CANARY"];
+    },
+    (body) => { body.events[0].type = "AIR_PRIVATE_CANARY"; },
+    (body) => {
+      body.events[0].confidence.reason = "AIR_PRIVATE_CANARY";
+    },
+    (body) => {
+      body.events[0].evidence_refs = ["AIR_PRIVATE_CANARY"];
+    },
+    (body) => {
+      body.events[0].evidence[0].raw_type = "AIR_PRIVATE_CANARY";
+    },
+    (body) => {
+      body.events[0].evidence[0].top_level_keys = ["AIR_PRIVATE_CANARY"];
+    },
+  ]) {
+    const body = structuredClone(sessionWithEvent.body);
+    mutate(body);
+    expectCode(() => createSessionAirArtifact(body), "AIR_SEMANTIC_INVALID");
+  }
 });
 
 test("AIR integrity, closed roots, required extensions, and versions fail safely", async () => {

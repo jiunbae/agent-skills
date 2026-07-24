@@ -46,11 +46,71 @@ let reviewReturnFocus = null;
 let approvalEpoch = 0;
 let previousValidationSignature = "";
 let downloadCache = { key: "", allowed: false };
+let accessToken = "";
+let activeResourceKey = null;
+let activePanel = "problems";
+let catalogGeneration = null;
+let sessionGeneration = null;
+let resourceItems = [];
+let workbenchCapabilities = null;
+let pendingResource = null;
+let pendingSwitchReturnFocus = null;
+let pendingSwitchReturnResourceKey = null;
+let loadRequestEpoch = 0;
+let mobileRegion = "graph";
+const documents = new Map();
 const history = {
   undo: [],
   redo: [],
   coalesceKey: null,
 };
+
+function resourceKey(resource) {
+  return `${resource.type}:${resource.id}`;
+}
+
+function documentSnapshot() {
+  if (!state) return null;
+  return {
+    state: cloneState(state),
+    selection: { ...selection },
+    history: {
+      undo: cloneState(history.undo),
+      redo: cloneState(history.redo),
+      coalesceKey: history.coalesceKey,
+    },
+    approvalEpoch,
+    reviewMode,
+    activePanel,
+    previousValidationSignature,
+    downloadCache: { ...downloadCache },
+  };
+}
+
+function persistActiveDocument() {
+  if (!activeResourceKey || !state) return;
+  const current = documents.get(activeResourceKey) ?? {};
+  documents.set(activeResourceKey, {
+    ...current,
+    ...documentSnapshot(),
+  });
+}
+
+function restoreDocument(entry) {
+  graphIsland?.destroy();
+  graphIsland = null;
+  state = cloneState(entry.state);
+  selection = { ...entry.selection };
+  history.undo = cloneState(entry.history.undo);
+  history.redo = cloneState(entry.history.redo);
+  history.coalesceKey = entry.history.coalesceKey;
+  approvalEpoch = entry.approvalEpoch;
+  reviewMode = entry.reviewMode;
+  activePanel = entry.activePanel ?? "problems";
+  previousValidationSignature = entry.previousValidationSignature;
+  downloadCache = { ...entry.downloadCache };
+  reconcileSelection();
+}
 
 function element(id) {
   if (!elements[id]) elements[id] = document.getElementById(id);
@@ -76,6 +136,19 @@ function focusGraphEdge(edgeId) {
           ".react-flow__edge[data-id]",
         ),
       ].find((candidate) => candidate.getAttribute("data-id") === edgeId);
+      target?.focus({ preventScroll: true });
+    });
+  });
+}
+
+function focusGraphNode(nodeId) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const target = [
+        ...element("graphCanvas").querySelectorAll(
+          ".react-flow__node[data-id]",
+        ),
+      ].find((candidate) => candidate.getAttribute("data-id") === nodeId);
       target?.focus({ preventScroll: true });
     });
   });
@@ -225,6 +298,7 @@ function replaceOptions(select, selectedValue) {
 function selectNodeInWorkspace(nodeId, focusId = null) {
   selection = { type: "node", id: nodeId };
   state = selectNode(state, nodeId);
+  document.body.dataset.inspectorOpen = "true";
   pendingFocusId = focusId;
   render();
   setStatus(state.status);
@@ -233,6 +307,7 @@ function selectNodeInWorkspace(nodeId, focusId = null) {
 function selectEdgeInWorkspace(edgeId, focusId = null) {
   if (!state.edges.some((edge) => edge.id === edgeId)) return;
   selection = { type: "edge", id: edgeId };
+  document.body.dataset.inspectorOpen = "true";
   pendingFocusId = focusId;
   render();
   const edge = selectedEdge();
@@ -279,14 +354,19 @@ function renderTabs() {
     state.activeView = "graph";
   }
   element("tabPlan").disabled = state.kind === "trace";
-  for (const button of document.querySelectorAll("[data-view]")) {
-    const selected = button.dataset.view === state.activeView;
+  const inspectorView = state.activeView === "plan" ? "plan" : "graph";
+  for (const button of document.querySelectorAll(".view-tabs [data-view]")) {
+    const selected = button.dataset.view === inspectorView;
     button.setAttribute("aria-selected", String(selected));
     button.tabIndex = selected ? 0 : -1;
-    const suffix =
-      button.dataset.view[0].toUpperCase() + button.dataset.view.slice(1);
-    element(`view${suffix}`).hidden = !selected;
   }
+  element("propertiesPanel").hidden = inspectorView !== "graph";
+  element("viewPlan").hidden = inspectorView !== "plan";
+  element("viewGraph").hidden = false;
+  element("tabTrace").setAttribute(
+    "aria-selected",
+    String(activePanel === "evidence"),
+  );
 }
 
 function graphOverInteractiveLimit() {
@@ -315,7 +395,7 @@ function graphOptions() {
       id: edge.id,
       source: edge.from,
       target: edge.to,
-      kind: edge.kind,
+      kind: edge.air_kind || edge.kind,
       readOnly: Boolean(edge.readOnly),
     })),
     readOnly: canvasReadOnly(),
@@ -527,7 +607,7 @@ function renderOutline() {
         "span",
         "outline-meta",
         state.kind === "trace"
-          ? `${edge.kind} · ${edge.provenance || "inferred"} · not causality`
+          ? `${edge.air_kind || edge.kind} · ${edge.provenance || "inferred"} · not causality`
           : `${edge.kind} · ${edge.provenance || "declared"}`,
       ),
     );
@@ -626,7 +706,8 @@ function renderInspector() {
       state.kind === "trace" ? "Order inspector" : "Dependency inspector";
     element("selectionBadge").textContent =
       state.kind === "trace" ? "Evidence" : "Edge";
-    element("edgeIdentity").textContent = edge.id;
+    element("edgeIdentity").textContent =
+      `${edge.id} · ${edge.air_kind || edge.kind}`;
     element("edgeProvenance").textContent = edge.provenance || "declared";
     element("edgeTruth").textContent =
       state.kind === "trace"
@@ -779,7 +860,11 @@ function traceEventReference(node) {
 
 function renderTrace() {
   const isTrace = state.kind === "trace";
+  const isSession =
+    state.artifact.air?.profile ===
+    "https://open330.github.io/air/profiles/1.0.0/trace-session-snapshot";
   const traceStatus =
+    state.artifact.session?.lifecycle?.state ||
     state.artifact.status ||
     state.artifact.trace?.status ||
     (isTrace ? "loaded" : "none");
@@ -806,21 +891,57 @@ function renderTrace() {
     );
   } else {
     element("traceList").replaceChildren(
-      ...state.nodes.map((node) => {
-        const item = create("li", "trace-item");
-        item.append(
-          create("strong", "", node.title),
-          create("span", `provenance ${node.provenance}`, node.provenance),
-          create("p", "", node.body || "No event summary."),
+      ...state.nodes.slice(0, MAX_INTERACTIVE_NODES).map((node, index) => {
+        const item = create("li");
+        const button = create("button", "evidence-row");
+        button.type = "button";
+        button.dataset.evidenceId = node.id;
+        button.setAttribute(
+          "aria-current",
+          String(selection.type === "node" && selection.id === node.id),
         );
-        const reference = traceEventReference(node);
-        if (reference) item.append(create("p", "", `Evidence: ${reference}`));
+        button.append(
+          create("strong", "", `${index + 1}. ${node.title}`),
+          create(
+            "span",
+            `provenance ${node.provenance}`,
+            `${node.provenance}${isSession ? " · metadata only" : ""}`,
+          ),
+          create(
+            "p",
+            "",
+            isSession
+              ? `${node.evidence?.length ?? 0} omitted-content evidence record(s)`
+              : node.body || "No event summary.",
+          ),
+        );
+        if (!isSession) {
+          const reference = traceEventReference(node);
+          if (reference) button.append(create("p", "", `Evidence: ${reference}`));
+        }
+        button.addEventListener("click", () => {
+          selectNodeInWorkspace(node.id);
+          activePanel = "evidence";
+          renderPanel();
+          requestAnimationFrame(() => focusGraphNode(node.id));
+        });
+        item.append(button);
         return item;
       }),
     );
   }
   element("promoteTrace").disabled =
     !isTrace || !state.nodes.length || !state.validation.valid;
+}
+
+function problemTarget(message) {
+  const node = state.nodes.find(
+    (candidate) =>
+      message.includes(candidate.id) || message.includes(candidate.title),
+  );
+  if (node) return { type: "node", id: node.id };
+  const edge = state.edges.find((candidate) => message.includes(candidate.id));
+  return edge ? { type: "edge", id: edge.id } : null;
 }
 
 function renderValidation() {
@@ -830,14 +951,171 @@ function renderValidation() {
       ? `Valid with ${warnings.length} warning${warnings.length === 1 ? "" : "s"}`
       : "Valid"
     : `${errors.length} validation error${errors.length === 1 ? "" : "s"}`;
+  const problems = [
+    ...errors.map((message) => ({ type: "Error", message })),
+    ...warnings.map((message) => ({ type: "Warning", message })),
+  ];
+  element("problemCount").textContent = String(problems.length);
   element("validationList").replaceChildren(
-    ...[
-      ...errors.map((message) => ({ type: "Error", message })),
-      ...warnings.map((message) => ({ type: "Warning", message })),
-    ].map(({ type, message }) => create("li", "", `${type}: ${message}`)),
+    ...problems.map(({ type, message }) => {
+      const item = create("li");
+      const button = create("button", "problem-row", `${type}: ${message}`);
+      button.type = "button";
+      const target = problemTarget(message);
+      button.disabled = !target;
+      button.addEventListener("click", () => {
+        if (target?.type === "node") selectNodeInWorkspace(target.id, "nodeTitle");
+        if (target?.type === "edge") {
+          selectEdgeInWorkspace(target.id, "selectedEdgeKind");
+        }
+      });
+      item.append(button);
+      return item;
+    }),
   );
   element("validationDetails").open = !valid;
   previousValidationSignature = validationSignature(state);
+}
+
+function resourceSourceKind(item) {
+  const kinds = new Set(
+    (Array.isArray(item.source_labels) ? item.source_labels : [])
+      .map((source) => source?.kind)
+      .filter((value) => typeof value === "string"),
+  );
+  return [...kinds].some((kind) =>
+    ["repository", "project", "explicit"].includes(kind),
+  )
+    ? "workspace"
+    : "installed";
+}
+
+function visibleResources() {
+  const query = element("resourceSearch").value.trim().toLocaleLowerCase();
+  if (!query) return resourceItems;
+  return resourceItems.filter((resource) => {
+    const searchable = resource.type === "skill"
+      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""}`
+      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""}`;
+    return searchable.toLocaleLowerCase().includes(query);
+  });
+}
+
+function resourceButton(resource) {
+  const button = create("button", "resource-row");
+  button.type = "button";
+  button.dataset.resourceKey = resourceKey(resource);
+  button.setAttribute(
+    "aria-current",
+    String(resourceKey(resource) === activeResourceKey),
+  );
+  if (resource.type === "skill") {
+    const item = resource.item;
+    button.append(
+      create("strong", "", item.name || "Unnamed skill"),
+      create(
+        "span",
+        "",
+        `${item.workflow_node_count} nodes · ${item.workflow_edge_count} edges`,
+      ),
+    );
+    const badges = create("span", "resource-badges");
+    if (item.name_conflict) {
+      badges.append(create("span", "resource-badge", "name conflict"));
+    }
+    if (item.exact_copy) {
+      badges.append(
+        create("span", "resource-badge", `${item.location_count} exact copies`),
+      );
+    }
+    const open = documents.get(resourceKey(resource));
+    if (open?.stale) badges.append(create("span", "resource-badge", "stale"));
+    if (badges.childNodes.length) button.append(badges);
+  } else {
+    const item = resource.item;
+    button.append(
+      create(
+        "strong",
+        "",
+        `${item.provider === "claude" ? "Claude" : "Codex"} ${item.stream_kind}`,
+      ),
+      create(
+        "span",
+        "",
+        `${item.lifecycle || "unknown"} · metadata only · read only`,
+      ),
+    );
+  }
+  button.addEventListener("click", () => {
+    if (element("quickOpenDialog").open) element("quickOpenDialog").close();
+    requestResourceSwitch(resource);
+  });
+  button.addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const rows = [...document.querySelectorAll(".resource-row")].filter(
+      (candidate) => !candidate.closest("#quickOpenDialog"),
+    );
+    const index = rows.indexOf(button);
+    let next = null;
+    if (event.key === "ArrowDown") next = rows[(index + 1) % rows.length];
+    if (event.key === "ArrowUp") {
+      next = rows[(index - 1 + rows.length) % rows.length];
+    }
+    if (event.key === "Home") next = rows[0];
+    if (event.key === "End") next = rows[rows.length - 1];
+    if (next) {
+      event.preventDefault();
+      next.focus();
+    }
+  });
+  return button;
+}
+
+function replaceResourceRows(list, resources, emptyMessage) {
+  if (!resources.length) {
+    list.replaceChildren(create("li", "resource-empty", emptyMessage));
+    return;
+  }
+  list.replaceChildren(
+    ...resources.slice(0, MAX_INTERACTIVE_NODES).map((resource) => {
+      const item = create("li");
+      item.append(resourceButton(resource));
+      return item;
+    }),
+  );
+}
+
+function renderResources() {
+  const visible = visibleResources();
+  const skills = visible.filter((resource) => resource.type === "skill");
+  replaceResourceRows(
+    element("workspaceSkillList"),
+    skills.filter((resource) => resource.group === "workspace"),
+    "No matching workspace Skills.",
+  );
+  replaceResourceRows(
+    element("installedSkillList"),
+    skills.filter((resource) => resource.group === "installed"),
+    "No matching installed Skills.",
+  );
+  replaceResourceRows(
+    element("sessionList"),
+    visible.filter((resource) => resource.type === "session"),
+    "No metadata-only sessions available.",
+  );
+}
+
+function renderPanel() {
+  const reviewSelected = activePanel === "source" || activePanel === "diff";
+  element("problemsPanel").hidden = activePanel !== "problems";
+  element("viewTrace").hidden = activePanel !== "evidence";
+  element("reviewDrawer").hidden = !reviewSelected;
+  for (const button of document.querySelectorAll("[data-panel]")) {
+    button.setAttribute(
+      "aria-selected",
+      String(button.dataset.panel === activePanel),
+    );
+  }
 }
 
 function renderHistory() {
@@ -850,11 +1128,13 @@ function render() {
   renderHeader();
   renderTabs();
   renderHistory();
-  if (state.activeView === "graph") renderGraph();
-  if (state.activeView === "plan") renderPlan();
-  if (state.activeView === "trace") renderTrace();
+  renderGraph();
+  renderPlan();
+  renderTrace();
   renderReviewDrawer();
   renderValidation();
+  renderResources();
+  renderPanel();
   if (pendingFocusId) {
     const focusId = pendingFocusId;
     pendingFocusId = null;
@@ -864,15 +1144,19 @@ function render() {
 
 function openReview(mode, returnTarget) {
   reviewMode = mode;
+  activePanel = mode;
   reviewReturnFocus = returnTarget || document.activeElement;
   renderReviewDrawer();
+  renderPanel();
   requestAnimationFrame(() => element("reviewDrawer").focus());
 }
 
 function closeReview() {
   if (!reviewMode) return;
   reviewMode = null;
+  activePanel = "problems";
   renderReviewDrawer();
+  renderPanel();
   const target = reviewReturnFocus;
   reviewReturnFocus = null;
   requestAnimationFrame(() => target?.focus());
@@ -936,19 +1220,437 @@ function applySelectedEdgeChange(focusId) {
   }
 }
 
+function apiUrl(path, parameters = {}) {
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("token", accessToken);
+  for (const [name, value] of Object.entries(parameters)) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(name, String(value));
+    }
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+async function fetchJson(path, {
+  method = "GET",
+  parameters,
+  body,
+} = {}) {
+  const response = await fetch(apiUrl(path, parameters), {
+    method,
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/json",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    let detail = "";
+    let code = "";
+    try {
+      const problem = await response.json();
+      detail = typeof problem?.detail === "string" ? ` ${problem.detail}` : "";
+      code = typeof problem?.code === "string" ? problem.code : "";
+    } catch {
+      // A typed status is sufficient; never surface an untrusted response body.
+    }
+    const error = new Error(`Request failed with HTTP ${response.status}.${detail}`);
+    error.status = response.status;
+    error.code = code;
+    throw error;
+  }
+  return response.json();
+}
+
+function currentResource() {
+  return resourceItems.find(
+    (resource) => resourceKey(resource) === activeResourceKey,
+  ) ?? documents.get(activeResourceKey)?.resource ?? null;
+}
+
+function newDocument(resource, payload, metadata = {}) {
+  const nextState = createEditorState(payload);
+  if (nextState.kind === "trace") nextState.activeView = "graph";
+  const nextSelection = nextState.selectedId
+    ? { type: "node", id: nextState.selectedId }
+    : { type: null, id: null };
+  const entry = {
+    resource,
+    state: nextState,
+    selection: nextSelection,
+    history: { undo: [], redo: [], coalesceKey: null },
+    approvalEpoch: 0,
+    reviewMode: null,
+    activePanel: nextState.kind === "trace" ? "evidence" : "problems",
+    previousValidationSignature: validationSignature(nextState),
+    downloadCache: { key: "", allowed: false },
+    stale: false,
+    ...metadata,
+  };
+  entry.baseline = {
+    state: cloneState(nextState),
+    selection: { ...nextSelection },
+    history: { undo: [], redo: [], coalesceKey: null },
+    approvalEpoch: 0,
+    reviewMode: null,
+    activePanel: entry.activePanel,
+    previousValidationSignature: validationSignature(nextState),
+    downloadCache: { key: "", allowed: false },
+  };
+  return entry;
+}
+
+function activateDocument(key, entry, message) {
+  persistActiveDocument();
+  activeResourceKey = key;
+  documents.set(key, entry);
+  restoreDocument(entry);
+  render();
+  setStatus(message);
+  renderResources();
+}
+
+async function loadResource(resource, { refreshSession = false } = {}) {
+  const epoch = ++loadRequestEpoch;
+  const key = resourceKey(resource);
+  if (refreshSession && key === activeResourceKey) persistActiveDocument();
+  const cached = documents.get(key);
+  if (cached && !refreshSession) {
+    activateDocument(key, cached, `Restored ${resource.type} from this Workbench.`);
+    return;
+  }
+  element("resourceStatus").textContent =
+    resource.type === "skill" ? "Opening Skill…" : "Creating metadata-only snapshot…";
+  try {
+    let payload;
+    let metadata = {};
+    if (resource.type === "skill") {
+      payload = await fetchJson(
+        `/air/v1/skills/${encodeURIComponent(resource.id)}/artifact`,
+      );
+    } else {
+      let response;
+      let sourceChanged = false;
+      try {
+        response = await fetchJson(
+          `/air/v1/sessions/${encodeURIComponent(resource.id)}/snapshots`,
+          {
+            method: "POST",
+            body: {
+              generation: sessionGeneration,
+              ...(cached?.snapshotId
+                ? { prior_snapshot_id: cached.snapshotId }
+                : {}),
+            },
+          },
+        );
+      } catch (error) {
+        if (
+          !refreshSession ||
+          !["AIR_SESSION_SOURCE_CHANGED", "AIR_SESSION_STALE_GENERATION"]
+            .includes(error?.code)
+        ) {
+          throw error;
+        }
+        const refreshed = await fetchJson("/air/v1/sessions", {
+          parameters: { refresh: "1" },
+        });
+        sessionGeneration = refreshed.generation;
+        const replacement = normalizeSessionResources(refreshed).find(
+          (candidate) => candidate.id === resource.id,
+        );
+        if (!replacement) throw error;
+        sourceChanged = true;
+        response = await fetchJson(
+          `/air/v1/sessions/${encodeURIComponent(resource.id)}/snapshots`,
+          {
+            method: "POST",
+            body: { generation: sessionGeneration },
+          },
+        );
+      }
+      payload = response.artifact;
+      metadata = {
+        snapshotId: response.snapshot_id,
+        sourceChanged: sourceChanged || Boolean(response.source_changed),
+      };
+    }
+    if (epoch !== loadRequestEpoch) return;
+    const entry = newDocument(resource, payload, metadata);
+    if (cached && refreshSession && !metadata.sourceChanged) {
+      const selectedId = cached.selection?.type === "node"
+        ? cached.selection.id
+        : null;
+      if (selectedId && entry.state.nodes.some((node) => node.id === selectedId)) {
+        entry.selection = { type: "node", id: selectedId };
+        entry.state = selectNode(entry.state, selectedId);
+      }
+    }
+    activateDocument(
+      key,
+      entry,
+      resource.type === "skill"
+        ? "Skill opened from the local catalog."
+        : metadata.sourceChanged
+          ? "Session source changed; opened a separate metadata-only epoch."
+          : "Metadata-only session snapshot opened read only.",
+    );
+    element("resourceStatus").textContent =
+      `${resourceItems.length} local resource${resourceItems.length === 1 ? "" : "s"}`;
+  } catch (error) {
+    if (epoch !== loadRequestEpoch) return;
+    const message = error instanceof Error ? error.message : String(error);
+    element("resourceStatus").textContent = `Could not open resource. ${message}`;
+    setStatus(`Could not open resource: ${message}`);
+    renderResources();
+  }
+}
+
+function completeResourceSwitch(choice) {
+  const target = pendingResource;
+  const returnFocus = pendingSwitchReturnFocus;
+  const returnResourceKey = pendingSwitchReturnResourceKey;
+  pendingResource = null;
+  pendingSwitchReturnFocus = null;
+  pendingSwitchReturnResourceKey = null;
+  element("dirtySwitchDialog").close();
+  if (!target) return;
+  if (choice === "cancel") {
+    renderResources();
+    setStatus("Resource switch cancelled; in-memory changes were preserved.");
+    requestAnimationFrame(() => {
+      if (returnFocus?.isConnected) {
+        returnFocus.focus({ preventScroll: true });
+        return;
+      }
+      const resourceRow = [...document.querySelectorAll(".resource-row")].find(
+        (candidate) =>
+          !candidate.closest("#quickOpenDialog") &&
+          candidate.dataset.resourceKey === returnResourceKey,
+      );
+      resourceRow?.focus({ preventScroll: true });
+    });
+    return;
+  }
+  if (choice === "keep") {
+    persistActiveDocument();
+  } else if (choice === "discard" && activeResourceKey) {
+    const current = documents.get(activeResourceKey);
+    if (current?.baseline) {
+      const clean = {
+        ...current,
+        ...cloneState(current.baseline),
+      };
+      documents.set(activeResourceKey, clean);
+      restoreDocument(clean);
+      render();
+    }
+  }
+  loadResource(target);
+}
+
+function requestResourceSwitch(resource) {
+  const key = resourceKey(resource);
+  if (key === activeResourceKey) {
+    ++loadRequestEpoch;
+    return;
+  }
+  if (state && (state.dirty || state.planDirty || state.draftDirty)) {
+    pendingResource = resource;
+    pendingSwitchReturnFocus = document.activeElement;
+    pendingSwitchReturnResourceKey =
+      document.activeElement?.dataset?.resourceKey ?? key;
+    element("dirtySwitchDialog").showModal();
+    return;
+  }
+  loadResource(resource);
+}
+
+function normalizeSkillResources(catalog) {
+  return (Array.isArray(catalog?.items) ? catalog.items : []).map((item) => {
+    const resource = { type: "skill", id: item.id, item };
+    return { ...resource, group: resourceSourceKind(item) };
+  });
+}
+
+function normalizeSessionResources(catalog) {
+  return (Array.isArray(catalog?.items) ? catalog.items : []).map((item) => ({
+    type: "session",
+    id: item.id,
+    item,
+    group: "sessions",
+  }));
+}
+
+function markChangedDocuments(nextResources) {
+  const nextByKey = new Map(
+    nextResources.map((resource) => [resourceKey(resource), resource]),
+  );
+  for (const [key, entry] of documents) {
+    const next = nextByKey.get(key);
+    if (!next) {
+      entry.stale = true;
+      continue;
+    }
+    if (
+      entry.resource.type === "skill" &&
+      entry.resource.item.content_hash !== next.item.content_hash
+    ) {
+      entry.stale = true;
+    }
+    entry.resource = next;
+  }
+}
+
+async function loadCatalogs({ refresh = false } = {}) {
+  element("refreshResources").disabled = true;
+  element("resourceStatus").textContent =
+    refresh ? "Refreshing local resources…" : "Discovering local resources…";
+  if (workbenchCapabilities === null) {
+    workbenchCapabilities = await fetchJson("/air/v1/capabilities");
+  }
+  const operations = workbenchCapabilities?.operations ?? {};
+  const skillsAvailable =
+    operations["skills.catalog.read"] === "available";
+  const sessionsAvailable =
+    operations["sessions.catalog.read"] === "available";
+  const [skillsResult, sessionsResult] = await Promise.allSettled([
+    skillsAvailable
+      ? fetchJson("/air/v1/skills", {
+          parameters: refresh ? { refresh: "1" } : undefined,
+        })
+      : Promise.resolve({ items: [], generation: 0 }),
+    sessionsAvailable
+      ? fetchJson("/air/v1/sessions", { parameters: { refresh: "1" } })
+      : Promise.resolve({ items: [], generation: 0 }),
+  ]);
+  const skills = skillsResult.status === "fulfilled"
+    ? skillsResult.value
+    : { items: [] };
+  const sessions = sessionsResult.status === "fulfilled"
+    ? sessionsResult.value
+    : { items: [] };
+  catalogGeneration = skills.generation ?? catalogGeneration;
+  sessionGeneration = sessions.generation ?? sessionGeneration;
+  const nextResources = [
+    ...normalizeSkillResources(skills),
+    ...normalizeSessionResources(sessions),
+  ];
+  markChangedDocuments(nextResources);
+  resourceItems = nextResources;
+  element("refreshResources").disabled = false;
+  const partial =
+    Boolean(skills.truncated) ||
+    Boolean(sessions.truncated) ||
+    skillsResult.status === "rejected" ||
+    sessionsResult.status === "rejected";
+  element("resourceStatus").textContent = resourceItems.length
+    ? `${resourceItems.length} resource${resourceItems.length === 1 ? "" : "s"}${partial ? " · partial" : ""}`
+    : partial
+      ? "Resource discovery unavailable; legacy artifact remains available."
+      : "No local Skills or sessions found.";
+  renderResources();
+
+  if (refresh) {
+    const active = currentResource();
+    if (active?.type === "session") {
+      await loadResource(active, { refreshSession: true });
+    }
+  }
+  return nextResources;
+}
+
+function renderQuickOpen() {
+  const dialog = element("quickOpenDialog");
+  const query = element("quickOpenSearch").value.trim().toLocaleLowerCase();
+  const matches = resourceItems.filter((resource) => {
+    const label = resource.type === "skill"
+      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""}`
+      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""}`;
+    return !query || label.toLocaleLowerCase().includes(query);
+  });
+  replaceResourceRows(
+    element("quickOpenList"),
+    matches,
+    "No matching local resource.",
+  );
+  if (!dialog.open) return;
+  const first = element("quickOpenList").querySelector(".resource-row");
+  if (first) first.tabIndex = 0;
+}
+
+function showMobileRegion(region) {
+  mobileRegion = region;
+  document.body.dataset.mobileRegion = region;
+  for (const button of document.querySelectorAll("[data-mobile-region]")) {
+    button.setAttribute(
+      "aria-selected",
+      String(button.dataset.mobileRegion === region),
+    );
+  }
+}
+
+function focusRegion(region) {
+  if (region === "canvas") showMobileRegion("graph");
+  if (region === "inspector") {
+    showMobileRegion("inspector");
+    document.body.dataset.inspectorOpen = "true";
+  }
+  if (region === "panel") showMobileRegion("panel");
+  if (region === "resources") {
+    document.body.dataset.mobileRegion = "resources";
+  }
+  const target =
+    region === "canvas"
+      ? element("graphCanvas")
+      : region === "inspector"
+        ? element("inspectorRegion")
+        : region === "panel"
+          ? element("bottomPanel")
+          : element("resourcesRegion");
+  target.focus({ preventScroll: true });
+}
+
 function installHandlers() {
   for (const formId of ["nodeForm", "edgeForm", "planForm"]) {
     element(formId).addEventListener("submit", (event) => event.preventDefault());
   }
 
-  for (const button of document.querySelectorAll("[data-view]")) {
+  element("resourceSearch").addEventListener("input", renderResources);
+  element("refreshResources").addEventListener("click", () => {
+    loadCatalogs({ refresh: true });
+  });
+  element("quickOpen").addEventListener("click", () => {
+    element("quickOpenSearch").value = "";
+    renderQuickOpen();
+    element("quickOpenDialog").showModal();
+    requestAnimationFrame(() => element("quickOpenSearch").focus());
+  });
+  element("quickOpenSearch").addEventListener("input", renderQuickOpen);
+  element("dirtySwitchDialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    completeResourceSwitch("cancel");
+  });
+  element("keepSwitch").addEventListener("click", () =>
+    completeResourceSwitch("keep"));
+  element("discardSwitch").addEventListener("click", () =>
+    completeResourceSwitch("discard"));
+  element("cancelSwitch").addEventListener("click", () =>
+    completeResourceSwitch("cancel"));
+
+  for (const button of document.querySelectorAll(".view-tabs [data-view]")) {
     button.addEventListener("click", () => {
       finishTextTransaction();
       state = setActiveView(state, button.dataset.view);
+      document.body.dataset.inspectorOpen = "true";
       render();
     });
     button.addEventListener("keydown", (event) => {
-      const tabs = [...document.querySelectorAll("[data-view]:not(:disabled)")];
+      const tabs = [
+        ...document.querySelectorAll(".view-tabs [data-view]:not(:disabled)"),
+      ];
       const index = tabs.indexOf(button);
       let target = null;
       if (event.key === "ArrowRight") target = tabs[(index + 1) % tabs.length];
@@ -962,6 +1664,41 @@ function installHandlers() {
         target.click();
         target.focus();
       }
+    });
+  }
+
+  for (const button of document.querySelectorAll("[data-panel]")) {
+    button.addEventListener("click", (event) => {
+      const panel = button.dataset.panel;
+      if (panel === "source" || panel === "diff") {
+        openReview(panel, event.currentTarget);
+      } else {
+        reviewMode = null;
+        activePanel = panel;
+        renderReviewDrawer();
+        renderPanel();
+        if (panel === "evidence") renderTrace();
+      }
+    });
+  }
+  element("togglePanel").addEventListener("click", () => {
+    const panel = element("bottomPanel");
+    const collapsed = panel.dataset.collapsed === "true";
+    panel.dataset.collapsed = String(!collapsed);
+    element("togglePanel").textContent = collapsed ? "⌄" : "⌃";
+    element("togglePanel").setAttribute(
+      "aria-label",
+      collapsed ? "Collapse bottom panel" : "Expand bottom panel",
+    );
+  });
+  for (const button of document.querySelectorAll("[data-mobile-region]")) {
+    button.addEventListener("click", () => {
+      showMobileRegion(button.dataset.mobileRegion);
+      focusRegion(
+        button.dataset.mobileRegion === "graph"
+          ? "canvas"
+          : button.dataset.mobileRegion,
+      );
     });
   }
 
@@ -1225,9 +1962,43 @@ function installHandlers() {
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && element("quickOpenDialog").open) {
+      event.preventDefault();
+      element("quickOpenDialog").close();
+      element("quickOpen").focus({ preventScroll: true });
+      return;
+    }
+    if (event.key === "F6") {
+      event.preventDefault();
+      const regions = ["resources", "canvas", "inspector", "panel"];
+      const currentIndex = regions.findIndex((region) =>
+        document.activeElement?.closest?.(`[data-region="${region}"]`),
+      );
+      const direction = event.shiftKey ? -1 : 1;
+      const next =
+        regions[(currentIndex + direction + regions.length) % regions.length];
+      focusRegion(next);
+      return;
+    }
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      event.key.toLowerCase() === "p"
+    ) {
+      event.preventDefault();
+      element("quickOpen").click();
+      return;
+    }
     if (event.key === "Escape" && reviewMode) {
       event.preventDefault();
       closeReview();
+      return;
+    }
+    if (
+      event.key === "Escape" &&
+      document.body.dataset.inspectorOpen === "true"
+    ) {
+      document.body.dataset.inspectorOpen = "false";
       return;
     }
     const target = event.target;
@@ -1256,38 +2027,72 @@ function installHandlers() {
   });
 }
 
+async function loadLegacyArtifact() {
+  const response = await fetch(
+    `/api/artifact?token=${encodeURIComponent(accessToken)}`,
+    {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Artifact request failed with HTTP ${response.status}.`);
+  }
+  const payload = await response.json();
+  const resource = {
+    type: "skill",
+    id: "legacy-artifact",
+    group: "workspace",
+    item: {
+      id: "legacy-artifact",
+      name: "Opened artifact",
+      description: "Artifact supplied on the AIR Workbench command line.",
+      workflow_node_count: 0,
+      workflow_edge_count: 0,
+      source_labels: [],
+      exact_copy: false,
+      name_conflict: false,
+    },
+  };
+  const entry = newDocument(resource, payload);
+  resource.item.workflow_node_count = entry.state.nodes.length;
+  resource.item.workflow_edge_count = entry.state.edges.length;
+  resourceItems = [resource];
+  activateDocument(
+    resourceKey(resource),
+    entry,
+    "Artifact loaded. Select a node or dependency to edit.",
+  );
+  element("resourceStatus").textContent = "Opened command-line artifact";
+}
+
 async function loadArtifact() {
   installHandlers();
-  const token = new URLSearchParams(window.location.search).get("token");
-  if (!token) {
-    setStatus("Missing session token. Reopen Workflow Studio from its CLI URL.");
+  document.body.dataset.mobileRegion = mobileRegion;
+  accessToken = new URLSearchParams(window.location.search).get("token") ?? "";
+  if (!accessToken) {
+    setStatus("Missing session token. Reopen AIR Workbench from its CLI URL.");
     return;
   }
   try {
-    const response = await fetch(
-      `/api/artifact?token=${encodeURIComponent(token)}`,
-      {
-        method: "GET",
-        credentials: "same-origin",
-        headers: { Accept: "application/json" },
-        cache: "no-store",
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`Artifact request failed with HTTP ${response.status}.`);
+    const discovered = await loadCatalogs();
+    if (discovered.length) {
+      await loadResource(discovered[0]);
+    } else {
+      await loadLegacyArtifact();
     }
-    state = createEditorState(await response.json());
-    if (state.kind === "trace") state.activeView = "graph";
-    selection = state.selectedId
-      ? { type: "node", id: state.selectedId }
-      : { type: null, id: null };
-    previousValidationSignature = validationSignature(state);
-    render();
-    setStatus("Artifact loaded. Select a node or dependency to edit.");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus(`Could not load artifact: ${message}`);
-    element("artifactKind").textContent = "Error";
+    try {
+      await loadLegacyArtifact();
+    } catch (legacyError) {
+      const message =
+        legacyError instanceof Error ? legacyError.message : String(legacyError);
+      setStatus(`Could not load AIR Workbench: ${message}`);
+      element("artifactKind").textContent = "Error";
+      element("resourceStatus").textContent = "Resource loading failed";
+    }
   }
 }
 

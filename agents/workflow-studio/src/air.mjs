@@ -388,7 +388,13 @@ function diagnostics(value, label) {
   }
 }
 
-function acyclicGraph(nodeIds, edges, entries, label) {
+function acyclicGraph(
+  nodeIds,
+  edges,
+  entries,
+  label,
+  { allowDistinctEdgeKinds = false } = {},
+) {
   const ids = new Set(nodeIds);
   if (ids.size !== nodeIds.length) {
     throw airError("AIR_SEMANTIC_INVALID", `${label} has duplicate node IDs.`);
@@ -397,15 +403,18 @@ function acyclicGraph(nodeIds, edges, entries, label) {
   const outgoing = new Map(nodeIds.map((id) => [id, []]));
   const pairs = new Set();
   for (const edge of edges) {
+    const pair = allowDistinctEdgeKinds
+      ? `${edge.from}\0${edge.to}\0${edge.kind}`
+      : `${edge.from}\0${edge.to}`;
     if (
       !ids.has(edge.from) ||
       !ids.has(edge.to) ||
       edge.from === edge.to ||
-      pairs.has(`${edge.from}\0${edge.to}`)
+      pairs.has(pair)
     ) {
       throw airError("AIR_SEMANTIC_INVALID", `${label} has an invalid edge.`);
     }
-    pairs.add(`${edge.from}\0${edge.to}`);
+    pairs.add(pair);
     incoming.set(edge.to, incoming.get(edge.to) + 1);
     outgoing.get(edge.from).push(edge.to);
   }
@@ -711,6 +720,7 @@ function validateEventGraph(graph, eventIds, label) {
     edges,
     uniqueTextList(graph.entry_event_ids, `${label}.entry_event_ids`),
     label,
+    { allowDistinctEdgeKinds: true },
   );
 }
 
@@ -856,7 +866,9 @@ function validateSessionTraceBody(artifact) {
   if (!["codex-rollout-jsonl", "claude-project-jsonl"].includes(capture.adapter.id)) {
     throw airError("AIR_SEMANTIC_INVALID", "Session adapter is invalid.");
   }
-  text(capture.adapter.version, "session adapter version");
+  if (capture.adapter.version !== AIR_VERSION) {
+    throw airError("AIR_SEMANTIC_INVALID", "Session adapter version is invalid.");
+  }
   digest(capture.source_schema_fingerprint, "session schema fingerprint");
   record(capture.snapshot_cursor, ["epoch", "byte_offset"], [], "session cursor");
   integer(capture.snapshot_cursor.epoch, "session cursor epoch");
@@ -872,24 +884,43 @@ function validateSessionTraceBody(artifact) {
   if (privacy.profile !== "metadata-only") {
     throw airError("AIR_SEMANTIC_INVALID", "Session privacy profile is invalid.");
   }
-  const categories = new Set([
+  const canonicalCategories = [
     "prompt", "message", "reasoning", "command", "arguments", "results",
     "stdout", "stderr", "attachments", "file-content", "environment",
     "credentials", "paths", "branches", "provider-identifiers",
-  ]);
+  ];
   const manifest = array(privacy.redaction_manifest, "session redaction manifest");
-  if (manifest.length === 0) {
-    throw airError("AIR_SEMANTIC_INVALID", "Session redaction manifest is empty.");
+  if (manifest.length !== canonicalCategories.length) {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      "Session redaction manifest must contain every privacy category exactly once.",
+    );
   }
   for (const [index, item] of manifest.entries()) {
     record(item, ["category", "disposition"], ["count"], `redaction ${index}`);
-    if (!categories.has(item.category) || item.disposition !== "omitted") {
+    if (
+      item.category !== canonicalCategories[index] ||
+      item.disposition !== "omitted"
+    ) {
       throw airError("AIR_SEMANTIC_INVALID", `Redaction ${index} is invalid.`);
     }
     if (item.count !== undefined) integer(item.count, `redaction ${index} count`);
   }
 
   const eventIds = [];
+  const sessionEventTypes = new Set([
+    "session.started",
+    "turn.context-observed",
+    "turn.input-observed",
+    "turn.output-observed",
+    "turn.item-observed",
+    "turn.progress-observed",
+    "turn.summary-observed",
+    "record.observed",
+    "record.malformed-omitted",
+    "record.structure-omitted",
+    "record.oversized-omitted",
+  ]);
   for (const [index, event] of array(body.events, "session events").entries()) {
     record(
       event,
@@ -897,16 +928,49 @@ function validateSessionTraceBody(artifact) {
       [],
       `session event ${index}`,
     );
-    eventIds.push(text(event.id, `session event ${index} ID`));
+    const eventId = text(event.id, `session event ${index} ID`);
+    if (!/^event_[A-Za-z0-9_-]{22}$/u.test(eventId)) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `Session event ${index} ID is invalid.`,
+      );
+    }
+    eventIds.push(eventId);
     if (event.order !== index || event.assertion !== "observed") {
       throw airError("AIR_SEMANTIC_INVALID", `Session event ${index} is invalid.`);
     }
-    text(event.type, `session event ${index} type`);
+    if (!sessionEventTypes.has(event.type)) {
+      throw airError("AIR_SEMANTIC_INVALID", `Session event ${index} type is invalid.`);
+    }
     validateConfidence(event.confidence, `session event ${index} confidence`);
-    uniqueTextList(event.evidence_refs, `session event ${index} evidence refs`);
+    if (
+      event.confidence.level !== "explicit" ||
+      event.confidence.rule_id !== "session.complete-jsonl-line" ||
+      event.confidence.reason !==
+        "A complete newline-delimited source record was observed."
+    ) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `Session event ${index} confidence is invalid.`,
+      );
+    }
+    if (
+      uniqueTextList(
+        event.evidence_refs,
+        `session event ${index} evidence refs`,
+      ).length !== 0
+    ) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `Session event ${index} evidence refs are invalid.`,
+      );
+    }
     const evidence = array(event.evidence, `session event ${index} evidence`);
-    if (evidence.length === 0) {
-      throw airError("AIR_SEMANTIC_INVALID", `Session event ${index} has no evidence.`);
+    if (evidence.length !== 1) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `Session event ${index} evidence is invalid.`,
+      );
     }
     for (const [evidenceIndex, item] of evidence.entries()) {
       const evidenceLabel = `session event ${index} evidence ${evidenceIndex}`;
@@ -916,8 +980,13 @@ function validateSessionTraceBody(artifact) {
         [],
         evidenceLabel,
       );
-      text(item.raw_type, `${evidenceLabel}.raw_type`);
-      uniqueTextList(item.top_level_keys, `${evidenceLabel}.top_level_keys`);
+      if (
+        item.raw_type !== event.type ||
+        stableStringify(item.top_level_keys) !==
+          stableStringify(["content-omitted"])
+      ) {
+        throw airError("AIR_SEMANTIC_INVALID", `${evidenceLabel} labels are invalid.`);
+      }
       byteRange(item.byte_range, `${evidenceLabel}.byte_range`);
       integer(item.byte_length, `${evidenceLabel}.byte_length`);
       digest(item.sha256, `${evidenceLabel}.sha256`);
@@ -930,6 +999,34 @@ function validateSessionTraceBody(artifact) {
     }
   }
   validateEventGraph(body.event_graph, eventIds, "session event graph");
+  for (const [index, edge] of body.event_graph.edges.entries()) {
+    const expected = edge.kind === "provider-link"
+      ? {
+          assertion: "observed",
+          level: "explicit",
+          ruleId: "session.provider-link",
+          reason: "A provider-declared parent link was observed.",
+        }
+      : {
+          assertion: "inferred",
+          level: "structural",
+          ruleId: "session.file-order",
+          reason: "Only newline record order is inferred.",
+        };
+    if (
+      !/^edge_[A-Za-z0-9_-]{22}$/u.test(edge.id) ||
+      edge.assertion !== expected.assertion ||
+      edge.confidence.level !== expected.level ||
+      edge.confidence.rule_id !== expected.ruleId ||
+      edge.confidence.reason !== expected.reason ||
+      edge.evidence_refs.length !== 0
+    ) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `Session event graph edge ${index} metadata is invalid.`,
+      );
+    }
+  }
   const lifecycle = record(
     body.lifecycle,
     ["state", "complete", "confidence", "evidence"],
@@ -937,14 +1034,27 @@ function validateSessionTraceBody(artifact) {
     "session lifecycle",
   );
   if (
-    !["running", "completed", "failed", "cancelled", "unknown", "stale", "partial"].includes(
-      lifecycle.state,
-    ) ||
+    !["active", "idle", "unknown"].includes(lifecycle.state) ||
     typeof lifecycle.complete !== "boolean"
   ) {
     throw airError("AIR_SEMANTIC_INVALID", "Session lifecycle is invalid.");
   }
   validateConfidence(lifecycle.confidence, "session lifecycle confidence");
+  const lifecycleKnown = lifecycle.state === "active" || lifecycle.state === "idle";
+  if (
+    lifecycle.complete !== false ||
+    lifecycle.confidence.level !== (lifecycleKnown ? "explicit" : "unknown") ||
+    lifecycle.confidence.rule_id !==
+      (lifecycleKnown
+        ? "session.process-identity"
+        : "session.lifecycle-unavailable") ||
+    lifecycle.confidence.reason !==
+      (lifecycleKnown
+        ? "Process identity and start identity were verified."
+        : "No authoritative provider lifecycle evidence is available.")
+  ) {
+    throw airError("AIR_SEMANTIC_INVALID", "Session lifecycle confidence is invalid.");
+  }
   for (const [index, evidence] of array(lifecycle.evidence, "lifecycle evidence").entries()) {
     record(evidence, ["source", "signal", "observed", "confidence"], [], `lifecycle evidence ${index}`);
     if (
@@ -960,11 +1070,96 @@ function validateSessionTraceBody(artifact) {
       evidence.confidence,
       `lifecycle evidence ${index} confidence`,
     );
+    if (
+      !lifecycleKnown ||
+      evidence.source !== "process-liveness" ||
+      evidence.signal !==
+        `process-identity-verified-${lifecycle.state}` ||
+      evidence.observed !== true ||
+      evidence.confidence.level !== "explicit" ||
+      evidence.confidence.rule_id !== "session.process-identity" ||
+      evidence.confidence.reason !==
+        "Provider-specific process evidence was verified."
+    ) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `Lifecycle evidence ${index} metadata is invalid.`,
+      );
+    }
+  }
+  if (
+    (lifecycleKnown && lifecycle.evidence.length !== 1) ||
+    (!lifecycleKnown && lifecycle.evidence.length !== 0)
+  ) {
+    throw airError("AIR_SEMANTIC_INVALID", "Session lifecycle evidence is invalid.");
   }
   diagnostics(body.diagnostics, "session diagnostics");
+  const sessionDiagnostics = new Map([
+    [
+      "AIR_SESSION_TORN_SUFFIX_OMITTED",
+      ["info", "An incomplete trailing record was omitted."],
+    ],
+    [
+      "AIR_SESSION_SNAPSHOT_LIMIT",
+      ["warning", "The bounded snapshot stopped at a published limit."],
+    ],
+    [
+      "AIR_SESSION_OVERSIZED_RECORD_OMITTED",
+      ["warning", "One or more oversized records were omitted."],
+    ],
+  ]);
+  for (const [index, item] of body.diagnostics.entries()) {
+    const expected = sessionDiagnostics.get(item.code);
+    if (
+      !expected ||
+      item.severity !== expected[0] ||
+      item.message !== expected[1] ||
+      item.targets.length !== 0
+    ) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `Session diagnostic ${index} is invalid.`,
+      );
+    }
+  }
   if (body.hidden_reasoning_recovered !== false) {
     throw airError("AIR_SEMANTIC_INVALID", "Session hidden reasoning flag is invalid.");
   }
+}
+
+export function createSessionAirArtifact(body) {
+  const projection = {
+    format: "air",
+    air_version: AIR_VERSION,
+    kind: "trace",
+    profile: AIR_PROFILES.session,
+    body: clone(body),
+  };
+  const contentDigest = domainDigest(AIR_CONTENT_DOMAIN, projection);
+  const envelope = {
+    $schema: AIR_SCHEMA,
+    ...projection,
+    artifact_id: `urn:air:sha256:${contentDigest}`,
+    provenance: {
+      created_by: { name: "air-workbench-session-adapter", version: AIR_VERSION },
+      origins: [],
+      derived_from: [],
+      migrations: [],
+    },
+    integrity: {
+      canonicalization: "RFC8785",
+      algorithm: "sha-256",
+      content_digest: contentDigest,
+    },
+    required_extensions: [],
+    extensions: {},
+  };
+  envelope.integrity.envelope_digest = domainDigest(
+    AIR_ENVELOPE_DOMAIN,
+    airEnvelopeProjection(envelope),
+  );
+  validateAirArtifact(envelope);
+  return envelope;
 }
 
 function validateNativeBody(artifact) {

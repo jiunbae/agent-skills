@@ -11,360 +11,345 @@
     <link rel="stylesheet" href="/generated/graph-canvas.css">
   </head>
   <body>
-    <a class="skip-link" href="#workspace">Skip to workspace</a>
-    <header class="masthead">
-      <div>
-        <p class="eyebrow">Agent Intermediate Representation</p>
-        <h1>AIR Workbench</h1>
-      </div>
-      <div class="artifact-state" aria-label="Artifact state">
-        <span id="artifactKind" class="kind-badge">Loading</span>
-        <span id="unsavedIndicator" class="unsaved" hidden>Unsaved changes</span>
-      </div>
-    </header>
-
-    <section class="source-strip" aria-label="Opened artifact">
-      <div>
-        <span class="label">Source</span>
-        <strong id="sourcePath">Waiting for artifact…</strong>
-      </div>
-      <div>
-        <span class="label">Format</span>
-        <strong id="irVersion">—</strong>
-      </div>
-      <div>
-        <span class="label">Parse</span>
-        <strong id="parseSummary">—</strong>
-      </div>
-      <div class="download-actions">
-        <button id="downloadIr" type="button" disabled>Download artifact</button>
-        <button id="downloadMarkdown" type="button" class="primary" disabled>
-          Download Markdown draft
+    <a class="skip-link" href="#graphCanvas">Skip to graph</a>
+    <div class="workbench">
+      <header class="masthead" data-region="title">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">AIR</span>
+          <div>
+            <h1>AIR Workbench</h1>
+            <p class="brand-subtitle">Agent Intermediate Representation</p>
+          </div>
+        </div>
+        <button id="quickOpen" class="command-button" type="button"
+          aria-haspopup="dialog" title="Quick Open (Command or Control + P)">
+          <span>Quick Open</span><kbd>⌘P</kbd>
         </button>
-      </div>
-    </section>
-
-    <nav class="view-tabs" aria-label="Artifact views" role="tablist">
-      <button id="tabGraph" type="button" role="tab" aria-selected="true"
-        aria-controls="viewGraph" data-view="graph">Workflow</button>
-      <button id="tabPlan" type="button" role="tab" aria-selected="false"
-        aria-controls="viewPlan" data-view="plan" tabindex="-1">Plan</button>
-      <button id="tabTrace" type="button" role="tab" aria-selected="false"
-        aria-controls="viewTrace" data-view="trace" tabindex="-1">Evidence</button>
-    </nav>
-
-    <main id="workspace">
-      <section id="viewGraph" class="view-panel" role="tabpanel"
-        aria-labelledby="tabGraph" tabindex="0">
-        <div class="workspace-shell">
-          <section class="graph-card" aria-labelledby="graphHeading">
-            <div class="section-heading">
-              <div>
-                <p id="graphEyebrow" class="eyebrow">Declared flow</p>
-                <h2 id="graphHeading">Workflow graph</h2>
-              </div>
-              <p id="graphLegend" class="legend">
-                Solid = sequence · Dashed = parallel
-              </p>
-            </div>
-
-            <div class="canvas-toolbar" aria-label="Graph tools">
-              <button id="undoEdit" type="button" disabled
-                title="Undo (Command or Control + Z)">Undo</button>
-              <button id="redoEdit" type="button" disabled
-                title="Redo (Command or Control + Shift + Z)">Redo</button>
-              <span class="toolbar-separator" aria-hidden="true"></span>
-              <button id="fitGraph" type="button">Fit graph</button>
-              <button id="resetLayout" type="button">Reset layout</button>
-              <span class="toolbar-spacer"></span>
-              <button id="openSource" type="button" aria-haspopup="true"
-                aria-controls="reviewDrawer" aria-expanded="false">
-                Review source
-              </button>
-              <button id="openDiff" type="button" aria-haspopup="true"
-                aria-controls="reviewDrawer" aria-expanded="false">
-                Review diff
-              </button>
-            </div>
-
-            <div id="graphCanvas" class="graph-canvas"
-              aria-label="Visual workflow graph"></div>
-            <div id="largeGraphFallback" class="large-graph-fallback" hidden>
-              <h3>Large graph overview</h3>
-              <p id="largeGraphMessage"></p>
-              <p>
-                Editing and downloads remain available. Use the bounded
-                semantic outline below or a smaller graph for direct canvas editing.
-              </p>
-            </div>
-
-            <details id="outlineDetails" class="outline-companion">
-              <summary>
-                <span id="outlineHeading">Semantic outline</span>
-                <span id="outlineCount" class="summary-count"></span>
-              </summary>
-              <p id="outlineEyebrow" class="supporting-copy">
-                Keyboard companion for graph nodes and dependencies.
-              </p>
-              <div class="outline-columns">
-                <section aria-labelledby="nodeOutlineHeading">
-                  <h3 id="nodeOutlineHeading">Steps</h3>
-                  <ol id="workflowOutline" class="workflow-outline"
-                    aria-label="Workflow steps"></ol>
-                </section>
-                <section aria-labelledby="edgeOutlineHeading">
-                  <h3 id="edgeOutlineHeading">Dependencies</h3>
-                  <ul id="edgeList" class="edge-list"
-                    aria-label="Workflow edges"></ul>
-                </section>
-              </div>
-            </details>
-          </section>
-
-          <aside class="inspector" aria-labelledby="inspectorHeading">
-            <div class="section-heading inspector-heading">
-              <div>
-                <p id="inspectorEyebrow" class="eyebrow">Selection</p>
-                <h2 id="inspectorHeading">Inspector</h2>
-              </div>
-              <span id="selectionBadge" class="kind-badge">None</span>
-            </div>
-
-            <div id="emptyInspector" class="empty-state">
-              <p>Select a step or dependency on the graph.</p>
-              <button id="addFirst" type="button">Add first step</button>
-            </div>
-
-            <form id="nodeForm" class="form-stack" hidden>
-              <div class="field">
-                <label for="nodeTitle">Step title</label>
-                <input id="nodeTitle" name="nodeTitle" autocomplete="off">
-              </div>
-              <div class="field">
-                <label for="nodeBody">Instructions (Markdown)</label>
-                <textarea id="nodeBody" name="nodeBody" rows="9"></textarea>
-              </div>
-              <dl class="metadata-list">
-                <div>
-                  <dt>Confidence</dt>
-                  <dd id="nodeConfidence">—</dd>
-                </div>
-                <div>
-                  <dt>Provenance</dt>
-                  <dd id="nodeProvenance">—</dd>
-                </div>
-                <div>
-                  <dt>Source mapping</dt>
-                  <dd id="nodeMapping">—</dd>
-                </div>
-              </dl>
-              <p id="readOnlyReason" class="notice warning" hidden></p>
-              <p id="structuralEditNotice" class="notice warning" hidden></p>
-              <fieldset>
-                <legend>Step position</legend>
-                <div class="button-grid">
-                  <button id="addBefore" type="button">Add before</button>
-                  <button id="addAfter" type="button">Add after</button>
-                  <button id="moveUp" type="button">Move up</button>
-                  <button id="moveDown" type="button">Move down</button>
-                  <button id="deleteNode" type="button" class="danger">
-                    Delete step
-                  </button>
-                </div>
-              </fieldset>
-              <fieldset id="nodeEdgeCreator">
-                <legend>Add outgoing dependency</legend>
-                <div class="field">
-                  <label for="edgeFrom">From</label>
-                  <select id="edgeFrom" name="edgeFrom"></select>
-                </div>
-                <div class="field">
-                  <label for="edgeTo">To</label>
-                  <select id="edgeTo" name="edgeTo"></select>
-                </div>
-                <div class="field">
-                  <label for="edgeKind">Type</label>
-                  <select id="edgeKind" name="edgeKind">
-                    <option value="sequence">Sequence</option>
-                    <option value="parallel">Parallel</option>
-                  </select>
-                </div>
-                <button id="addEdge" type="button">Add dependency</button>
-              </fieldset>
-              <p id="edgeControlNotice" class="notice warning" hidden></p>
-            </form>
-
-            <form id="edgeForm" class="form-stack" hidden>
-              <p id="edgeIdentity" class="supporting-copy"></p>
-              <div class="field">
-                <label for="selectedEdgeFrom">From step</label>
-                <select id="selectedEdgeFrom" name="selectedEdgeFrom"></select>
-              </div>
-              <div class="field">
-                <label for="selectedEdgeTo">To step</label>
-                <select id="selectedEdgeTo" name="selectedEdgeTo"></select>
-              </div>
-              <div class="field">
-                <label for="selectedEdgeKind">Dependency type</label>
-                <select id="selectedEdgeKind" name="selectedEdgeKind">
-                  <option value="sequence">Sequence</option>
-                  <option value="parallel">Parallel</option>
-                </select>
-              </div>
-              <dl class="metadata-list">
-                <div>
-                  <dt>Provenance</dt>
-                  <dd id="edgeProvenance">—</dd>
-                </div>
-                <div>
-                  <dt>Truth</dt>
-                  <dd id="edgeTruth">Declared workflow dependency</dd>
-                </div>
-              </dl>
-              <p id="selectedEdgeNotice" class="notice warning" hidden></p>
-              <button id="removeSelectedEdge" type="button" class="danger">
-                Remove dependency
-              </button>
-            </form>
-          </aside>
+        <div class="document-identity">
+          <span id="artifactKind" class="kind-badge">Loading</span>
+          <strong id="sourcePath">Waiting for artifact…</strong>
+          <span id="unsavedIndicator" class="unsaved" hidden>Modified</span>
         </div>
-      </section>
-
-      <section id="viewPlan" class="view-panel plan-view" role="tabpanel"
-        aria-labelledby="tabPlan" tabindex="0" hidden>
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Pre-run review</p>
-            <h2>Plan for CLI approval</h2>
-          </div>
-          <span id="approvalBadge" class="kind-badge">CLI approval required</span>
-        </div>
-        <p id="planNotice" class="notice">
-          Browser review hashes the exact payload. The CLI must still validate
-          and approve its canonical working directory before a native run.
-        </p>
-        <form id="planForm" class="plan-grid">
-          <div class="field">
-            <label for="planAgent">CLI agent</label>
-            <select id="planAgent" name="planAgent">
-              <option value="codex">Codex</option>
-              <option value="claude">Claude Code</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="planCwd">Working directory</label>
-            <input id="planCwd" name="planCwd" autocomplete="off"
-              aria-describedby="planCwdHint planCwdError">
-            <p id="planCwdHint" class="field-hint">
-              Enter an absolute path. The CLI will verify that it exists and is canonical.
-            </p>
-            <p id="planCwdError" class="field-error" hidden></p>
-          </div>
-          <div class="field">
-            <label for="planSafety">Safety profile</label>
-            <select id="planSafety" name="planSafety">
-              <option value="read-only">Read only</option>
-              <option value="workspace-write">Workspace write</option>
-            </select>
-          </div>
-          <div class="field plan-prompt">
-            <label for="planPrompt">Exact effective prompt</label>
-            <textarea id="planPrompt" name="planPrompt" rows="10"
-              aria-describedby="planPromptHint planPromptError"></textarea>
-            <p id="planPromptHint" class="field-hint">
-              This exact text is hashed and supplied to the selected CLI.
-            </p>
-            <p id="planPromptError" class="field-error" hidden></p>
-          </div>
-          <div class="plan-actions">
-            <button id="approvePlan" type="button" class="primary">
-              Browser review current plan
-            </button>
-            <button id="downloadPlan" type="button" disabled>
-              Download for CLI approval
-            </button>
-            <button id="promotePlan" type="button">
-              Promote plan to skill draft
-            </button>
-          </div>
-        </form>
-        <div id="planPayloadPanel">
-          <h3>Payload awaiting CLI approval</h3>
-          <pre id="planPreview" class="code-panel compact" tabindex="0"></pre>
-        </div>
-        <section id="draftPanel" class="draft-panel" hidden
-          aria-labelledby="draftHeading">
-          <h3 id="draftHeading">Promoted skill draft</h3>
-          <ul id="draftWarnings" class="warning-list"></ul>
-          <button id="downloadDraft" type="button">Download promoted draft</button>
-          <pre id="draftPreview" class="code-panel compact" tabindex="0"></pre>
-        </section>
-      </section>
-
-      <section id="viewTrace" class="view-panel trace-view" role="tabpanel"
-        aria-labelledby="tabTrace" tabindex="0" hidden>
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Post-run evidence</p>
-            <h2>Observable trace</h2>
-          </div>
-          <span id="traceStatus" class="kind-badge">No trace loaded</span>
-        </div>
-        <p class="notice warning">
-          Events are observed provider output. Connected order may be inferred
-          and does not claim hidden reasoning or causality.
-        </p>
-        <div id="traceSummary" class="trace-summary"></div>
-        <ol id="traceList" class="trace-list"></ol>
-        <div class="trace-actions">
-          <button id="promoteTrace" type="button" disabled>
-            Promote trace to skill draft
+        <div class="download-actions">
+          <button id="downloadIr" type="button" disabled>Download AIR</button>
+          <button id="downloadMarkdown" type="button" class="primary" disabled>
+            Download Markdown
           </button>
         </div>
-      </section>
-    </main>
+      </header>
 
-    <aside id="reviewDrawer" class="review-drawer" aria-labelledby="reviewHeading"
-      tabindex="-1" hidden>
-      <div class="drawer-header">
-        <div>
-          <p class="eyebrow">Graph-context review</p>
-          <h2 id="reviewHeading">Source</h2>
-        </div>
-        <button id="closeReview" type="button">Close review</button>
+      <div class="mobile-switcher" role="tablist" aria-label="Workbench region">
+        <button type="button" data-mobile-region="graph" role="tab"
+          aria-selected="true">Graph</button>
+        <button type="button" data-mobile-region="inspector" role="tab"
+          aria-selected="false">Inspector</button>
+        <button type="button" data-mobile-region="panel" role="tab"
+          aria-selected="false">Panel</button>
       </div>
-      <div class="drawer-tabs" role="tablist" aria-label="Review content">
-        <button id="reviewSourceTab" type="button" role="tab"
-          aria-selected="true" aria-controls="reviewSourcePanel">Source</button>
-        <button id="reviewDiffTab" type="button" role="tab"
-          aria-selected="false" aria-controls="reviewDiffPanel">Diff</button>
-      </div>
-      <section id="reviewSourcePanel" role="tabpanel"
-        aria-labelledby="reviewSourceTab">
-        <div class="review-context">
-          <strong id="reviewSourceContext">Complete candidate Markdown</strong>
-          <span id="sourceMode" class="kind-badge">Original</span>
-        </div>
-        <pre id="sourcePreview" class="code-panel" tabindex="0"></pre>
-      </section>
-      <section id="reviewDiffPanel" role="tabpanel"
-        aria-labelledby="reviewDiffTab" hidden>
-        <p class="supporting-copy">
-          Complete pending file diff, including opaque source content.
-        </p>
-        <pre id="diffPreview" class="code-panel diff-panel" tabindex="0"></pre>
-      </section>
-    </aside>
 
-    <section class="status-dock" aria-label="Validation and status">
-      <div id="statusMessage" role="status" aria-live="polite" aria-atomic="true">
-        Loading artifact…
+      <aside id="resourcesRegion" class="resources region" data-region="resources"
+        tabindex="-1" aria-labelledby="resourcesHeading">
+        <div class="region-heading">
+          <h2 id="resourcesHeading">Resources</h2>
+          <button id="refreshResources" class="icon-button" type="button"
+            title="Refresh resources" aria-label="Refresh resources">↻</button>
+        </div>
+        <label class="resource-search" for="resourceSearch">
+          <span class="visually-hidden">Filter resources</span>
+          <input id="resourceSearch" type="search" autocomplete="off"
+            placeholder="Filter skills and sessions">
+        </label>
+        <div id="resourceStatus" class="resource-status" role="status"
+          aria-live="polite">Loading local resources…</div>
+        <nav class="resource-tree" aria-label="Available AIR resources">
+          <section class="resource-group" aria-labelledby="workspaceResources">
+            <h3 id="workspaceResources">Workspace</h3>
+            <ul id="workspaceSkillList" class="resource-list"></ul>
+          </section>
+          <section class="resource-group" aria-labelledby="installedResources">
+            <h3 id="installedResources">Installed</h3>
+            <ul id="installedSkillList" class="resource-list"></ul>
+          </section>
+          <section class="resource-group" aria-labelledby="sessionResources">
+            <h3 id="sessionResources">Sessions</h3>
+            <ul id="sessionList" class="resource-list"></ul>
+          </section>
+        </nav>
+      </aside>
+
+      <main id="workspace" class="canvas-region region" data-region="canvas"
+        tabindex="-1">
+        <section id="viewGraph" class="view-panel graph-card" role="tabpanel"
+          aria-labelledby="tabGraph">
+          <div class="canvas-titlebar">
+            <div>
+              <p id="graphEyebrow" class="eyebrow">Declared flow</p>
+              <h2 id="graphHeading">Workflow graph</h2>
+            </div>
+            <p id="graphLegend" class="legend">
+              Solid = sequence · Dashed = parallel
+            </p>
+          </div>
+          <div class="canvas-toolbar" aria-label="Graph tools">
+            <button id="undoEdit" type="button" disabled
+              title="Undo (Command or Control + Z)">Undo</button>
+            <button id="redoEdit" type="button" disabled
+              title="Redo (Command or Control + Shift + Z)">Redo</button>
+            <span class="toolbar-separator" aria-hidden="true"></span>
+            <button id="fitGraph" type="button">Fit</button>
+            <button id="resetLayout" type="button">Layout</button>
+            <span class="toolbar-spacer"></span>
+            <span id="parseSummary" class="canvas-summary">—</span>
+            <span id="irVersion" class="visually-hidden">—</span>
+          </div>
+          <div id="graphCanvas" class="graph-canvas" tabindex="-1"
+            aria-label="Visual workflow graph"></div>
+          <div id="largeGraphFallback" class="large-graph-fallback" hidden>
+            <h3>Large graph overview</h3>
+            <p id="largeGraphMessage"></p>
+            <p>Editing and downloads remain available through the bounded outline.</p>
+          </div>
+          <details id="outlineDetails" class="outline-companion">
+            <summary>
+              <span id="outlineHeading">Semantic outline</span>
+              <span id="outlineCount" class="summary-count"></span>
+            </summary>
+            <p id="outlineEyebrow" class="supporting-copy">
+              Keyboard companion for graph nodes and dependencies.
+            </p>
+            <div class="outline-columns">
+              <section aria-labelledby="nodeOutlineHeading">
+                <h3 id="nodeOutlineHeading">Steps</h3>
+                <ol id="workflowOutline" class="workflow-outline"
+                  aria-label="Workflow steps"></ol>
+              </section>
+              <section aria-labelledby="edgeOutlineHeading">
+                <h3 id="edgeOutlineHeading">Dependencies</h3>
+                <ul id="edgeList" class="edge-list"
+                  aria-label="Workflow edges"></ul>
+              </section>
+            </div>
+          </details>
+        </section>
+      </main>
+
+      <aside id="inspectorRegion" class="inspector region" data-region="inspector"
+        tabindex="-1" aria-labelledby="inspectorHeading">
+        <nav class="view-tabs" aria-label="Inspector views" role="tablist">
+          <button id="tabGraph" type="button" role="tab" aria-selected="true"
+            aria-controls="propertiesPanel" data-view="graph">Properties</button>
+          <button id="tabPlan" type="button" role="tab" aria-selected="false"
+            aria-controls="viewPlan" data-view="plan" tabindex="-1">Run setup</button>
+        </nav>
+        <section id="propertiesPanel" class="inspector-content">
+          <div class="section-heading inspector-heading">
+            <div>
+              <p id="inspectorEyebrow" class="eyebrow">Selection</p>
+              <h2 id="inspectorHeading">Inspector</h2>
+            </div>
+            <span id="selectionBadge" class="kind-badge">None</span>
+          </div>
+          <div id="emptyInspector" class="empty-state">
+            <p>Select a step or dependency on the graph.</p>
+            <button id="addFirst" type="button">Add first step</button>
+          </div>
+          <form id="nodeForm" class="form-stack" hidden>
+            <div class="field">
+              <label for="nodeTitle">Step title</label>
+              <input id="nodeTitle" name="nodeTitle" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="nodeBody">Instructions (Markdown)</label>
+              <textarea id="nodeBody" name="nodeBody" rows="8"></textarea>
+            </div>
+            <dl class="metadata-list">
+              <div><dt>Confidence</dt><dd id="nodeConfidence">—</dd></div>
+              <div><dt>Provenance</dt><dd id="nodeProvenance">—</dd></div>
+              <div><dt>Source mapping</dt><dd id="nodeMapping">—</dd></div>
+            </dl>
+            <p id="readOnlyReason" class="notice warning" hidden></p>
+            <p id="structuralEditNotice" class="notice warning" hidden></p>
+            <fieldset>
+              <legend>Step position</legend>
+              <div class="button-grid">
+                <button id="addBefore" type="button">Add before</button>
+                <button id="addAfter" type="button">Add after</button>
+                <button id="moveUp" type="button">Move up</button>
+                <button id="moveDown" type="button">Move down</button>
+                <button id="deleteNode" type="button" class="danger">Delete step</button>
+              </div>
+            </fieldset>
+            <fieldset id="nodeEdgeCreator">
+              <legend>Add outgoing dependency</legend>
+              <div class="field"><label for="edgeFrom">From</label>
+                <select id="edgeFrom" name="edgeFrom"></select></div>
+              <div class="field"><label for="edgeTo">To</label>
+                <select id="edgeTo" name="edgeTo"></select></div>
+              <div class="field"><label for="edgeKind">Type</label>
+                <select id="edgeKind" name="edgeKind">
+                  <option value="sequence">Sequence</option>
+                  <option value="parallel">Parallel</option>
+                </select></div>
+              <button id="addEdge" type="button">Add dependency</button>
+            </fieldset>
+            <p id="edgeControlNotice" class="notice warning" hidden></p>
+          </form>
+          <form id="edgeForm" class="form-stack" hidden>
+            <p id="edgeIdentity" class="supporting-copy"></p>
+            <div class="field"><label for="selectedEdgeFrom">From step</label>
+              <select id="selectedEdgeFrom" name="selectedEdgeFrom"></select></div>
+            <div class="field"><label for="selectedEdgeTo">To step</label>
+              <select id="selectedEdgeTo" name="selectedEdgeTo"></select></div>
+            <div class="field"><label for="selectedEdgeKind">Dependency type</label>
+              <select id="selectedEdgeKind" name="selectedEdgeKind">
+                <option value="sequence">Sequence</option>
+                <option value="parallel">Parallel</option>
+              </select></div>
+            <dl class="metadata-list">
+              <div><dt>Provenance</dt><dd id="edgeProvenance">—</dd></div>
+              <div><dt>Truth</dt><dd id="edgeTruth">Declared workflow dependency</dd></div>
+            </dl>
+            <p id="selectedEdgeNotice" class="notice warning" hidden></p>
+            <button id="removeSelectedEdge" type="button" class="danger">
+              Remove dependency
+            </button>
+          </form>
+        </section>
+        <section id="viewPlan" class="view-panel inspector-content plan-view"
+          role="tabpanel" aria-labelledby="tabPlan" tabindex="0" hidden>
+          <div class="section-heading">
+            <div><p class="eyebrow">Pre-run review</p><h2>Run setup</h2></div>
+            <span id="approvalBadge" class="kind-badge">CLI approval required</span>
+          </div>
+          <p id="planNotice" class="notice">
+            Browser review hashes the exact payload. The CLI still validates and approves it.
+          </p>
+          <form id="planForm" class="form-stack">
+            <div class="field"><label for="planAgent">CLI agent</label>
+              <select id="planAgent" name="planAgent">
+                <option value="codex">Codex</option>
+                <option value="claude">Claude Code</option>
+              </select></div>
+            <div class="field"><label for="planCwd">Working directory</label>
+              <input id="planCwd" name="planCwd" autocomplete="off"
+                aria-describedby="planCwdHint planCwdError">
+              <p id="planCwdHint" class="field-hint">Absolute path; CLI verified.</p>
+              <p id="planCwdError" class="field-error" hidden></p></div>
+            <div class="field"><label for="planSafety">Safety profile</label>
+              <select id="planSafety" name="planSafety">
+                <option value="read-only">Read only</option>
+                <option value="workspace-write">Workspace write</option>
+              </select></div>
+            <div class="field"><label for="planPrompt">Exact effective prompt</label>
+              <textarea id="planPrompt" name="planPrompt" rows="7"
+                aria-describedby="planPromptHint planPromptError"></textarea>
+              <p id="planPromptHint" class="field-hint">This text is hashed for CLI approval.</p>
+              <p id="planPromptError" class="field-error" hidden></p></div>
+            <div class="plan-actions">
+              <button id="approvePlan" type="button" class="primary">
+                Browser review current plan
+              </button>
+              <button id="downloadPlan" type="button" disabled>Download for CLI approval</button>
+              <button id="promotePlan" type="button">Promote to skill draft</button>
+            </div>
+          </form>
+          <div id="planPayloadPanel"><h3>Payload awaiting CLI approval</h3>
+            <pre id="planPreview" class="code-panel compact" tabindex="0"></pre></div>
+          <section id="draftPanel" class="draft-panel" hidden aria-labelledby="draftHeading">
+            <h3 id="draftHeading">Promoted skill draft</h3>
+            <ul id="draftWarnings" class="warning-list"></ul>
+            <button id="downloadDraft" type="button">Download promoted draft</button>
+            <pre id="draftPreview" class="code-panel compact" tabindex="0"></pre>
+          </section>
+        </section>
+      </aside>
+
+      <section id="bottomPanel" class="bottom-panel region" data-region="panel"
+        tabindex="-1" aria-label="Problems, evidence, source, and diff">
+        <nav class="panel-tabs" role="tablist" aria-label="Bottom panel">
+          <button id="panelProblems" type="button" role="tab"
+            aria-selected="true" data-panel="problems">Problems
+            <span id="problemCount">0</span></button>
+          <button id="tabTrace" type="button" role="tab" aria-selected="false"
+            aria-controls="viewTrace" data-view="trace" data-panel="evidence"
+            tabindex="-1">Evidence</button>
+          <button id="openSource" type="button" role="tab" aria-selected="false"
+            aria-controls="reviewSourcePanel" data-panel="source"
+            aria-expanded="false">Source</button>
+          <button id="openDiff" type="button" role="tab" aria-selected="false"
+            aria-controls="reviewDiffPanel" data-panel="diff"
+            aria-expanded="false">Diff</button>
+          <span class="panel-spacer"></span>
+          <button id="togglePanel" type="button" aria-label="Collapse bottom panel">⌄</button>
+        </nav>
+        <div id="problemsPanel" class="panel-content" role="tabpanel"
+          aria-labelledby="panelProblems">
+          <div id="statusMessage" role="status" aria-live="polite"
+            aria-atomic="true">Loading artifact…</div>
+          <details id="validationDetails">
+            <summary id="validationSummary">Validation pending</summary>
+            <ul id="validationList"></ul>
+          </details>
+        </div>
+        <section id="viewTrace" class="view-panel panel-content trace-view"
+          role="tabpanel" aria-labelledby="tabTrace" tabindex="0" hidden>
+          <div class="trace-header">
+            <strong>Observable evidence</strong>
+            <span id="traceStatus" class="kind-badge">No trace loaded</span>
+          </div>
+          <p class="notice warning">Observed provider output; inferred order is not causality.</p>
+          <div id="traceSummary" class="trace-summary"></div>
+          <ol id="traceList" class="trace-list"></ol>
+          <button id="promoteTrace" type="button" disabled>Promote trace to skill draft</button>
+        </section>
+        <aside id="reviewDrawer" class="panel-content review-drawer"
+          aria-labelledby="reviewHeading" tabindex="-1" hidden>
+          <div class="drawer-header">
+            <div><p class="eyebrow">Graph-context review</p>
+              <h2 id="reviewHeading">Source</h2></div>
+            <button id="closeReview" type="button">Close review</button>
+          </div>
+          <div class="drawer-tabs" role="tablist" aria-label="Review content">
+            <button id="reviewSourceTab" type="button" role="tab"
+              aria-selected="true" aria-controls="reviewSourcePanel">Source</button>
+            <button id="reviewDiffTab" type="button" role="tab"
+              aria-selected="false" aria-controls="reviewDiffPanel">Diff</button>
+          </div>
+          <section id="reviewSourcePanel" role="tabpanel" aria-labelledby="reviewSourceTab">
+            <div class="review-context">
+              <strong id="reviewSourceContext">Complete candidate Markdown</strong>
+              <span id="sourceMode" class="kind-badge">Original</span>
+            </div>
+            <pre id="sourcePreview" class="code-panel" tabindex="0"></pre>
+          </section>
+          <section id="reviewDiffPanel" role="tabpanel"
+            aria-labelledby="reviewDiffTab" hidden>
+            <pre id="diffPreview" class="code-panel diff-panel" tabindex="0"></pre>
+          </section>
+        </aside>
+      </section>
+    </div>
+
+    <dialog id="quickOpenDialog" class="command-dialog" aria-labelledby="quickOpenHeading">
+      <form method="dialog" class="command-dialog-shell">
+        <h2 id="quickOpenHeading" class="visually-hidden">Quick Open</h2>
+        <input id="quickOpenSearch" type="search" autocomplete="off"
+          placeholder="Type a skill or session name">
+        <ul id="quickOpenList" class="resource-list command-results"></ul>
+        <button type="submit" class="visually-hidden">Close</button>
+      </form>
+    </dialog>
+
+    <dialog id="dirtySwitchDialog" class="decision-dialog"
+      aria-labelledby="dirtySwitchHeading">
+      <h2 id="dirtySwitchHeading">Keep your changes?</h2>
+      <p>This workflow has in-memory changes. Choose what to do before switching.</p>
+      <div class="dialog-actions">
+        <button id="keepSwitch" type="button" class="primary">Keep changes &amp; switch</button>
+        <button id="discardSwitch" type="button" class="danger">Discard changes &amp; switch</button>
+        <button id="cancelSwitch" type="button">Cancel</button>
       </div>
-      <details id="validationDetails">
-        <summary id="validationSummary">Validation pending</summary>
-        <ul id="validationList"></ul>
-      </details>
-    </section>
+    </dialog>
 
     <script type="module" src="/editor.mjs"></script>
   </body>

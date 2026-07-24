@@ -266,4 +266,6 @@ test("AIR Workbench starts with zero inputs, default discovery, and an explicit 
   }), 0);
   assert.match(stderr, /plaintext HTTP/u);
   assert.match(stderr, /Skill catalog/u);
+  assert.match(stderr, /metadata-only session catalog\/snapshots/u);
+  assert.match(stderr, /bearer authority/u);
 });

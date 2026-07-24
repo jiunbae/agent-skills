@@ -26,6 +26,7 @@ import {
   markApprovedPlanDownloaded,
   markPromotedDraftDownloaded,
   moveNode,
+  projectAirArtifact,
   promoteToSkillDraft,
   removeEdge,
   structuralEditBlockReason,
@@ -1407,6 +1408,91 @@ test("generic downloads are workflow-only and validate the exact built artifact"
   assert.equal(canDownloadArtifact(createEditorState(productionTraceArtifact())), false);
 });
 
+test("native AIR workflow projection preserves graph and source instead of opening empty", async () => {
+  const air = JSON.parse(
+    await readFile(
+      new URL("../examples/hello-agent/workflow.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const projected = projectAirArtifact(air);
+  assert.equal(projected.graph.nodes.length, 2);
+  assert.equal(projected.graph.edges.length, 1);
+  const state = createEditorState(air);
+  assert.equal(state.nodes.length, 2);
+  assert.equal(state.edges.length, 1);
+  assert.equal(
+    Buffer.from(state.sourceBytes).toString("utf8"),
+    Buffer.from(air.body.source.bytes_base64, "base64").toString("utf8"),
+  );
+  assert.equal(state.validation.valid, true);
+});
+
+test("unsupported AIR profiles fail closed and native sessions remain read only", () => {
+  assert.throws(
+    () =>
+      createEditorState({
+        format: "air",
+        air_version: "1.0.0",
+        kind: "workflow",
+        profile: "https://example.invalid/unknown",
+        body: { graph: { nodes: [{ id: "must-not-disappear" }], edges: [] } },
+      }),
+    /Unsupported AIR profile/u,
+  );
+  const session = createEditorState({
+    format: "air",
+    air_version: "1.0.0",
+    kind: "trace",
+    profile:
+      "https://open330.github.io/air/profiles/1.0.0/trace-session-snapshot",
+    artifact_id: "urn:air:sha256:test",
+    body: {
+      capture: {},
+      privacy: { profile: "metadata-only", redaction_manifest: [] },
+      events: [
+        {
+          id: "event-a",
+          order: 0,
+          type: "turn.opened",
+          assertion: "observed",
+          confidence: { level: "explicit", rule_id: "test", reason: "test" },
+          evidence_refs: [],
+          evidence: [{ omitted: true }],
+        },
+        {
+          id: "event-b",
+          order: 1,
+          type: "turn.closed",
+          assertion: "observed",
+          confidence: { level: "explicit", rule_id: "test", reason: "test" },
+          evidence_refs: [],
+          evidence: [{ omitted: true }],
+        },
+      ],
+      event_graph: {
+        nodes: ["event-a", "event-b"],
+        edges: [
+          {
+            id: "observed-link",
+            from: "event-a",
+            to: "event-b",
+            kind: "provider-link",
+            assertion: "observed",
+          },
+        ],
+      },
+      lifecycle: { state: "unknown" },
+      diagnostics: [],
+      hidden_reasoning_recovered: false,
+    },
+  });
+  assert.deepEqual(session.nodes.map((node) => node.id), ["event-a", "event-b"]);
+  assert.equal(session.nodes.every((node) => node.readOnly), true);
+  assert.equal(session.edges[0].air_kind, "provider-link");
+  assert.equal(structuralEditBlockReason(session).includes("read-only"), true);
+});
+
 test("browser code keeps untrusted data out of HTML parsing sinks", async () => {
   const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
   const graph = await readFile(
@@ -1421,6 +1507,14 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   assert.match(editor, /\.textContent\s*=/);
   assert.match(editor, /mountGraphCanvas/);
   assert.match(editor, /\/api\/artifact\?token=/);
+  assert.match(editor, /\/air\/v1\/skills/);
+  assert.match(editor, /\/air\/v1\/sessions/);
+  assert.match(editor, /dirtySwitchDialog/);
+  assert.match(editor, /event\.key === "F6"/);
+  assert.match(
+    editor,
+    /if \(key === activeResourceKey\) \{\s*\+\+loadRequestEpoch;\s*return;/u,
+  );
   assert.doesNotMatch(editor, /fetch\(\s*["']https?:/);
   assert.doesNotMatch(
     editor,
@@ -1462,6 +1556,7 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
   assert.match(graph, /onEdgesDelete/);
   assert.match(graph, /onNodesDelete/);
   assert.match(graph, /onEdgesChange/);
+  assert.match(graph, /isConnectable=\{!data\.readOnly\}/);
   assert.match(graph, /change\.type === "select" && change\.selected/);
   assert.match(graph, /focusedFlowElement/);
   assert.match(graph, /focus\(\{ preventScroll: true \}\)/);
@@ -1474,6 +1569,16 @@ test("browser code keeps untrusted data out of HTML parsing sinks", async () => 
 test("static editor exposes semantic views, live status, and labeled controls", async () => {
   const html = await readFile(new URL("index.html", ASSET_ROOT), "utf8");
   const expectedIds = [
+    "resourcesRegion",
+    "resourceSearch",
+    "refreshResources",
+    "workspaceSkillList",
+    "installedSkillList",
+    "sessionList",
+    "quickOpenDialog",
+    "dirtySwitchDialog",
+    "bottomPanel",
+    "propertiesPanel",
     "workflowOutline",
     "nodeTitle",
     "nodeBody",
@@ -1520,6 +1625,10 @@ test("static editor exposes semantic views, live status, and labeled controls", 
   assert.match(html, /id="structuralEditNotice"/);
   assert.match(html, /id="addEdge"/);
   assert.match(html, /id="graphEyebrow"/);
+  assert.match(
+    html,
+    /id="graphCanvas" class="graph-canvas" tabindex="-1"/,
+  );
   assert.match(html, />Add first step</);
   assert.match(html, /rel="icon"\s+href="data:image\/svg\+xml/);
   assert.match(html, /\/generated\/graph-canvas\.css/);

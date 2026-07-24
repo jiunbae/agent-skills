@@ -182,6 +182,126 @@
       },
       "unevaluatedProperties": false
     },
+    "sessionEventEdge": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/eventEdge"
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "provider-link"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "confidence": {
+                "type": "object",
+                "required": [
+                  "level",
+                  "rule_id",
+                  "reason"
+                ],
+                "properties": {
+                  "level": {
+                    "const": "explicit"
+                  },
+                  "rule_id": {
+                    "const": "session.provider-link"
+                  },
+                  "reason": {
+                    "const": "A provider-declared parent link was observed."
+                  }
+                },
+                "unevaluatedProperties": false
+              },
+              "evidence_refs": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "confidence": {
+                "type": "object",
+                "required": [
+                  "level",
+                  "rule_id",
+                  "reason"
+                ],
+                "properties": {
+                  "level": {
+                    "const": "structural"
+                  },
+                  "rule_id": {
+                    "const": "session.file-order"
+                  },
+                  "reason": {
+                    "const": "Only newline record order is inferred."
+                  }
+                },
+                "unevaluatedProperties": false
+              },
+              "evidence_refs": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "id": {
+              "pattern": "^edge_[A-Za-z0-9_-]{22}$"
+            }
+          }
+        }
+      ]
+    },
+    "sessionEventGraph": {
+      "type": "object",
+      "required": [
+        "entry_event_ids",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "entry_event_ids": {
+          "type": "array",
+          "maxItems": 30000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^event_[A-Za-z0-9_-]{22}$"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "maxItems": 30000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^event_[A-Za-z0-9_-]{22}$"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 30000,
+          "items": {
+            "$ref": "#/$defs/sessionEventEdge"
+          }
+        }
+      },
+      "unevaluatedProperties": false
+    },
     "nativeEvent": {
       "type": "object",
       "required": [
@@ -223,7 +343,7 @@
         },
         "evidence_refs": {
           "type": "array",
-          "maxItems": 1000,
+          "maxItems": 0,
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -394,19 +514,30 @@
       ],
       "properties": {
         "raw_type": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "enum": [
+            "session.started",
+            "turn.context-observed",
+            "turn.input-observed",
+            "turn.output-observed",
+            "turn.item-observed",
+            "turn.progress-observed",
+            "turn.summary-observed",
+            "record.observed",
+            "record.malformed-omitted",
+            "record.structure-omitted",
+            "record.oversized-omitted"
+          ]
         },
         "top_level_keys": {
           "type": "array",
-          "maxItems": 256,
+          "minItems": 1,
+          "maxItems": 1,
           "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          }
+          "prefixItems": [
+            {
+              "const": "content-omitted"
+            }
+          ]
         },
         "byte_range": {
           "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/byteRange"
@@ -414,7 +545,7 @@
         "byte_length": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 33554432
+          "maximum": 9007199254740991
         },
         "sha256": {
           "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
@@ -439,8 +570,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "pattern": "^event_[A-Za-z0-9_-]{22}$"
         },
         "order": {
           "type": "integer",
@@ -448,19 +578,46 @@
           "maximum": 29999
         },
         "type": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "enum": [
+            "session.started",
+            "turn.context-observed",
+            "turn.input-observed",
+            "turn.output-observed",
+            "turn.item-observed",
+            "turn.progress-observed",
+            "turn.summary-observed",
+            "record.observed",
+            "record.malformed-omitted",
+            "record.structure-omitted",
+            "record.oversized-omitted"
+          ]
         },
         "assertion": {
           "const": "observed"
         },
         "confidence": {
-          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+          "type": "object",
+          "required": [
+            "level",
+            "rule_id",
+            "reason"
+          ],
+          "properties": {
+            "level": {
+              "const": "explicit"
+            },
+            "rule_id": {
+              "const": "session.complete-jsonl-line"
+            },
+            "reason": {
+              "const": "A complete newline-delimited source record was observed."
+            }
+          },
+          "unevaluatedProperties": false
         },
         "evidence_refs": {
           "type": "array",
-          "maxItems": 1000,
+          "maxItems": 0,
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -471,7 +628,7 @@
         "evidence": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 1000,
+          "maxItems": 1,
           "items": {
             "$ref": "#/$defs/sessionEvidence"
           }
@@ -502,6 +659,9 @@
                     "codex-rollout-jsonl",
                     "claude-project-jsonl"
                   ]
+                },
+                "version": {
+                  "const": "1.0.0"
                 }
               }
             }
@@ -569,8 +729,115 @@
         },
         "redaction_manifest": {
           "type": "array",
-          "minItems": 1,
-          "maxItems": 64,
+          "minItems": 15,
+          "maxItems": 15,
+          "prefixItems": [
+            {
+              "properties": {
+                "category": {
+                  "const": "prompt"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "message"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "reasoning"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "command"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "arguments"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "results"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "stdout"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "stderr"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "attachments"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "file-content"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "environment"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "credentials"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "paths"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "branches"
+                }
+              }
+            },
+            {
+              "properties": {
+                "category": {
+                  "const": "provider-identifiers"
+                }
+              }
+            }
+          ],
           "items": {
             "type": "object",
             "required": [
@@ -621,23 +888,36 @@
       ],
       "properties": {
         "source": {
-          "enum": [
-            "provider-declared",
-            "process-liveness",
-            "mtime",
-            "adapter-boundary"
-          ]
+          "const": "process-liveness"
         },
         "signal": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
+          "enum": [
+            "process-identity-verified-active",
+            "process-identity-verified-idle"
+          ]
         },
         "observed": {
-          "type": "boolean"
+          "const": true
         },
         "confidence": {
-          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+          "type": "object",
+          "required": [
+            "level",
+            "rule_id",
+            "reason"
+          ],
+          "properties": {
+            "level": {
+              "const": "explicit"
+            },
+            "rule_id": {
+              "const": "session.process-identity"
+            },
+            "reason": {
+              "const": "Provider-specific process evidence was verified."
+            }
+          },
+          "unevaluatedProperties": false
         }
       },
       "unevaluatedProperties": false
@@ -653,29 +933,109 @@
       "properties": {
         "state": {
           "enum": [
-            "running",
-            "completed",
-            "failed",
-            "cancelled",
-            "unknown",
-            "stale",
-            "partial"
+            "active",
+            "idle",
+            "unknown"
           ]
         },
         "complete": {
-          "type": "boolean"
+          "const": false
         },
         "confidence": {
-          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "level",
+                "rule_id",
+                "reason"
+              ],
+              "properties": {
+                "level": {
+                  "const": "explicit"
+                },
+                "rule_id": {
+                  "const": "session.process-identity"
+                },
+                "reason": {
+                  "const": "Process identity and start identity were verified."
+                }
+              },
+              "unevaluatedProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "level",
+                "rule_id",
+                "reason"
+              ],
+              "properties": {
+                "level": {
+                  "const": "unknown"
+                },
+                "rule_id": {
+                  "const": "session.lifecycle-unavailable"
+                },
+                "reason": {
+                  "const": "No authoritative provider lifecycle evidence is available."
+                }
+              },
+              "unevaluatedProperties": false
+            }
+          ]
         },
         "evidence": {
           "type": "array",
-          "maxItems": 1000,
+          "maxItems": 1,
           "items": {
             "$ref": "#/$defs/lifecycleEvidence"
           }
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "unknown"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "confidence": {
+                "properties": {
+                  "level": {
+                    "const": "unknown"
+                  }
+                }
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "confidence": {
+                "properties": {
+                  "level": {
+                    "const": "explicit"
+                  }
+                }
+              },
+              "evidence": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        }
+      ],
       "unevaluatedProperties": false
     },
     "sessionTraceBody": {
@@ -704,7 +1064,7 @@
           }
         },
         "event_graph": {
-          "$ref": "#/$defs/eventGraph"
+          "$ref": "#/$defs/sessionEventGraph"
         },
         "lifecycle": {
           "$ref": "#/$defs/lifecycle"
@@ -713,7 +1073,40 @@
           "type": "array",
           "maxItems": 10000,
           "items": {
-            "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/diagnostic"
+            "type": "object",
+            "required": [
+              "severity",
+              "code",
+              "message",
+              "targets"
+            ],
+            "properties": {
+              "severity": {
+                "enum": [
+                  "info",
+                  "warning"
+                ]
+              },
+              "code": {
+                "enum": [
+                  "AIR_SESSION_TORN_SUFFIX_OMITTED",
+                  "AIR_SESSION_SNAPSHOT_LIMIT",
+                  "AIR_SESSION_OVERSIZED_RECORD_OMITTED"
+                ]
+              },
+              "message": {
+                "enum": [
+                  "An incomplete trailing record was omitted.",
+                  "The bounded snapshot stopped at a published limit.",
+                  "One or more oversized records were omitted."
+                ]
+              },
+              "targets": {
+                "type": "array",
+                "maxItems": 0
+              }
+            },
+            "unevaluatedProperties": false
           }
         },
         "hidden_reasoning_recovered": {

@@ -35,6 +35,10 @@ import {
   createSkillCatalog,
   resolveSkillRoots,
 } from "../src/catalog.mjs";
+import {
+  createSessionRegistry,
+  resolveSessionRoots,
+} from "../src/sessions.mjs";
 
 const ASSETS_DIR = resolve(import.meta.dirname, "../assets");
 const SCHEMAS_DIR = resolve(import.meta.dirname, "../schemas");
@@ -74,8 +78,9 @@ Notes:
   the token URL private.
   AIR commands are additive. Every AIR output must be a new .air.json file,
   or a workflow-only .air.md carrier. AIR Workbench discovers bounded local
-  Skill roots by default. Explicit 0.0.0.0 is plaintext LAN consent and
-  exposes the tokenized read-only catalog to IPv4 peers.
+  Skill and metadata-only Codex/Claude session roots by default. Explicit
+  0.0.0.0 is plaintext LAN consent and exposes both tokenized read-only
+  catalogs and metadata-only snapshots to IPv4 peers.
 `;
 
 function cliError(code, message, details) {
@@ -604,10 +609,17 @@ function studioPort(value) {
   return port;
 }
 
-async function serveWorkbench({ artifact, catalog, host, port, lanWarning }) {
+async function serveWorkbench({
+  artifact,
+  catalog,
+  sessionRegistry = null,
+  host,
+  port,
+  lanWarning,
+}) {
   if (lanWarning && host === "0.0.0.0") {
     process.stderr.write(
-      "AIR Workbench warning: 0.0.0.0 exposes the tokenized local Skill catalog over plaintext HTTP to IPv4 LAN peers. Keep the URL private.\n",
+      "AIR Workbench warning: 0.0.0.0 exposes the tokenized local Skill catalog and metadata-only session catalog/snapshots over plaintext HTTP to IPv4 LAN peers. The URL token is bearer authority; keep it private.\n",
     );
   }
   const studio = createStudioServer({
@@ -615,10 +627,14 @@ async function serveWorkbench({ artifact, catalog, host, port, lanWarning }) {
     assetsDir: ASSETS_DIR,
     schemasDir: SCHEMAS_DIR,
     catalog,
+    sessionRegistry,
     host,
     port,
   });
   const address = await studio.listen();
+  if (sessionRegistry !== null) {
+    void sessionRegistry.catalog({ refresh: true }).catch(() => {});
+  }
   const literal = address.family === "IPv6" ? `[${address.address}]` : address.address;
   const url = `http://${literal}:${address.port}/?token=${encodeURIComponent(studio.token)}`;
   process.stdout.write(`${url}\n`);
@@ -653,6 +669,7 @@ async function studioCommand(parsed) {
   await serveWorkbench({
     artifact,
     catalog: null,
+    sessionRegistry: null,
     host,
     port,
     lanWarning: false,
@@ -688,6 +705,12 @@ async function airWorkbenchCommand(parsed) {
       componentRoot: COMPONENT_SKILLS_ROOT,
     }),
   });
+  const sessionRegistry = createSessionRegistry({
+    roots: resolveSessionRoots({
+      cwd: process.cwd(),
+      home: process.env.HOME,
+    }),
+  });
   const snapshot = await catalog.initialize();
   let artifact;
   if (parsed.positionals.length === 1) {
@@ -700,6 +723,7 @@ async function airWorkbenchCommand(parsed) {
   await serveWorkbench({
     artifact,
     catalog,
+    sessionRegistry,
     host,
     port,
     lanWarning: true,

@@ -32,6 +32,11 @@ const SHA256_CONSTANTS = new Uint32Array([
   0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ]);
 const MANAGED_INLINE_PREFIX = "<!-- workflow-studio:v1 ";
+const AIR_VERSION = "1.0.0";
+const AIR_WORKFLOW_PROFILE =
+  "https://open330.github.io/air/profiles/1.0.0/workflow-skill";
+const AIR_SESSION_PROFILE =
+  "https://open330.github.io/air/profiles/1.0.0/trace-session-snapshot";
 
 function clone(value) {
   return structuredClone(value);
@@ -402,6 +407,14 @@ function traceGraph(artifact) {
 }
 
 function artifactGraph(artifact) {
+  if (
+    artifact.kind === "trace" &&
+    artifact.air?.profile === AIR_SESSION_PROFILE &&
+    artifact.graph &&
+    typeof artifact.graph === "object"
+  ) {
+    return artifact.graph;
+  }
   if (artifact.kind === "trace") return traceGraph(artifact);
   if (artifact.graph && typeof artifact.graph === "object") return artifact.graph;
   if (artifact.workflow && typeof artifact.workflow === "object") {
@@ -443,11 +456,197 @@ function mappedOriginal(bytes, span, fallback) {
   return UTF8_DECODER.decode(bytes.subarray(span.start, span.end));
 }
 
-export function normalizeArtifact(payload) {
+function isAirArtifact(value) {
+  return (
+    value?.format === "air" &&
+    typeof value?.air_version === "string" &&
+    value?.body &&
+    typeof value.body === "object" &&
+    !Array.isArray(value.body)
+  );
+}
+
+function airWorkflowProjection(artifact) {
+  if (
+    artifact.air_version !== AIR_VERSION ||
+    artifact.kind !== "workflow" ||
+    artifact.profile !== AIR_WORKFLOW_PROFILE
+  ) {
+    throw new TypeError(
+      "Unsupported AIR workflow version or profile; the document was not opened.",
+    );
+  }
+  const body = asObject(artifact.body);
+  const graph = asObject(body.graph);
+  if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+    throw new TypeError("AIR workflow graph must contain node and edge arrays.");
+  }
+  const sourceMaps = new Map(
+    asArray(body.source_maps)
+      .filter((mapping) => typeof mapping?.node_id === "string")
+      .map((mapping) => [mapping.node_id, mapping]),
+  );
+  const nodes = graph.nodes.map((node) => {
+    const mapping = sourceMaps.get(node?.id);
+    return {
+      ...clone(asObject(node)),
+      source_map: mapping
+        ? {
+            span: clone(mapping.span),
+            heading: clone(mapping.heading),
+            title: clone(mapping.title),
+            body: clone(mapping.body),
+          }
+        : undefined,
+      provenance: String(firstDefined(node?.provenance, node?.assertion, "declared")),
+      editable_fields: ["title", "body"],
+      editable: { fields: ["title", "body"], structural: true },
+    };
+  });
+  if (graph.nodes.length > 0 && nodes.length === 0) {
+    throw new TypeError(
+      "AIR workflow projection refused to replace a non-empty graph with an empty graph.",
+    );
+  }
+  const source = asObject(body.source);
+  return {
+    kind: "workflow",
+    ir_version: "1.0",
+    artifact_id: artifact.artifact_id,
+    graph: {
+      ...clone(graph),
+      nodes,
+      edges: graph.edges.map((edge) => ({
+        ...clone(asObject(edge)),
+        provenance: String(
+          firstDefined(edge?.provenance, edge?.assertion, "declared"),
+        ),
+      })),
+    },
+    source: {
+      path: String(firstDefined(source.locator?.display, "SKILL.md")),
+      raw_base64: String(firstDefined(source.bytes_base64, "")),
+      sha256: String(firstDefined(source.sha256, "")),
+      newline: String(firstDefined(source.newline, "lf")),
+      final_newline: Boolean(firstDefined(source.final_newline, true)),
+    },
+    opaque_spans: clone(asArray(body.opaque_ranges)),
+    diagnostics: clone(asArray(body.diagnostics)),
+    extensions: clone(asObject(artifact.extensions)),
+    air: {
+      artifact_id: artifact.artifact_id,
+      profile: artifact.profile,
+      version: artifact.air_version,
+    },
+  };
+}
+
+function airSessionProjection(artifact) {
+  if (
+    artifact.air_version !== AIR_VERSION ||
+    artifact.kind !== "trace" ||
+    artifact.profile !== AIR_SESSION_PROFILE
+  ) {
+    throw new TypeError(
+      "Unsupported AIR session version or profile; the session was not opened.",
+    );
+  }
+  const body = asObject(artifact.body);
+  const events = asArray(body.events);
+  const eventIds = new Set(events.map((event) => String(event?.id ?? "")));
+  const nodes = events.map((event, index) => {
+    const id = String(firstDefined(event?.id, `event-${index}`));
+    return {
+      id,
+      type: String(firstDefined(event?.type, "provider.unknown")),
+      title: String(firstDefined(event?.type, `Event ${index + 1}`)),
+      body: `Observed event ${index + 1}.`,
+      order: Number.isInteger(event?.order) ? event.order : index,
+      provenance: String(firstDefined(event?.assertion, "observed")),
+      confidence: clone(asObject(event?.confidence)),
+      evidence: clone(asArray(event?.evidence)),
+      evidence_refs: clone(asArray(event?.evidence_refs)),
+      read_only: true,
+      read_only_reason:
+        "Metadata-only session observations are read-only evidence.",
+      editable: {
+        fields: [],
+        structural: false,
+        reason: "Metadata-only session observations are read-only evidence.",
+      },
+    };
+  });
+  const edges = asArray(body.event_graph?.edges)
+    .filter(
+      (edge) =>
+        eventIds.has(String(edge?.from)) && eventIds.has(String(edge?.to)),
+    )
+    .map((edge, index) => ({
+      id: String(firstDefined(edge?.id, `event-edge-${index + 1}`)),
+      from: String(edge.from),
+      to: String(edge.to),
+      kind: String(firstDefined(edge.kind, "temporal")),
+      air_kind: String(firstDefined(edge.kind, "temporal")),
+      provenance: String(firstDefined(edge.assertion, "inferred")),
+      assertion: String(firstDefined(edge.assertion, "inferred")),
+      confidence: clone(asObject(edge.confidence)),
+      read_only: true,
+    }));
+  if (events.length > 0 && nodes.length === 0) {
+    throw new TypeError(
+      "AIR session projection refused to replace non-empty events with an empty graph.",
+    );
+  }
+  return {
+    kind: "trace",
+    ir_version: "1.0",
+    artifact_id: artifact.artifact_id,
+    graph: { nodes, edges },
+    events: nodes,
+    inferred_edges: [],
+    status: String(firstDefined(body.lifecycle?.state, "unknown")),
+    diagnostics: clone(asArray(body.diagnostics)),
+    hidden_reasoning_recovered: false,
+    session: {
+      capture: clone(asObject(body.capture)),
+      lifecycle: clone(asObject(body.lifecycle)),
+      privacy: clone(asObject(body.privacy)),
+      evidence_count: events.reduce(
+        (count, event) => count + asArray(event?.evidence).length,
+        0,
+      ),
+    },
+    air: {
+      artifact_id: artifact.artifact_id,
+      profile: artifact.profile,
+      version: artifact.air_version,
+    },
+  };
+}
+
+export function projectAirArtifact(payload) {
   const artifact =
     payload && payload.artifact && typeof payload.artifact === "object"
       ? payload.artifact
       : payload;
+  if (!isAirArtifact(artifact)) return payload;
+  if (artifact.profile === AIR_WORKFLOW_PROFILE) {
+    return airWorkflowProjection(artifact);
+  }
+  if (artifact.profile === AIR_SESSION_PROFILE) {
+    return airSessionProjection(artifact);
+  }
+  throw new TypeError(
+    "Unsupported AIR profile; the document was not opened as an empty graph.",
+  );
+}
+
+export function normalizeArtifact(payload) {
+  const projected = projectAirArtifact(payload);
+  const artifact =
+    projected && projected.artifact && typeof projected.artifact === "object"
+      ? projected.artifact
+      : projected;
   if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
     throw new TypeError("Artifact must be a JSON object.");
   }

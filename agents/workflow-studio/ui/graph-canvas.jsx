@@ -73,25 +73,23 @@ function layoutGraph(domainNodes, domainEdges) {
 const WorkflowNode = memo(function WorkflowNode({ data }) {
   return (
     <div className="workflow-flow-node">
-      {!data.readOnly && (
-        <Handle
-          aria-label={`Connect into ${data.title}`}
-          position={Position.Left}
-          type="target"
-        />
-      )}
+      <Handle
+        aria-label={`Connect into ${data.title}`}
+        isConnectable={!data.readOnly}
+        position={Position.Left}
+        type="target"
+      />
       <span className="workflow-flow-node__kind">{data.kind}</span>
       <strong className="workflow-flow-node__title">{data.title}</strong>
       {data.summary && (
         <span className="workflow-flow-node__summary">{data.summary}</span>
       )}
-      {!data.readOnly && (
-        <Handle
-          aria-label={`Connect from ${data.title}`}
-          position={Position.Right}
-          type="source"
-        />
-      )}
+      <Handle
+        aria-label={`Connect from ${data.title}`}
+        isConnectable={!data.readOnly}
+        position={Position.Right}
+        type="source"
+      />
     </div>
   );
 });
@@ -169,6 +167,10 @@ function GraphCanvas({
         id,
         type: "workflow",
         position,
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+        initialWidth: NODE_WIDTH,
+        initialHeight: NODE_HEIGHT,
         selected: id === selectedNodeId,
         deletable: !readOnly && !node.readOnly,
         connectable: !readOnly && !node.readOnly,
@@ -183,6 +185,7 @@ function GraphCanvas({
   }, [domainNodes, layout, readOnly, selectedNodeId]);
 
   const [flowNodes, setFlowNodes] = useState(projectNodes);
+  const [flowReady, setFlowReady] = useState(false);
 
   useEffect(() => {
     if (resetLayoutEpoch !== resetLayoutRef.current) {
@@ -201,6 +204,25 @@ function GraphCanvas({
       target.focus({ preventScroll: true });
     }
   });
+
+  useEffect(() => {
+    setFlowReady(false);
+    let frame = 0;
+    let attempts = 0;
+    const expectedEdges = domainEdges.length;
+    const check = () => {
+      const mountedEdges =
+        canvasRef.current?.querySelectorAll(".react-flow__edge").length ?? 0;
+      if (mountedEdges >= expectedEdges || attempts >= 30) {
+        setFlowReady(true);
+        return;
+      }
+      attempts += 1;
+      frame = requestAnimationFrame(check);
+    };
+    frame = requestAnimationFrame(check);
+    return () => cancelAnimationFrame(frame);
+  }, [domainEdges.length, domainNodes.length]);
 
   const flowEdges = useMemo(
     () =>
@@ -311,6 +333,7 @@ function GraphCanvas({
   return (
     <ReactFlow
       aria-label="Workflow graph"
+      className={flowReady ? "air-flow-ready" : "air-flow-loading"}
       deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
       edges={flowEdges}
       edgesReconnectable={!readOnly}

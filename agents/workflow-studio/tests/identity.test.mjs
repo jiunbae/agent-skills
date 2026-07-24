@@ -51,10 +51,19 @@ test("documentation states AIR formats and legacy compatibility truthfully", asy
 
   assert.match(skill, /place the reviewed bytes at `<skill-directory>\/SKILL\.md`/);
   assert.match(skill, /node scripts\/air\.mjs workbench/);
-  assert.match(skill, /integrated Resources list is not implemented/);
+  assert.match(skill, /Codex rollout streams/);
+  assert.match(skill, /Claude main\/subagent streams/);
+  assert.match(skill, /`hidden_reasoning_recovered` is always `false`/);
+  assert.match(skill, /no watcher or live/);
   assert.match(readme, /do not discover that filename/);
   assert.match(readme, /node scripts\/air\.mjs workbench/);
-  assert.match(readme, /later\s+delivery waves and are not claimed here/);
+  assert.match(readme, /four-region AIR Workbench/);
+  assert.match(readme, /metadata-only, read-only/);
+  assert.match(readme, /does not run an agent or grant native\s+approval/);
+  assert.doesNotMatch(
+    `${skill}\n${readme}`,
+    /integrated Resources list is not implemented|later delivery waves/,
+  );
 });
 
 test("root catalogs use the AIR name without changing catalog counts", async () => {
