@@ -78,6 +78,13 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
       assert.ok(["foundation", "planned"].includes(operation["x-air-availability"]));
     }
   }
+  const sessionItems =
+    openapi.components.schemas.SessionCatalog.properties.items;
+  assert.equal(sessionItems.uniqueItems, true);
+  assert.match(
+    sessionItems.description,
+    /unique opaque id.*exactly one server-private source authority/,
+  );
 });
 
 test("AIR normative text freezes domains, carriers, sessions, and legacy boundary", async () => {
@@ -91,6 +98,11 @@ test("AIR normative text freezes domains, carriers, sessions, and legacy boundar
     "workflow-studio-legacy-v1",
     "project format",
     "does not claim IANA",
+    "Every published session catalog row MUST have a unique opaque ID",
+    "MUST be in source order, MUST NOT overlap",
+    "last-published continuity high-water",
+    "A public snapshot ID MUST NOT be reissued",
+    "structurally claims the AIR-v1 carrier namespace",
   ]) {
     assert.ok(spec.includes(required), `missing normative phrase: ${required}`);
   }

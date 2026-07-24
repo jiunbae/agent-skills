@@ -45,21 +45,21 @@ const PRIVACY_TOTAL_BYTES = 64 * 1024 * 1024;
 const PRIVACY_TIME_MS = 5_000;
 const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
-  "air-cli-server.test.mjs": 8,
+  "air-cli-server.test.mjs": 9,
   "air-spec.test.mjs": 2,
-  "air.test.mjs": 13,
+  "air.test.mjs": 14,
   "catalog.test.mjs": 6,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
-  "editor.test.mjs": 42,
+  "editor.test.mjs": 44,
   "identity.test.mjs": 4,
   "package-notices.test.mjs": 1,
   "r3-integration.test.mjs": 7,
   "release-gate.test.mjs": 4,
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
-  "session-api.test.mjs": 8,
-  "sessions.test.mjs": 18,
+  "session-api.test.mjs": 11,
+  "sessions.test.mjs": 23,
 });
 const NON_TEXT_EXTENSIONS = new Set([
   ".7z",

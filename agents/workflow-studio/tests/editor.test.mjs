@@ -1484,6 +1484,71 @@ test("native AIR no-op and edited JSON/Markdown remain authoritative and valid",
   assert.equal(repeated.body.graph.nodes[1].title, "Report native AIR");
 });
 
+test("browser AIR title validation counts Unicode code points at the published limit", async () => {
+  const air = JSON.parse(
+    await readFile(
+      new URL("../examples/hello-agent/workflow.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const atLimit = editNode(
+    createEditorState(air),
+    air.body.graph.nodes[0].id,
+    "title",
+    "😀".repeat(8_192),
+  );
+  assert.equal(validateState(atLimit).valid, true);
+  assert.equal(canDownloadArtifact(atLimit), true);
+  validateAirArtifact(buildAirArtifact(atLimit));
+
+  const overLimit = editNode(
+    createEditorState(air),
+    air.body.graph.nodes[0].id,
+    "title",
+    "😀".repeat(8_193),
+  );
+  assert.equal(validateState(overLimit).valid, false);
+  assert.match(
+    validateState(overLimit).errors.join("\n"),
+    /8192 Unicode characters/u,
+  );
+  assert.equal(canDownloadArtifact(overLimit), false);
+
+  const legacy = editNode(
+    createEditorState(workflowArtifact()),
+    "step-1",
+    "title",
+    "😀".repeat(8_193),
+  );
+  assert.equal(validateState(legacy).valid, true);
+  assert.equal(canDownloadArtifact(legacy), true);
+});
+
+test("browser AIR download rejects candidate Skill bytes above 32 MiB", async () => {
+  const air = JSON.parse(
+    await readFile(
+      new URL("../examples/hello-agent/workflow.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const oversizedUtf8 = editNode(
+    createEditorState(air),
+    air.body.graph.nodes[0].id,
+    "body",
+    "😀".repeat(8_388_608),
+  );
+  assert.equal(validateState(oversizedUtf8).valid, true);
+  assert.equal(canDownloadArtifact(oversizedUtf8), false);
+
+  const legacy = editNode(
+    createEditorState(workflowArtifact()),
+    "step-1",
+    "body",
+    "Legacy behavior remains outside the AIR-only byte guard.",
+  );
+  assert.equal(canDownloadArtifact(legacy), true);
+});
+
 test("browser AIR Markdown export matches native context safety", () => {
   for (const source of [
     Buffer.from("---\nname: open\ndescription: Open frontmatter\n", "utf8"),
@@ -1538,13 +1603,53 @@ test("browser AIR Markdown refuses recognized inner carriers and oversized publi
   const checkedCarrier = await readFile(
     new URL("../examples/hello-agent/workflow.air.md", import.meta.url),
   );
+  const checkedText = checkedCarrier.toString("utf8");
+  const checkedMarker = checkedText.match(
+    /<!-- air:v1 ([A-Za-z0-9_-]+) -->\n$/u,
+  );
+  assert.ok(checkedMarker);
+  const checkedManifest = JSON.parse(
+    Buffer.from(checkedMarker[1], "base64url").toString("utf8"),
+  );
+  const claimedCarriers = [
+    { ...checkedManifest, carrier_version: "2" },
+    { ...checkedManifest, carrier: "air.json" },
+    Object.fromEntries(
+      Object.entries(checkedManifest).filter(([key]) => key !== "carrier"),
+    ),
+    Object.fromEntries(
+      Object.entries(checkedManifest).filter(
+        ([key]) => key !== "carrier_version",
+      ),
+    ),
+  ].map((manifest) =>
+    Buffer.from(
+      checkedText.replace(
+        checkedMarker[1],
+        Buffer.from(JSON.stringify(manifest), "utf8").toString("base64url"),
+      ),
+      "utf8",
+    ));
+  claimedCarriers.push(
+    Buffer.from(
+      checkedText.replace(
+        checkedMarker[1],
+        Buffer.from('{"carrier":"air.md"', "utf8").toString("base64url"),
+      ),
+      "utf8",
+    ),
+  );
   const corruptCarrier = Buffer.from(checkedCarrier);
   corruptCarrier[0] = corruptCarrier[0] === 0x2d ? 0x23 : 0x2d;
   const nonterminalCarrier = Buffer.concat([
     checkedCarrier,
     Buffer.from("ordinary tail\n", "utf8"),
   ]);
-  for (const source of [corruptCarrier, nonterminalCarrier]) {
+  for (const source of [
+    corruptCarrier,
+    nonterminalCarrier,
+    ...claimedCarriers,
+  ]) {
     const state = createEditorState(
       migrateLegacyToAir(importSkillBytes(source, {
         sourcePath: "nested-carrier/SKILL.md",

@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import {
   appendFile,
+  link,
   mkdir,
   mkdtemp,
   open,
@@ -398,6 +399,301 @@ test("continuation detects a same-inode middle rewrite followed by append", asyn
       first.artifact.body.events.some((event) => event.id === id)),
     false,
   );
+});
+
+test("fresh snapshots preserve unchanged identity and reset rewritten prefixes", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "fresh-continuity.jsonl");
+  const initial = [
+    fixedRecord("session_meta", 0),
+    fixedRecord("event_msg", 1),
+    fixedRecord("event_msg", 2),
+  ];
+  await writeFile(source, Buffer.concat(initial));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const input = {
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  };
+  const first = await registry.snapshot(input);
+  const unchanged = await registry.snapshot(input);
+  assert.equal(unchanged.source_changed, false);
+  assert.equal(
+    unchanged.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.deepEqual(
+    unchanged.artifact.body.events.map(({ id }) => id),
+    first.artifact.body.events.map(({ id }) => id),
+  );
+
+  const equalWriter = await open(source, "r+");
+  try {
+    await equalWriter.write(
+      fixedRecord("response_item", 1),
+      0,
+      initial[1].byteLength,
+      initial[0].byteLength,
+    );
+  } finally {
+    await equalWriter.close();
+  }
+  const equalRewrite = await registry.snapshot(input);
+  assert.equal(equalRewrite.source_changed, false);
+  assert.notEqual(
+    equalRewrite.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    equalRewrite.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+
+  const unequalWriter = await open(source, "r+");
+  try {
+    await unequalWriter.truncate(0);
+    await unequalWriter.write(
+      Buffer.concat([
+        fixedRecord("session_meta", 10),
+        fixedRecord("event_msg", 11),
+      ]),
+      0,
+      256,
+      0,
+    );
+  } finally {
+    await unequalWriter.close();
+  }
+  const unequalRewrite = await registry.snapshot(input);
+  assert.equal(unequalRewrite.source_changed, false);
+  assert.notEqual(
+    unequalRewrite.artifact.body.capture.snapshot_cursor.epoch,
+    equalRewrite.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    unequalRewrite.artifact.body.events.some(({ id }) =>
+      equalRewrite.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+  assert.equal(JSON.stringify({ first, unchanged, equalRewrite, unequalRewrite })
+    .includes(dirs.root), false);
+});
+
+test("a fresh publication races a continuation reset fail closed", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "fresh-reset-race.jsonl");
+  const records = [
+    fixedRecord("session_meta", 0),
+    fixedRecord("event_msg", 1),
+  ];
+  await writeFile(source, Buffer.concat(records));
+  let evidenceCalls = 0;
+  let signalFresh;
+  let releaseFresh;
+  const freshEntered = new Promise((resolvePromise) => {
+    signalFresh = resolvePromise;
+  });
+  const freshRelease = new Promise((resolvePromise) => {
+    releaseFresh = resolvePromise;
+  });
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+    processEvidence: async () => {
+      evidenceCalls += 1;
+      if (evidenceCalls === 2) {
+        signalFresh();
+        await freshRelease;
+      }
+      return null;
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const input = {
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  };
+  const first = await registry.snapshot(input);
+  const racingFresh = registry.snapshot(input);
+  await freshEntered;
+
+  const writer = await open(source, "r+");
+  try {
+    await writer.write(
+      fixedRecord("response_item", 1),
+      0,
+      records[1].byteLength,
+      records[0].byteLength,
+    );
+  } finally {
+    await writer.close();
+  }
+  const continuation = await registry.snapshot({
+    ...input,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(continuation.source_changed, true);
+  releaseFresh();
+  const raced = await racingFresh;
+  assert.equal(raced.source_changed, true);
+
+  const reset = await registry.snapshot(input);
+  assert.equal(reset.source_changed, false);
+  assert.notEqual(
+    reset.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    reset.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+  assert.equal(JSON.stringify({ continuation, raced, reset }).includes(dirs.root), false);
+});
+
+test("a shorter fresh capture revalidates the published multi-chunk high-water", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "fresh-high-water.jsonl");
+  const records = Array.from(
+    { length: 6 },
+    (_, index) => fixedRecord(index === 0 ? "session_meta" : "event_msg", index),
+  );
+  await writeFile(source, Buffer.concat(records));
+  let evidenceCalls = 0;
+  let signalFresh;
+  let releaseFresh;
+  const freshEntered = new Promise((resolvePromise) => {
+    signalFresh = resolvePromise;
+  });
+  const freshRelease = new Promise((resolvePromise) => {
+    releaseFresh = resolvePromise;
+  });
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    limits: {
+      ...SESSION_LIMITS,
+      maxReadBytesPerRefresh: 256,
+      maxContinuityBytes: 1_024,
+    },
+    randomBytes: deterministicRandom(),
+    processEvidence: async () => {
+      evidenceCalls += 1;
+      if (evidenceCalls === 4) {
+        signalFresh();
+        await freshRelease;
+      }
+      return null;
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const input = {
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  };
+  let published = await registry.snapshot(input);
+  for (let index = 0; index < 2; index += 1) {
+    published = await registry.snapshot({
+      ...input,
+      priorSnapshotId: published.snapshot_id,
+    });
+  }
+  assert.equal(
+    published.artifact.body.capture.snapshot_cursor.byte_offset,
+    768,
+  );
+
+  const shorterFresh = registry.snapshot(input);
+  await freshEntered;
+  const writer = await open(source, "r+");
+  try {
+    await writer.write(
+      fixedRecord("response_item", 4),
+      0,
+      records[4].byteLength,
+      4 * records[4].byteLength,
+    );
+  } finally {
+    await writer.close();
+  }
+  releaseFresh();
+  const changed = await shorterFresh;
+  assert.equal(changed.source_changed, true);
+  assert.equal(changed.artifact, null);
+
+  const reset = await registry.snapshot(input);
+  assert.equal(reset.source_changed, false);
+  assert.notEqual(
+    reset.artifact.body.capture.snapshot_cursor.epoch,
+    published.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    reset.artifact.body.events.some(({ id }) =>
+      published.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+  assert.equal(JSON.stringify({ changed, reset }).includes(dirs.root), false);
+});
+
+test("expired snapshot IDs are never reissued or rebound", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "snapshot-eviction.jsonl");
+  await writeFile(source, fixedRecord("session_meta", 0));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    limits: { ...SESSION_LIMITS, maxSnapshotHandles: 1 },
+    randomBytes: (length) => Buffer.alloc(length, 0x44),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const input = {
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  };
+  const first = await registry.snapshot(input);
+  const second = await registry.snapshot(input);
+  assert.notEqual(second.snapshot_id, first.snapshot_id);
+  await assert.rejects(
+    registry.snapshot({
+      ...input,
+      priorSnapshotId: first.snapshot_id,
+    }),
+    (error) => error?.code === "AIR_SESSION_STALE_SNAPSHOT",
+  );
+
+  const writer = await open(source, "r+");
+  try {
+    await writer.write(
+      fixedRecord("response_item", 0),
+      0,
+      128,
+      0,
+    );
+  } finally {
+    await writer.close();
+  }
+  const reset = await registry.snapshot(input);
+  assert.notEqual(
+    reset.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    new Set([first.snapshot_id, second.snapshot_id, reset.snapshot_id]).size,
+    3,
+  );
+  for (const staleId of [first.snapshot_id, second.snapshot_id]) {
+    await assert.rejects(
+      registry.snapshot({
+        ...input,
+        priorSnapshotId: staleId,
+      }),
+      (error) => error?.code === "AIR_SESSION_STALE_SNAPSHOT",
+    );
+  }
+  assert.equal(JSON.stringify({ first, second, reset }).includes(dirs.root), false);
 });
 
 test("truncate and rewrite starts a distinct snapshot epoch", async (t) => {
@@ -934,4 +1230,110 @@ test("catalog count limit is explicit and never discloses omitted locators", asy
   );
   assert.equal(JSON.stringify(catalog).includes(SENTINEL), false);
   assert.equal(JSON.stringify(catalog).includes(dirs.root), false);
+});
+
+test("hard-linked overlapping roots retain unique collision-safe authority", async (t) => {
+  const dirs = await fixture(t);
+  const left = join(dirs.root, "left");
+  const right = join(dirs.root, "right");
+  const leftSource = join(left, `${SENTINEL}.jsonl`);
+  const rightSource = join(right, `${SENTINEL}.jsonl`);
+  await Promise.all([
+    mkdir(left, { recursive: true }),
+    mkdir(right, { recursive: true }),
+  ]);
+  await writeFile(leftSource, fixedRecord("session_meta", 0));
+  await link(leftSource, rightSource);
+  const collidingRandom = (length) => Buffer.alloc(length, 0x2a);
+  const registry = createSessionRegistry({
+    roots: [
+      { path: right, provider: "codex" },
+      { path: left, provider: "codex" },
+      { path: right, provider: "codex" },
+    ],
+    randomBytes: collidingRandom,
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  assert.equal(catalog.items.length, 2);
+  assert.equal(new Set(catalog.items.map(({ id }) => id)).size, 2);
+  assert.ok(catalog.items.every(({ id }) =>
+    /^session_[A-Za-z0-9_-]{22}$/u.test(id)));
+
+  const refreshed = await registry.catalog({ refresh: true });
+  assert.deepEqual(
+    new Set(refreshed.items.map(({ id }) => id)),
+    new Set(catalog.items.map(({ id }) => id)),
+  );
+  const initialSnapshots = await Promise.all(refreshed.items.map((item) =>
+    registry.snapshot({
+      sessionId: item.id,
+      generation: refreshed.generation,
+    })));
+  assert.equal(new Set(initialSnapshots.map(({ snapshot_id: id }) => id)).size, 2);
+
+  const replacement = join(dirs.root, "replacement.jsonl");
+  await writeFile(replacement, fixedRecord("response_item", 1));
+  await rename(replacement, leftSource);
+  const targeted = await Promise.all(refreshed.items.map(async (item) => ({
+    id: item.id,
+    result: await registry.snapshot({
+      sessionId: item.id,
+      generation: refreshed.generation,
+    }),
+  })));
+  assert.equal(
+    targeted.filter(({ result }) => result.source_changed).length,
+    1,
+  );
+  assert.equal(
+    targeted.filter(({ result }) => !result.source_changed).length,
+    1,
+  );
+  const retainedId = targeted.find(({ result }) => !result.source_changed).id;
+
+  const afterReplacement = await registry.catalog({ refresh: true });
+  assert.equal(afterReplacement.items.length, 2);
+  assert.equal(
+    new Set(afterReplacement.items.map(({ id }) => id)).size,
+    2,
+  );
+  assert.equal(
+    afterReplacement.items.some(({ id }) => id === retainedId),
+    true,
+  );
+  const publicOutput = JSON.stringify({
+    catalog,
+    refreshed,
+    targeted: targeted.map(({ result }) => result),
+    afterReplacement,
+  });
+  assert.equal(publicOutput.includes(dirs.root), false);
+  assert.equal(publicOutput.includes(SENTINEL), false);
+
+  const reversed = createSessionRegistry({
+    roots: [
+      { path: left, provider: "codex" },
+      { path: right, provider: "codex" },
+    ],
+    randomBytes: collidingRandom,
+  });
+  const reversedCatalog = await reversed.catalog({ refresh: true });
+  assert.equal(reversedCatalog.items.length, 2);
+  assert.equal(
+    new Set(reversedCatalog.items.map(({ id }) => id)).size,
+    2,
+  );
+  const reversedSnapshots = await Promise.all(reversedCatalog.items.map((item) =>
+    reversed.snapshot({
+      sessionId: item.id,
+      generation: reversedCatalog.generation,
+    })));
+  assert.deepEqual(
+    reversedSnapshots
+      .map(({ artifact }) => artifact.body.events[0].type)
+      .sort(),
+    ["session.started", "turn.item-observed"],
+  );
+  assert.equal(JSON.stringify({ reversedCatalog, reversedSnapshots })
+    .includes(dirs.root), false);
 });

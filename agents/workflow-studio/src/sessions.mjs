@@ -1,4 +1,5 @@
 import {
+  createCipheriv,
   createHash,
   createHmac,
   randomBytes as cryptoRandomBytes,
@@ -493,11 +494,21 @@ export function createSessionRegistry({
   processEvidence = async () => null,
 } = {}) {
   const boundedLimits = Object.freeze({ ...SESSION_LIMITS, ...limits });
+  const normalizedRootKeys = new Set();
   const normalizedRoots = Object.freeze(
-    roots.slice(0, boundedLimits.maxRoots).map(normalizeRoot),
+    roots
+      .slice(0, boundedLimits.maxRoots)
+      .map(normalizeRoot)
+      .filter((root) => {
+        const key = `${root.provider}\0${root.path}`;
+        if (normalizedRootKeys.has(key)) return false;
+        normalizedRootKeys.add(key);
+        return true;
+      }),
   );
   const secret = randomBytes(32);
   const stableIds = new Map();
+  const stableIdOwners = new Map();
   const sourceStates = new Map();
   const privateItems = new Map();
   const snapshotHandles = new Map();
@@ -507,6 +518,7 @@ export function createSessionRegistry({
   let refreshPromise = null;
   let generation = 1;
   let nextEpoch = 0;
+  let nextSnapshotSequence = 0;
   let publicCatalog = Object.freeze({
     generation: 1,
     items: Object.freeze([]),
@@ -523,12 +535,61 @@ export function createSessionRegistry({
     return epoch;
   }
 
+  function derivedOpaqueToken(prefix, scope, attempt) {
+    return `${prefix}_${createHmac("sha256", secret)
+      .update(`${prefix}\0${scope}\0${attempt}`)
+      .digest("base64url")
+      .slice(0, 22)}`;
+  }
+
+  function allocateStableId(privateKey) {
+    const retained = stableIds.get(privateKey);
+    if (retained) return retained;
+
+    // Preserve the configured entropy contract while deriving the public ID
+    // from the installation secret and private authority. This makes the
+    // mapping independent of root traversal order. The bounded retry handles
+    // even an injected digest collision without publishing duplicate IDs.
+    opaqueToken(randomBytes, "session");
+    let attempt = 0;
+    let id;
+    do {
+      if (attempt > boundedLimits.maxStableIds) {
+        throw sessionError("AIR_SESSION_LIMIT");
+      }
+      id = derivedOpaqueToken("session", privateKey, attempt);
+      attempt += 1;
+    } while (stableIdOwners.has(id));
+    stableIds.set(privateKey, id);
+    stableIdOwners.set(id, privateKey);
+    return id;
+  }
+
+  function allocateSnapshotId() {
+    if (!Number.isSafeInteger(nextSnapshotSequence)) {
+      throw sessionError("AIR_SESSION_LIMIT");
+    }
+    const entropy = randomBytes(16);
+    if (!Buffer.isBuffer(entropy) || entropy.byteLength < 16) {
+      throw new TypeError("Session randomBytes must return at least 16 bytes.");
+    }
+    const input = Buffer.alloc(16);
+    entropy.copy(input, 0, 0, 8);
+    input.writeBigUInt64BE(BigInt(nextSnapshotSequence), 8);
+    nextSnapshotSequence += 1;
+    const cipher = createCipheriv("aes-256-ecb", secret, null);
+    cipher.setAutoPadding(false);
+    const encrypted = Buffer.concat([cipher.update(input), cipher.final()]);
+    return `snapshot_${encrypted.toString("base64url")}`;
+  }
+
   function sourceState(sourceKey, sourceIdentity) {
     const current = sourceStates.get(sourceKey);
     if (current && current.identity === sourceIdentity) return current;
     const next = {
       epoch: allocateEpoch(),
       identity: sourceIdentity,
+      published: null,
     };
     sourceStates.set(sourceKey, next);
     return next;
@@ -541,9 +602,44 @@ export function createSessionRegistry({
     const next = {
       epoch: allocateEpoch(),
       identity: observedIdentity ?? current.identity,
+      published: null,
     };
     sourceStates.set(item.sourceKey, next);
     return next;
+  }
+
+  async function matchesPublishedHighWater(
+    handle,
+    info,
+    item,
+    attemptEpoch,
+  ) {
+    for (
+      let attempt = 0;
+      attempt <= boundedLimits.maxConcurrentReaders;
+      attempt += 1
+    ) {
+      const beforeState = sourceStates.get(item.sourceKey);
+      if (!beforeState || beforeState.epoch !== attemptEpoch) return false;
+      const published = beforeState.published;
+      if (published === null) return true;
+      if (Number(info.size) < published.offset) return false;
+      const continuity = await boundedContinuityFingerprint(
+        handle,
+        info,
+        boundedLimits,
+        secret,
+        published.offset,
+      );
+      const afterState = sourceStates.get(item.sourceKey);
+      if (!afterState || afterState.epoch !== attemptEpoch) return false;
+      if (afterState.published !== published) continue;
+      return (
+        continuity !== null &&
+        continuity.continuity === published.continuity
+      );
+    }
+    return false;
   }
 
   function capabilities() {
@@ -621,15 +717,11 @@ export function createSessionRegistry({
           const kind = streamKind(root.provider, locator);
           const relativeLocator = relative(root.path, locator);
           const privateKey =
-            `${root.provider}\0${kind}\0${identity(info)}\0${relativeLocator}`;
+            `${root.provider}\0${kind}\0${root.path}\0${identity(info)}\0${relativeLocator}`;
           const sourceKey =
             `${root.provider}\0${kind}\0${root.path}\0${relativeLocator}`;
           const state = sourceState(sourceKey, identity(info));
-          let id = stableIds.get(privateKey);
-          if (!id) {
-            id = opaqueToken(randomBytes, "session");
-            stableIds.set(privateKey, id);
-          }
+          const id = allocateStableId(privateKey);
           candidates.push({
             id,
             locator,
@@ -669,7 +761,11 @@ export function createSessionRegistry({
       candidates.map(({ sourceKey }) => sourceKey),
     );
     for (const privateKey of stableIds.keys()) {
-      if (!retainedPrivateKeys.has(privateKey)) stableIds.delete(privateKey);
+      if (!retainedPrivateKeys.has(privateKey)) {
+        const id = stableIds.get(privateKey);
+        stableIds.delete(privateKey);
+        if (stableIdOwners.get(id) === privateKey) stableIdOwners.delete(id);
+      }
     }
     for (const sourceKey of sourceStates.keys()) {
       if (!retainedSourceKeys.has(sourceKey)) sourceStates.delete(sourceKey);
@@ -677,6 +773,9 @@ export function createSessionRegistry({
     const nextPrivateItems = new Map();
     const publicItems = [];
     for (const candidate of candidates) {
+      if (nextPrivateItems.has(candidate.id)) {
+        throw sessionError("AIR_SESSION_LIMIT");
+      }
       nextPrivateItems.set(candidate.id, candidate);
       publicItems.push(Object.freeze({
         id: candidate.id,
@@ -764,9 +863,9 @@ export function createSessionRegistry({
     ) {
       throw sessionError("AIR_SESSION_STALE_SNAPSHOT");
     }
-    const currentSourceState = sourceStates.get(item.sourceKey) ??
+    let currentSourceState = sourceStates.get(item.sourceKey) ??
       sourceState(item.sourceKey, item.identity);
-    const epoch = prior?.epoch ?? currentSourceState.epoch;
+    let epoch = prior?.epoch ?? currentSourceState.epoch;
     if (prior && prior.epoch !== currentSourceState.epoch) {
       return sourceChanged(sessionId, requestedGeneration);
     }
@@ -787,6 +886,29 @@ export function createSessionRegistry({
       ) {
         markSourceReset(item, epoch, sourceIdentity);
         return sourceChanged(sessionId, requestedGeneration);
+      }
+      if (
+        !(await matchesPublishedHighWater(
+          handle,
+          before,
+          item,
+          epoch,
+        ))
+      ) {
+        if (!prior) {
+          if (sourceStates.get(item.sourceKey)?.epoch !== epoch) {
+            return sourceChanged(sessionId, requestedGeneration);
+          }
+          currentSourceState = markSourceReset(
+            item,
+            epoch,
+            sourceIdentity,
+          );
+          epoch = currentSourceState.epoch;
+        } else {
+          markSourceReset(item, epoch, sourceIdentity);
+          return sourceChanged(sessionId, requestedGeneration);
+        }
       }
       const offset = prior?.offset ?? 0;
       const beforeFingerprint = await boundedFingerprint(
@@ -1029,6 +1151,17 @@ export function createSessionRegistry({
         markSourceReset(item, epoch, identity(finalInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
+      if (
+        !(await matchesPublishedHighWater(
+          handle,
+          finalInfo,
+          item,
+          epoch,
+        ))
+      ) {
+        markSourceReset(item, epoch, identity(finalInfo));
+        return sourceChanged(sessionId, requestedGeneration);
+      }
       const prefixLength = Math.min(
         nextOffset,
         boundedLimits.headFingerprintBytes,
@@ -1082,6 +1215,17 @@ export function createSessionRegistry({
           "refresh\0",
           acceptedChunk,
         )
+      ) {
+        markSourceReset(item, epoch, identity(publishedInfo));
+        return sourceChanged(sessionId, requestedGeneration);
+      }
+      if (
+        !(await matchesPublishedHighWater(
+          handle,
+          publishedInfo,
+          item,
+          epoch,
+        ))
       ) {
         markSourceReset(item, epoch, identity(publishedInfo));
         return sourceChanged(sessionId, requestedGeneration);
@@ -1193,7 +1337,7 @@ export function createSessionRegistry({
       ) {
         throw sessionError("AIR_SESSION_LIMIT");
       }
-      const snapshotId = opaqueToken(randomBytes, "snapshot");
+      const snapshotId = allocateSnapshotId();
 
       // Artifact construction and handle allocation can be expensive enough for
       // either the source or catalog generation to change after the earlier
@@ -1248,11 +1392,32 @@ export function createSessionRegistry({
         markSourceReset(item, epoch, identity(publicationInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
+      if (
+        !(await matchesPublishedHighWater(
+          handle,
+          publicationInfo,
+          item,
+          epoch,
+        ))
+      ) {
+        markSourceReset(item, epoch, identity(publicationInfo));
+        return sourceChanged(sessionId, requestedGeneration);
+      }
       if (generation !== requestedGeneration) {
         throw sessionError("AIR_SESSION_STALE_GENERATION");
       }
       if (sourceStates.get(item.sourceKey)?.epoch !== epoch) {
         return sourceChanged(sessionId, requestedGeneration);
+      }
+      const publishedState = sourceStates.get(item.sourceKey);
+      if (
+        publishedState.published === null ||
+        nextOffset >= publishedState.published.offset
+      ) {
+        publishedState.published = Object.freeze({
+          offset: nextOffset,
+          continuity: publicationContinuity.continuity,
+        });
       }
       retainHandle({
         id: snapshotId,

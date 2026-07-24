@@ -5,6 +5,7 @@ import {
   AIR_CONTENT_DOMAIN,
   AIR_ENVELOPE_DOMAIN,
   AIR_LEGACY_EXTENSION,
+  AIR_LIMITS,
   AIR_PROFILES,
   AIR_SCHEMA,
   AIR_VERSION,
@@ -29,16 +30,10 @@ import {
 
 const HEX = /^[a-f0-9]{64}$/u;
 const UTF8_FATAL = new TextDecoder("utf-8", { fatal: true });
-const WORKFLOW_COLLECTION_LIMITS = Object.freeze({
-  diagnostics: 10_000,
-  diagnosticTargets: 1_000,
-  edges: 30_000,
-  entryNodeIds: 30_000,
-  evidenceRefs: 1_000,
-  nodes: 30_000,
-  opaqueRanges: 60_001,
-  sourceMaps: 30_000,
-});
+const WORKFLOW_TITLE_PATTERN =
+  /^(?!.*[ \t]+#+$)(?=\S(?:.*\S)?$)[^\r\n]+$/u;
+const DIAGNOSTIC_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,127}$/u;
+const MAX_SAFE_INTEGER = 9_007_199_254_740_991;
 
 function airError(code, message) {
   return new AirCodecError(code, message);
@@ -287,15 +282,49 @@ function record(value, required, optional, label) {
   return value;
 }
 
-function text(value, label) {
-  if (typeof value !== "string" || value.length === 0) {
-    throw airError("AIR_SEMANTIC_INVALID", `${label} must be non-empty text.`);
+function codePointLength(value, maximum) {
+  let length = 0;
+  for (const ignored of value) {
+    void ignored;
+    length += 1;
+    if (length > maximum) return length;
+  }
+  return length;
+}
+
+function text(value, label, {
+  minimum = 1,
+  maximum = Number.MAX_SAFE_INTEGER,
+  pattern,
+} = {}) {
+  if (typeof value !== "string") {
+    throw airError("AIR_SEMANTIC_INVALID", `${label} must be text.`);
+  }
+  const length = codePointLength(value, maximum);
+  if (
+    length < minimum ||
+    length > maximum ||
+    (pattern !== undefined && !pattern.test(value))
+  ) {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      `${label} is outside its published text boundary.`,
+    );
   }
   return value;
 }
 
-function integer(value, label, minimum = 0) {
-  if (!Number.isSafeInteger(value) || value < minimum) {
+function integer(
+  value,
+  label,
+  minimum = 0,
+  maximum = Number.MAX_SAFE_INTEGER,
+) {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
     throw airError("AIR_SEMANTIC_INVALID", `${label} must be an integer.`);
   }
   return value;
@@ -325,10 +354,18 @@ function uniqueTextList(
   value,
   label,
   maximum = Number.MAX_SAFE_INTEGER,
+  itemMaximum = AIR_LIMITS.identifier,
 ) {
   const values = array(value, label, maximum);
   if (
-    values.some((item) => typeof item !== "string" || item.length === 0) ||
+    values.some((item) => {
+      try {
+        text(item, `${label} item`, { maximum: itemMaximum });
+        return false;
+      } catch {
+        return true;
+      }
+    }) ||
     new Set(values).size !== values.length
   ) {
     throw airError(
@@ -342,7 +379,7 @@ function uniqueTextList(
 function byteRange(
   value,
   label,
-  maximum = Number.MAX_SAFE_INTEGER,
+  maximum = AIR_LIMITS.bytes,
   optional = [],
 ) {
   record(value, ["start_byte", "end_byte"], optional, label);
@@ -363,8 +400,12 @@ function byteRecordSemantic(value, label, extra = []) {
   if (value.encoding !== "base64") {
     throw airError("AIR_SEMANTIC_INVALID", `${label}.encoding is invalid.`);
   }
+  text(value.bytes_base64, `${label}.bytes_base64`, {
+    minimum: 0,
+    maximum: AIR_LIMITS.base64Text,
+  });
   const decoded = Buffer.from(decodeBase64(value.bytes_base64));
-  integer(value.byte_length, `${label}.byte_length`);
+  integer(value.byte_length, `${label}.byte_length`, 0, AIR_LIMITS.bytes);
   digest(value.sha256, `${label}.sha256`);
   if (
     decoded.byteLength !== value.byte_length ||
@@ -377,7 +418,7 @@ function byteRecordSemantic(value, label, extra = []) {
 
 function locator(value, label) {
   record(value, ["display", "disclosure"], [], label);
-  text(value.display, `${label}.display`);
+  text(value.display, `${label}.display`, { maximum: AIR_LIMITS.longText });
   if (!["local-only", "redacted"].includes(value.disclosure)) {
     throw airError("AIR_SEMANTIC_INVALID", `${label}.disclosure is invalid.`);
   }
@@ -388,14 +429,18 @@ function validateConfidence(value, label) {
   if (!["explicit", "structural", "heuristic", "unknown"].includes(value.level)) {
     throw airError("AIR_SEMANTIC_INVALID", `${label}.level is invalid.`);
   }
-  text(value.rule_id, `${label}.rule_id`);
-  text(value.reason, `${label}.reason`);
+  text(value.rule_id, `${label}.rule_id`, {
+    maximum: AIR_LIMITS.identifier,
+  });
+  text(value.reason, `${label}.reason`, {
+    maximum: AIR_LIMITS.longText,
+  });
 }
 
 function diagnostics(
   value,
   label,
-  maximum = WORKFLOW_COLLECTION_LIMITS.diagnostics,
+  maximum = AIR_LIMITS.diagnostics,
 ) {
   for (const [index, item] of array(value, label, maximum).entries()) {
     const itemLabel = `${label}[${index}]`;
@@ -403,18 +448,30 @@ function diagnostics(
     if (!["error", "warning", "info"].includes(item.severity)) {
       throw airError("AIR_SEMANTIC_INVALID", `${itemLabel}.severity is invalid.`);
     }
-    text(item.code, `${itemLabel}.code`);
-    text(item.message, `${itemLabel}.message`);
+    text(item.code, `${itemLabel}.code`, {
+      maximum: 128,
+      pattern: DIAGNOSTIC_CODE_PATTERN,
+    });
+    text(item.message, `${itemLabel}.message`, {
+      maximum: AIR_LIMITS.longText,
+    });
     for (const target of array(
       item.targets,
       `${itemLabel}.targets`,
-      WORKFLOW_COLLECTION_LIMITS.diagnosticTargets,
+      AIR_LIMITS.diagnosticTargets,
     )) {
-      if (typeof target === "string" && target.length > 0) continue;
-      byteRange(target, `${itemLabel}.target`, Number.MAX_SAFE_INTEGER, [
+      if (typeof target === "string") {
+        text(target, `${itemLabel}.target`, {
+          maximum: AIR_LIMITS.identifier,
+        });
+        continue;
+      }
+      byteRange(target, `${itemLabel}.target`, AIR_LIMITS.bytes, [
         "source_id",
       ]);
-      text(target.source_id, `${itemLabel}.target.source_id`);
+      text(target.source_id, `${itemLabel}.target.source_id`, {
+        maximum: AIR_LIMITS.identifier,
+      });
     }
   }
 }
@@ -658,17 +715,28 @@ function validateWorkflowBody(artifact) {
     ["locator"],
     "workflow source",
   );
-  text(source.source_id, "workflow source ID");
+  text(source.source_id, "workflow source ID", {
+    maximum: AIR_LIMITS.identifier,
+  });
   if (source.media_type !== "text/markdown" || source.encoding !== "utf-8") {
     throw airError("AIR_SEMANTIC_INVALID", "Workflow source encoding is invalid.");
   }
+  text(source.bytes_base64, "workflow source bytes", {
+    minimum: 0,
+    maximum: AIR_LIMITS.base64Text,
+  });
   const sourceBytes = Buffer.from(decodeBase64(source.bytes_base64));
   try {
     UTF8_FATAL.decode(sourceBytes);
   } catch {
     throw airError("AIR_SEMANTIC_INVALID", "Workflow source is not valid UTF-8.");
   }
-  integer(source.byte_length, "workflow source byte length");
+  integer(
+    source.byte_length,
+    "workflow source byte length",
+    0,
+    AIR_LIMITS.bytes,
+  );
   digest(source.sha256, "workflow source digest");
   const binarySource = sourceBytes.toString("binary");
   const hasCrlf = /\r\n/u.test(binarySource);
@@ -694,7 +762,7 @@ function validateWorkflowBody(artifact) {
   const nodes = array(
     graph.nodes,
     "workflow nodes",
-    WORKFLOW_COLLECTION_LIMITS.nodes,
+    AIR_LIMITS.graphItems,
   );
   const nodeIds = [];
   for (const [index, node] of nodes.entries()) {
@@ -704,27 +772,35 @@ function validateWorkflowBody(artifact) {
       [],
       `workflow node ${index}`,
     );
-    nodeIds.push(text(node.id, `workflow node ${index} ID`));
+    nodeIds.push(text(node.id, `workflow node ${index} ID`, {
+      maximum: AIR_LIMITS.identifier,
+    }));
     if (
       node.kind !== "step" ||
       node.order !== index ||
-      typeof node.title !== "string" ||
-      typeof node.body !== "string" ||
       node.assertion !== "declared"
     ) {
       throw airError("AIR_SEMANTIC_INVALID", `Workflow node ${index} is invalid.`);
     }
+    text(node.title, `workflow node ${index} title`, {
+      maximum: AIR_LIMITS.title,
+      pattern: WORKFLOW_TITLE_PATTERN,
+    });
+    text(node.body, `workflow node ${index} body`, {
+      minimum: 0,
+      maximum: AIR_LIMITS.bytes,
+    });
     validateConfidence(node.confidence, `workflow node ${index} confidence`);
     uniqueTextList(
       node.evidence_refs,
       `workflow node ${index} evidence refs`,
-      WORKFLOW_COLLECTION_LIMITS.evidenceRefs,
+      AIR_LIMITS.evidenceRefs,
     );
   }
   const edges = array(
     graph.edges,
     "workflow edges",
-    WORKFLOW_COLLECTION_LIMITS.edges,
+    AIR_LIMITS.graphItems,
   );
   const edgeIds = new Set();
   for (const [index, edge] of edges.entries()) {
@@ -741,14 +817,20 @@ function validateWorkflowBody(artifact) {
     ) {
       throw airError("AIR_SEMANTIC_INVALID", `Workflow edge ${index} is invalid.`);
     }
-    edgeIds.add(text(edge.id, `workflow edge ${index} ID`));
-    text(edge.from, `workflow edge ${index} source`);
-    text(edge.to, `workflow edge ${index} target`);
+    edgeIds.add(text(edge.id, `workflow edge ${index} ID`, {
+      maximum: AIR_LIMITS.identifier,
+    }));
+    text(edge.from, `workflow edge ${index} source`, {
+      maximum: AIR_LIMITS.identifier,
+    });
+    text(edge.to, `workflow edge ${index} target`, {
+      maximum: AIR_LIMITS.identifier,
+    });
     validateConfidence(edge.confidence, `workflow edge ${index} confidence`);
     uniqueTextList(
       edge.evidence_refs,
       `workflow edge ${index} evidence refs`,
-      WORKFLOW_COLLECTION_LIMITS.evidenceRefs,
+      AIR_LIMITS.evidenceRefs,
     );
   }
   acyclicGraph(
@@ -757,7 +839,7 @@ function validateWorkflowBody(artifact) {
     uniqueTextList(
       graph.entry_node_ids,
       "workflow entry IDs",
-      WORKFLOW_COLLECTION_LIMITS.entryNodeIds,
+      AIR_LIMITS.graphItems,
     ),
     "workflow graph",
   );
@@ -765,7 +847,7 @@ function validateWorkflowBody(artifact) {
   for (const [index, map] of array(
     body.source_maps,
     "workflow source maps",
-    WORKFLOW_COLLECTION_LIMITS.sourceMaps,
+    AIR_LIMITS.graphItems,
   ).entries()) {
     record(
       map,
@@ -776,6 +858,12 @@ function validateWorkflowBody(artifact) {
     if (!nodeIdSet.has(map.node_id) || map.source_id !== source.source_id) {
       throw airError("AIR_SEMANTIC_INVALID", `Workflow source map ${index} is invalid.`);
     }
+    text(map.node_id, `workflow source map ${index}.node_id`, {
+      maximum: AIR_LIMITS.identifier,
+    });
+    text(map.source_id, `workflow source map ${index}.source_id`, {
+      maximum: AIR_LIMITS.identifier,
+    });
     for (const field of ["span", "heading", "title", "body"]) {
       byteRange(map[field], `workflow source map ${index}.${field}`, sourceBytes.length);
     }
@@ -783,7 +871,7 @@ function validateWorkflowBody(artifact) {
   for (const [index, range] of array(
     body.opaque_ranges,
     "workflow opaque ranges",
-    WORKFLOW_COLLECTION_LIMITS.opaqueRanges,
+    AIR_LIMITS.opaqueRanges,
   ).entries()) {
     record(range, ["start_byte", "end_byte", "sha256", "reason"], [], `opaque range ${index}`);
     byteRange(range, `opaque range ${index}`, sourceBytes.length, [
@@ -791,7 +879,9 @@ function validateWorkflowBody(artifact) {
       "reason",
     ]);
     digest(range.sha256, `opaque range ${index} digest`);
-    text(range.reason, `opaque range ${index} reason`);
+    text(range.reason, `opaque range ${index} reason`, {
+      maximum: AIR_LIMITS.longText,
+    });
     if (
       sha256Bytes(sourceBytes.subarray(range.start_byte, range.end_byte)) !==
       range.sha256
@@ -802,7 +892,7 @@ function validateWorkflowBody(artifact) {
   diagnostics(
     body.diagnostics,
     "workflow diagnostics",
-    WORKFLOW_COLLECTION_LIMITS.diagnostics,
+    AIR_LIMITS.diagnostics,
   );
   validateWorkflowSourceTruth(body, sourceBytes);
 }
@@ -869,22 +959,31 @@ function validatePlanBody(artifact) {
   locator(body.cwd, "plan cwd");
   validateSafety(body.safety, body.agent, "plan safety");
   record(body.command, ["executable", "argv", "stdin", "shell"], [], "plan command");
+  const commandArgv = array(
+    body.command.argv,
+    "plan command argv",
+    AIR_LIMITS.commandArgv,
+  );
   if (
     body.command.executable !== body.agent ||
     body.command.stdin !== "approved-prompt-context" ||
     body.command.shell !== false ||
-    array(body.command.argv, "plan command argv").length === 0 ||
-    body.command.argv.some((item) => typeof item !== "string")
+    commandArgv.length === 0
   ) {
     throw airError("AIR_SEMANTIC_INVALID", "Plan command is invalid.");
   }
+  commandArgv.forEach((item, index) =>
+    text(item, `plan command argv[${index}]`, {
+      minimum: 0,
+      maximum: AIR_LIMITS.commandArgument,
+    }));
   if (
     body.execution_mode !== "native-cli-prompt-context" ||
     body.graph_enforcement !== "prompt-context-only"
   ) {
     throw airError("AIR_SEMANTIC_INVALID", "Plan execution mode is invalid.");
   }
-  diagnostics(body.warnings, "plan warnings");
+  diagnostics(body.warnings, "plan warnings", AIR_LIMITS.diagnostics);
   if (body.approval !== undefined) {
     const approval = record(
       body.approval,
@@ -918,11 +1017,19 @@ function validatePlanBody(artifact) {
 
 function validateEventGraph(graph, eventIds, label) {
   record(graph, ["entry_event_ids", "nodes", "edges"], [], label);
-  const nodes = uniqueTextList(graph.nodes, `${label}.nodes`);
+  const nodes = uniqueTextList(
+    graph.nodes,
+    `${label}.nodes`,
+    AIR_LIMITS.graphItems,
+  );
   if (stableStringify(nodes) !== stableStringify(eventIds)) {
     throw airError("AIR_SEMANTIC_INVALID", `${label} nodes do not match events.`);
   }
-  const edges = array(graph.edges, `${label}.edges`);
+  const edges = array(
+    graph.edges,
+    `${label}.edges`,
+    AIR_LIMITS.graphItems,
+  );
   const edgeIds = new Set();
   for (const [index, edge] of edges.entries()) {
     record(
@@ -939,14 +1046,30 @@ function validateEventGraph(graph, eventIds, label) {
     ) {
       throw airError("AIR_SEMANTIC_INVALID", `${label} edge ${index} is invalid.`);
     }
-    edgeIds.add(text(edge.id, `${label} edge ${index} ID`));
+    edgeIds.add(text(edge.id, `${label} edge ${index} ID`, {
+      maximum: AIR_LIMITS.identifier,
+    }));
+    text(edge.from, `${label} edge ${index} source`, {
+      maximum: AIR_LIMITS.identifier,
+    });
+    text(edge.to, `${label} edge ${index} target`, {
+      maximum: AIR_LIMITS.identifier,
+    });
     validateConfidence(edge.confidence, `${label} edge ${index} confidence`);
-    uniqueTextList(edge.evidence_refs, `${label} edge ${index} evidence refs`);
+    uniqueTextList(
+      edge.evidence_refs,
+      `${label} edge ${index} evidence refs`,
+      AIR_LIMITS.evidenceRefs,
+    );
   }
   acyclicGraph(
     nodes,
     edges,
-    uniqueTextList(graph.entry_event_ids, `${label}.entry_event_ids`),
+    uniqueTextList(
+      graph.entry_event_ids,
+      `${label}.entry_event_ids`,
+      AIR_LIMITS.graphItems,
+    ),
     label,
     { allowDistinctEdgeKinds: true },
   );
@@ -980,17 +1103,27 @@ function validateNativeTraceBody(artifact) {
   locator(body.cwd, "trace cwd");
   validateSafety(body.safety, body.agent, "trace safety");
   record(body.adapter, ["id", "version"], [], "trace adapter");
-  text(body.adapter.id, "trace adapter ID");
-  text(body.adapter.version, "trace adapter version");
+  text(body.adapter.id, "trace adapter ID", {
+    maximum: AIR_LIMITS.identifier,
+  });
+  text(body.adapter.version, "trace adapter version", {
+    maximum: AIR_LIMITS.shortText,
+  });
   const eventIds = [];
-  for (const [index, event] of array(body.events, "trace events").entries()) {
+  for (const [index, event] of array(
+    body.events,
+    "trace events",
+    AIR_LIMITS.graphItems,
+  ).entries()) {
     record(
       event,
       ["id", "order", "type", "status", "assertion", "confidence", "evidence_refs", "source"],
       [],
       `trace event ${index}`,
     );
-    eventIds.push(text(event.id, `trace event ${index} ID`));
+    eventIds.push(text(event.id, `trace event ${index} ID`, {
+      maximum: AIR_LIMITS.identifier,
+    }));
     if (
       event.order !== index ||
       event.assertion !== "observed" ||
@@ -1000,10 +1133,18 @@ function validateNativeTraceBody(artifact) {
     ) {
       throw airError("AIR_SEMANTIC_INVALID", `Trace event ${index} is invalid.`);
     }
-    text(event.type, `trace event ${index} type`);
-    text(event.status, `trace event ${index} status`);
+    text(event.type, `trace event ${index} type`, {
+      maximum: AIR_LIMITS.identifier,
+    });
+    text(event.status, `trace event ${index} status`, {
+      maximum: AIR_LIMITS.shortText,
+    });
     validateConfidence(event.confidence, `trace event ${index} confidence`);
-    uniqueTextList(event.evidence_refs, `trace event ${index} evidence refs`);
+    uniqueTextList(
+      event.evidence_refs,
+      `trace event ${index} evidence refs`,
+      0,
+    );
   }
   validateEventGraph(body.event_graph, eventIds, "trace event graph");
   record(body.process, ["exit_code", "signal", "stderr", "stdout_bytes"], [], "trace process");
@@ -1014,7 +1155,12 @@ function validateNativeTraceBody(artifact) {
     throw airError("AIR_SEMANTIC_INVALID", "Trace process terminal is invalid.");
   }
   byteRecordSemantic(body.process.stderr, "trace stderr");
-  integer(body.process.stdout_bytes, "trace stdout byte count");
+  integer(
+    body.process.stdout_bytes,
+    "trace stdout byte count",
+    0,
+    AIR_LIMITS.bytes,
+  );
   record(body.terminal, ["status", "completeness"], ["failure"], "trace terminal");
   if (
     !["completed", "failed", "cancelled", "protocol-error", "truncated"].includes(
@@ -1030,10 +1176,18 @@ function validateNativeTraceBody(artifact) {
   }
   if (body.terminal.failure !== undefined) {
     record(body.terminal.failure, ["kind"], ["message"], "trace failure");
-    text(body.terminal.failure.kind, "trace failure kind");
+    text(body.terminal.failure.kind, "trace failure kind", {
+      maximum: AIR_LIMITS.identifier,
+    });
     if (
       body.terminal.failure.message !== undefined &&
-      typeof body.terminal.failure.message !== "string"
+      (
+        typeof body.terminal.failure.message !== "string" ||
+        codePointLength(
+          body.terminal.failure.message,
+          AIR_LIMITS.longText,
+        ) > AIR_LIMITS.longText
+      )
     ) {
       throw airError("AIR_SEMANTIC_INVALID", "Trace failure message is invalid.");
     }
@@ -1063,7 +1217,7 @@ function validateNativeTraceBody(artifact) {
       );
     }
   }
-  diagnostics(body.diagnostics, "trace diagnostics");
+  diagnostics(body.diagnostics, "trace diagnostics", AIR_LIMITS.diagnostics);
   if (body.hidden_reasoning_recovered !== false) {
     throw airError("AIR_SEMANTIC_INVALID", "Trace hidden reasoning flag is invalid.");
   }
@@ -1105,7 +1259,21 @@ function validateSessionTraceBody(artifact) {
     throw airError("AIR_SEMANTIC_INVALID", "Session completeness is invalid.");
   }
   record(capture.source_prefix, ["byte_length", "sha256"], [], "session source prefix");
-  integer(capture.source_prefix.byte_length, "session source prefix length");
+  integer(
+    capture.source_prefix.byte_length,
+    "session source prefix length",
+    0,
+    AIR_LIMITS.bytes,
+  );
+  if (
+    capture.source_prefix.byte_length >
+    capture.snapshot_cursor.byte_offset
+  ) {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      "Session source prefix exceeds its snapshot cursor.",
+    );
+  }
   digest(capture.source_prefix.sha256, "session source prefix digest");
 
   const privacy = record(body.privacy, ["profile", "redaction_manifest"], [], "session privacy");
@@ -1117,7 +1285,11 @@ function validateSessionTraceBody(artifact) {
     "stdout", "stderr", "attachments", "file-content", "environment",
     "credentials", "paths", "branches", "provider-identifiers",
   ];
-  const manifest = array(privacy.redaction_manifest, "session redaction manifest");
+  const manifest = array(
+    privacy.redaction_manifest,
+    "session redaction manifest",
+    canonicalCategories.length,
+  );
   if (manifest.length !== canonicalCategories.length) {
     throw airError(
       "AIR_SEMANTIC_INVALID",
@@ -1136,6 +1308,7 @@ function validateSessionTraceBody(artifact) {
   }
 
   const eventIds = [];
+  let priorEvidenceEnd = 0;
   const sessionEventTypes = new Set([
     "session.started",
     "turn.context-observed",
@@ -1149,7 +1322,11 @@ function validateSessionTraceBody(artifact) {
     "record.structure-omitted",
     "record.oversized-omitted",
   ]);
-  for (const [index, event] of array(body.events, "session events").entries()) {
+  for (const [index, event] of array(
+    body.events,
+    "session events",
+    AIR_LIMITS.graphItems,
+  ).entries()) {
     record(
       event,
       ["id", "order", "type", "assertion", "confidence", "evidence_refs", "evidence"],
@@ -1186,6 +1363,7 @@ function validateSessionTraceBody(artifact) {
       uniqueTextList(
         event.evidence_refs,
         `session event ${index} evidence refs`,
+        0,
       ).length !== 0
     ) {
       throw airError(
@@ -1193,7 +1371,11 @@ function validateSessionTraceBody(artifact) {
         `Session event ${index} evidence refs are invalid.`,
       );
     }
-    const evidence = array(event.evidence, `session event ${index} evidence`);
+    const evidence = array(
+      event.evidence,
+      `session event ${index} evidence`,
+      1,
+    );
     if (evidence.length !== 1) {
       throw airError(
         "AIR_SEMANTIC_INVALID",
@@ -1216,14 +1398,24 @@ function validateSessionTraceBody(artifact) {
         throw airError("AIR_SEMANTIC_INVALID", `${evidenceLabel} labels are invalid.`);
       }
       byteRange(item.byte_range, `${evidenceLabel}.byte_range`);
-      integer(item.byte_length, `${evidenceLabel}.byte_length`);
+      integer(
+        item.byte_length,
+        `${evidenceLabel}.byte_length`,
+        0,
+        MAX_SAFE_INTEGER,
+      );
       digest(item.sha256, `${evidenceLabel}.sha256`);
       if (
         item.omitted !== true ||
-        item.byte_length !== item.byte_range.end_byte - item.byte_range.start_byte
+        item.byte_length !==
+          item.byte_range.end_byte - item.byte_range.start_byte ||
+        item.byte_range.end_byte <= item.byte_range.start_byte ||
+        item.byte_range.start_byte < priorEvidenceEnd ||
+        item.byte_range.end_byte > capture.snapshot_cursor.byte_offset
       ) {
         throw airError("AIR_SEMANTIC_INVALID", `${evidenceLabel} is invalid.`);
       }
+      priorEvidenceEnd = item.byte_range.end_byte;
     }
   }
   validateEventGraph(body.event_graph, eventIds, "session event graph");
@@ -1283,7 +1475,11 @@ function validateSessionTraceBody(artifact) {
   ) {
     throw airError("AIR_SEMANTIC_INVALID", "Session lifecycle confidence is invalid.");
   }
-  for (const [index, evidence] of array(lifecycle.evidence, "lifecycle evidence").entries()) {
+  for (const [index, evidence] of array(
+    lifecycle.evidence,
+    "lifecycle evidence",
+    1,
+  ).entries()) {
     record(evidence, ["source", "signal", "observed", "confidence"], [], `lifecycle evidence ${index}`);
     if (
       !["provider-declared", "process-liveness", "mtime", "adapter-boundary"].includes(
@@ -1321,7 +1517,11 @@ function validateSessionTraceBody(artifact) {
   ) {
     throw airError("AIR_SEMANTIC_INVALID", "Session lifecycle evidence is invalid.");
   }
-  diagnostics(body.diagnostics, "session diagnostics");
+  diagnostics(
+    body.diagnostics,
+    "session diagnostics",
+    AIR_LIMITS.diagnostics,
+  );
   const sessionDiagnostics = new Map([
     [
       "AIR_SESSION_TORN_SUFFIX_OMITTED",

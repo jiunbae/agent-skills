@@ -171,6 +171,10 @@ and raw provider IDs MUST NOT appear. Recent mtime alone is neither active nor
 complete evidence. Lifecycle claims MUST retain their observed,
 provider-declared, or inferred provenance.
 
+Observed event evidence ranges MUST be in source order, MUST NOT overlap, and
+MUST end at or before `capture.snapshot_cursor.byte_offset`.
+`capture.source_prefix.byte_length` MUST NOT exceed that cursor offset.
+
 The redaction manifest contains every privacy category defined by the trace
 schema exactly once, in canonical schema order. Session adapters construct
 public records only from adapter-owned literals; unknown provider types, keys,
@@ -186,18 +190,27 @@ lifecycle evidence.
 Append state is server-private and binds the provider, stream kind, adapter
 major, open-file identity, epoch, committed newline offset, bounded head and
 checkpoint samples, and a cryptographic continuity fingerprint covering every
-byte through that offset. Before prior observations are retained, the complete
-previously accepted prefix is reread and matched within the published
-`maxContinuityBytes` limit; the accepted prefix is checked again before the
-next snapshot is returned. A continuation that would exceed that limit fails
-closed as a typed source change. A torn suffix is discarded and retried from
-the last committed newline. Truncation, replacement, any accepted-prefix
-mismatch, or adapter-major change returns a typed source change and never joins
-observations from different source epochs. Public opaque snapshot handles, not
-caller-supplied cursors or paths, select continuation state.
-The stable session-ID registry retains only the bounded current catalog
-generation; removed or truncated identities are pruned and are never aliased
-to a different source.
+byte through that offset. Before prior observations are retained, or before a
+fresh request without a prior handle reuses an epoch or public event ID, the
+server-owned last-published continuity high-water is reread and matched within
+the published `maxContinuityBytes` limit. This high-water MUST be revalidated
+at every later publication cut, even when a fresh capture accepts a shorter
+prefix, and a shorter capture MUST NOT lower it. A continuation that would
+exceed that limit fails closed as a typed source change. A torn suffix is
+discarded and retried from the last committed newline. A continuation with
+truncation, replacement, an accepted-prefix mismatch, or an adapter-major
+change returns a typed source change. A fresh request with no prior handle
+instead starts a new source epoch and uses disjoint event IDs after such a
+mismatch. Neither path joins observations from different source epochs.
+Public opaque snapshot handles, not caller-supplied cursors or paths, select
+continuation state. A public snapshot ID MUST NOT be reissued during that
+registry lifetime, including after its private handle is evicted.
+
+Every published session catalog row MUST have a unique opaque ID that resolves
+to exactly one server-private source authority. The registry MUST fail closed
+rather than publish an ID collision or a last-write-wins alias. It retains only
+the bounded current catalog generation; removed or truncated identities are
+pruned and are never aliased to a different source.
 
 ## 5. Canonicalization and identity
 
@@ -309,6 +322,12 @@ invalid. Marker-looking ordinary Markdown remains source content. No HTML or
 YAML execution is involved. A no-op `.air.md` round trip is byte-identical;
 the verified terminal comment is inert when the complete carrier is copied to
 `SKILL.md`.
+
+A top-level terminal marker whose decoded payload begins with a JSON object
+prefix structurally claims the AIR-v1 carrier namespace. Malformed JSON and
+wrong, missing, or unsupported carrier discriminators in such a claim MUST
+fail closed; the bytes MUST NOT be demoted to legacy Skill input or wrapped in
+another carrier.
 
 Carrier split golden cases:
 

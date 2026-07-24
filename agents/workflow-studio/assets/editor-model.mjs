@@ -45,6 +45,9 @@ const AIR_LEGACY_EXTENSION =
   "https://open330.github.io/air/extensions/legacy-workflow-ir-v1";
 const MAX_AIR_MARKDOWN_BYTES = 32 * 1024 * 1024;
 const MAX_AIR_CARRIER_TOKEN_BYTES = 32 * 1024 * 1024;
+const MAX_AIR_GRAPH_ITEMS = 30_000;
+const MAX_AIR_TITLE_CODE_POINTS = 8_192;
+const MAX_AIR_BODY_CODE_POINTS = 33_554_432;
 
 function clone(value) {
   return structuredClone(value);
@@ -92,6 +95,16 @@ function airMarkdownError(code, message) {
   const error = new Error(message);
   error.code = code;
   return error;
+}
+
+function exceedsCodePointLimit(value, maximum) {
+  let length = 0;
+  for (const ignored of value) {
+    void ignored;
+    length += 1;
+    if (length > maximum) return true;
+  }
+  return false;
 }
 
 function bytesToBase64(bytes) {
@@ -1574,6 +1587,20 @@ function bodyStructuralIssue(body, headingLevel) {
 export function validateState(state) {
   const errors = [];
   const warnings = [];
+  const nativeAirWorkflow =
+    state.airArtifact?.format === "air" &&
+    state.airArtifact?.kind === "workflow" &&
+    state.airArtifact?.profile === AIR_WORKFLOW_PROFILE;
+  if (nativeAirWorkflow && state.nodes.length > MAX_AIR_GRAPH_ITEMS) {
+    errors.push(
+      `Workflow nodes must not exceed ${MAX_AIR_GRAPH_ITEMS} items.`,
+    );
+  }
+  if (nativeAirWorkflow && state.edges.length > MAX_AIR_GRAPH_ITEMS) {
+    errors.push(
+      `Workflow edges must not exceed ${MAX_AIR_GRAPH_ITEMS} items.`,
+    );
+  }
   if (state.managedMetadata?.status === "conflict") {
     errors.push(state.managedMetadata.message);
   }
@@ -1586,6 +1613,26 @@ export function validateState(state) {
     const invalidTitle = titleError(node.title);
     if (invalidTitle) {
       errors.push(`Node ${node.id} title ${invalidTitle}.`);
+    }
+    if (
+      nativeAirWorkflow &&
+      typeof node.title === "string" &&
+      exceedsCodePointLimit(node.title, MAX_AIR_TITLE_CODE_POINTS)
+    ) {
+      errors.push(
+        `Node ${node.id} title must not exceed ${MAX_AIR_TITLE_CODE_POINTS} Unicode characters.`,
+      );
+    }
+    if (
+      nativeAirWorkflow &&
+      (
+        typeof node.body !== "string" ||
+        exceedsCodePointLimit(node.body, MAX_AIR_BODY_CODE_POINTS)
+      )
+    ) {
+      errors.push(
+        `Node ${node.id} body must not exceed ${MAX_AIR_BODY_CODE_POINTS} Unicode characters.`,
+      );
     }
     const bodyIssue = bodyStructuralIssue(
       node.body,
@@ -1736,8 +1783,9 @@ function validateDownloadWorkflow(artifact) {
 export function canDownloadArtifact(state) {
   if (!(state.kind === "workflow" && validateState(state).valid)) return false;
   try {
-    buildCandidateBytes(state);
+    const candidateBytes = buildCandidateBytes(state);
     if (state.airArtifact) {
+      if (candidateBytes.byteLength > MAX_AIR_MARKDOWN_BYTES) return false;
       const air = buildAirArtifact(state);
       return (
         air.format === "air" &&
@@ -2458,10 +2506,28 @@ function hasRecognizedAirMarkdownCarrier(sourceText) {
     try {
       const tokenBytes = decodeAirCarrierTokenBytes(marker[1]);
       if (tokenBytes.byteLength > MAX_AIR_CARRIER_TOKEN_BYTES) continue;
-      const manifest = JSON.parse(UTF8_FATAL_DECODER.decode(tokenBytes));
+      const manifestText = UTF8_FATAL_DECODER.decode(tokenBytes);
+      const claimsObject =
+        offset === sourceText.length &&
+        manifestText.trimStart().startsWith("{");
+      let manifest;
+      try {
+        manifest = JSON.parse(manifestText);
+      } catch {
+        if (claimsObject) return true;
+        continue;
+      }
       if (
         manifest?.carrier === "air.md" &&
         manifest?.carrier_version === "1"
+      ) {
+        return true;
+      }
+      if (
+        claimsObject &&
+        manifest !== null &&
+        typeof manifest === "object" &&
+        !Array.isArray(manifest)
       ) {
         return true;
       }

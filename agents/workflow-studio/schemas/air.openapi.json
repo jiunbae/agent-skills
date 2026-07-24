@@ -1095,6 +1095,8 @@
           "items": {
             "type": "array",
             "maxItems": 1000,
+            "uniqueItems": true,
+            "description": "Every published row has a unique opaque id and exactly one server-private source authority.",
             "items": {
               "$ref": "#/components/schemas/SessionCatalogItem"
             }

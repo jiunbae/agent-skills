@@ -453,6 +453,43 @@ function emptySessionBody() {
   };
 }
 
+function sessionEventFixture({
+  id = "event_AAAAAAAAAAAAAAAAAAAAAA",
+  start = 0,
+  end = 3,
+} = {}) {
+  return {
+    id,
+    order: 0,
+    type: "record.observed",
+    assertion: "observed",
+    confidence: {
+      level: "explicit",
+      rule_id: "session.complete-jsonl-line",
+      reason: "A complete newline-delimited source record was observed.",
+    },
+    evidence_refs: [],
+    evidence: [{
+      raw_type: "record.observed",
+      top_level_keys: ["content-omitted"],
+      byte_range: { start_byte: start, end_byte: end },
+      byte_length: end - start,
+      sha256: "4".repeat(64),
+      omitted: true,
+    }],
+  };
+}
+
+function setSessionEvents(body, events, cursor) {
+  body.capture.snapshot_cursor.byte_offset = cursor;
+  body.events = events.map((event, order) => ({ ...event, order }));
+  body.event_graph = {
+    entry_event_ids: events.map((event) => event.id),
+    nodes: events.map((event) => event.id),
+    edges: [],
+  };
+}
+
 test("published AIR schemas and runtime have an explicit bounded differential", async () => {
   const documents = await Promise.all(SCHEMA_FILES.map(async (name) =>
     JSON.parse(await readFile(resolve(COMPONENT, "schemas", name), "utf8"))));
@@ -491,6 +528,113 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
     );
   }
 
+  const atLimitCases = [
+    {
+      label: "envelope Unicode creator name counts code points",
+      source: workflow,
+      mutate(artifact, amount) {
+        artifact.provenance.created_by.name = "😀".repeat(amount);
+      },
+      maximum: 256,
+    },
+    {
+      label: "envelope migration warning length",
+      source: workflow,
+      mutate(artifact, amount) {
+        artifact.provenance.migrations[0].warnings = ["x".repeat(amount)];
+      },
+      maximum: 4_096,
+    },
+    {
+      label: "plan argv collection",
+      source: plan,
+      mutate(artifact, amount) {
+        artifact.extensions = {};
+        artifact.body.command.argv = Array.from({ length: amount }, () => "");
+      },
+      maximum: 128,
+    },
+    {
+      label: "plan argv item length",
+      source: plan,
+      mutate(artifact, amount) {
+        artifact.extensions = {};
+        artifact.body.command.argv = ["x".repeat(amount)];
+      },
+      maximum: 8_192,
+    },
+    {
+      label: "native trace adapter identifier length",
+      source: nativeTrace,
+      mutate(artifact, amount) {
+        artifact.extensions = {};
+        artifact.body.adapter.id = "x".repeat(amount);
+      },
+      maximum: 256,
+    },
+    {
+      label: "native trace stdout byte ceiling",
+      source: nativeTrace,
+      mutate(artifact, amount) {
+        artifact.extensions = {};
+        artifact.body.process.stdout_bytes = amount;
+      },
+      maximum: 33_554_432,
+    },
+    {
+      label: "session source-prefix byte ceiling",
+      source: session,
+      mutate(artifact, amount) {
+        artifact.body.capture.snapshot_cursor.byte_offset = amount;
+        artifact.body.capture.source_prefix.byte_length = amount;
+      },
+      maximum: 33_554_432,
+      createBody(body, amount) {
+        body.capture.snapshot_cursor.byte_offset = amount;
+        body.capture.source_prefix.byte_length = amount;
+      },
+    },
+  ];
+  for (const scenario of atLimitCases) {
+    const accepted = structuredClone(scenario.source);
+    scenario.mutate(accepted, scenario.maximum);
+    resealContent(accepted);
+    const acceptedSchema = evaluator.validate(accepted, rootSchemaId);
+    assert.equal(
+      acceptedSchema.valid,
+      true,
+      `${scenario.label} at limit: ${acceptedSchema.errors.join("; ")}`,
+    );
+    assert.deepEqual(
+      runtimeDisposition(accepted),
+      { valid: true, code: null },
+      `${scenario.label} at limit`,
+    );
+
+    const rejected = structuredClone(scenario.source);
+    scenario.mutate(rejected, scenario.maximum + 1);
+    resealContent(rejected);
+    assert.equal(
+      evaluator.validate(rejected, rootSchemaId).valid,
+      false,
+      `${scenario.label} limit + 1 schema`,
+    );
+    assert.equal(
+      runtimeDisposition(rejected).valid,
+      false,
+      `${scenario.label} limit + 1 runtime`,
+    );
+    if (scenario.createBody) {
+      const body = emptySessionBody();
+      scenario.createBody(body, scenario.maximum + 1);
+      assert.throws(
+        () => createSessionAirArtifact(body),
+        (error) => error?.code === "AIR_SEMANTIC_INVALID",
+        `${scenario.label} public constructor`,
+      );
+    }
+  }
+
   const schemaRepresentableNegatives = [
     {
       label: "workflow schema title pattern",
@@ -521,6 +665,252 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
       },
       createBody(body) {
         body.privacy.profile = "raw-content";
+      },
+    },
+    {
+      label: "envelope created-by version maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.provenance.created_by.version = "x".repeat(257);
+      },
+    },
+    {
+      label: "envelope origin format maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.provenance.origins[0].format = "x".repeat(129);
+      },
+    },
+    {
+      label: "envelope origin version maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.provenance.origins[0].version = "x".repeat(129);
+      },
+    },
+    {
+      label: "envelope origin locator maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.provenance.origins[0].locator = {
+          display: "x".repeat(4_097),
+          disclosure: "local-only",
+        };
+      },
+    },
+    {
+      label: "envelope migration field maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.provenance.migrations[0].migrator = "x".repeat(257);
+      },
+    },
+    {
+      label: "workflow source identifier maxLength",
+      source: workflow,
+      mutate(artifact) {
+        const id = "x".repeat(257);
+        artifact.extensions = {};
+        artifact.body.source.source_id = id;
+        for (const mapping of artifact.body.source_maps) {
+          mapping.source_id = id;
+        }
+      },
+    },
+    {
+      label: "workflow node title maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.graph.nodes[0].title = "x".repeat(8_193);
+      },
+    },
+    {
+      label: "workflow node identifier maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.extensions = {};
+        const prior = artifact.body.graph.nodes[0].id;
+        const id = "x".repeat(257);
+        artifact.body.graph.nodes[0].id = id;
+        artifact.body.graph.entry_node_ids =
+          artifact.body.graph.entry_node_ids.map((value) =>
+            value === prior ? id : value);
+        for (const edge of artifact.body.graph.edges) {
+          if (edge.from === prior) edge.from = id;
+          if (edge.to === prior) edge.to = id;
+        }
+        for (const mapping of artifact.body.source_maps) {
+          if (mapping.node_id === prior) mapping.node_id = id;
+        }
+      },
+    },
+    {
+      label: "workflow edge identifier maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.graph.edges[0].id = "x".repeat(257);
+      },
+    },
+    {
+      label: "workflow evidence item maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.graph.nodes[0].evidence_refs = ["x".repeat(257)];
+      },
+    },
+    {
+      label: "workflow opaque reason maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.opaque_ranges[0].reason = "x".repeat(4_097);
+      },
+    },
+    {
+      label: "diagnostic code pattern",
+      source: workflow,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.diagnostics = [{
+          severity: "warning",
+          code: "x",
+          message: "invalid code fixture",
+          targets: [],
+        }];
+      },
+    },
+    {
+      label: "diagnostic message maxLength",
+      source: workflow,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.diagnostics = [{
+          severity: "warning",
+          code: "AIR_LIMIT_TEST",
+          message: "x".repeat(4_097),
+          targets: [],
+        }];
+      },
+    },
+    {
+      label: "native trace adapter version maxLength",
+      source: nativeTrace,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.adapter.version = "x".repeat(129);
+      },
+    },
+    {
+      label: "native trace event type maxLength",
+      source: nativeTrace,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.events[0].type = "x".repeat(257);
+      },
+    },
+    {
+      label: "native trace event status maxLength",
+      source: nativeTrace,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.events[0].status = "x".repeat(129);
+      },
+    },
+    {
+      label: "native trace event evidence maxItems zero",
+      source: nativeTrace,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.events[0].evidence_refs = ["evidence"];
+      },
+    },
+    {
+      label: "native trace failure kind maxLength",
+      source: nativeTrace,
+      mutate(artifact) {
+        artifact.extensions = {};
+        artifact.body.terminal = {
+          status: "failed",
+          completeness: "partial",
+          failure: { kind: "x".repeat(257) },
+        };
+      },
+    },
+    {
+      label: "session event order maximum",
+      source: session,
+      mutate(artifact) {
+        const event = sessionEventFixture();
+        artifact.body.capture.snapshot_cursor.byte_offset = 3;
+        artifact.body.events = [{ ...event, order: 30_000 }];
+        artifact.body.event_graph = {
+          entry_event_ids: [event.id],
+          nodes: [event.id],
+          edges: [],
+        };
+      },
+    },
+    {
+      label: "session event identifier pattern",
+      source: session,
+      mutate(artifact) {
+        const event = sessionEventFixture({
+          id: "event_invalid",
+        });
+        setSessionEvents(artifact.body, [event], 3);
+      },
+    },
+    {
+      label: "session edge identifier pattern",
+      source: session,
+      mutate(artifact) {
+        const first = sessionEventFixture({
+          id: "event_AAAAAAAAAAAAAAAAAAAAAA",
+          start: 0,
+          end: 3,
+        });
+        const second = sessionEventFixture({
+          id: "event_BBBBBBBBBBBBBBBBBBBBBB",
+          start: 3,
+          end: 6,
+        });
+        setSessionEvents(artifact.body, [first, second], 6);
+        artifact.body.event_graph.entry_event_ids = [first.id];
+        artifact.body.event_graph.edges = [{
+          id: "edge_invalid",
+          from: first.id,
+          to: second.id,
+          kind: "temporal",
+          assertion: "inferred",
+          confidence: {
+            level: "structural",
+            rule_id: "session.file-order",
+            reason: "Only newline record order is inferred.",
+          },
+          evidence_refs: [],
+        }];
+      },
+    },
+    {
+      label: "session observed range maximum",
+      source: session,
+      mutate(artifact) {
+        const event = sessionEventFixture();
+        event.evidence[0].byte_range = {
+          start_byte: 0,
+          end_byte: 33_554_433,
+        };
+        event.evidence[0].byte_length = 33_554_433;
+        artifact.body.capture.snapshot_cursor.byte_offset = 33_554_433;
+        artifact.body.events = [event];
+        artifact.body.event_graph = {
+          entry_event_ids: [event.id],
+          nodes: [event.id],
+          edges: [],
+        };
       },
     },
   ];
@@ -618,6 +1008,104 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
             },
           }],
         };
+      },
+    },
+    {
+      label: "session evidence extends beyond snapshot cursor",
+      source: session,
+      mutate(artifact) {
+        setSessionEvents(
+          artifact.body,
+          [sessionEventFixture({ start: 0, end: 3 })],
+          2,
+        );
+      },
+      createBody(body) {
+        setSessionEvents(
+          body,
+          [sessionEventFixture({ start: 0, end: 3 })],
+          2,
+        );
+      },
+    },
+    {
+      label: "session evidence ranges overlap",
+      source: session,
+      mutate(artifact) {
+        setSessionEvents(artifact.body, [
+          sessionEventFixture({
+            id: "event_AAAAAAAAAAAAAAAAAAAAAA",
+            start: 0,
+            end: 3,
+          }),
+          sessionEventFixture({
+            id: "event_BBBBBBBBBBBBBBBBBBBBBB",
+            start: 2,
+            end: 5,
+          }),
+        ], 5);
+      },
+      createBody(body) {
+        setSessionEvents(body, [
+          sessionEventFixture({
+            id: "event_AAAAAAAAAAAAAAAAAAAAAA",
+            start: 0,
+            end: 3,
+          }),
+          sessionEventFixture({
+            id: "event_BBBBBBBBBBBBBBBBBBBBBB",
+            start: 2,
+            end: 5,
+          }),
+        ], 5);
+      },
+    },
+    {
+      label: "session evidence ranges reverse source order",
+      source: session,
+      mutate(artifact) {
+        setSessionEvents(artifact.body, [
+          sessionEventFixture({
+            id: "event_AAAAAAAAAAAAAAAAAAAAAA",
+            start: 3,
+            end: 5,
+          }),
+          sessionEventFixture({
+            id: "event_BBBBBBBBBBBBBBBBBBBBBB",
+            start: 0,
+            end: 3,
+          }),
+        ], 5);
+      },
+    },
+    {
+      label: "session evidence ranges duplicate",
+      source: session,
+      mutate(artifact) {
+        setSessionEvents(artifact.body, [
+          sessionEventFixture({
+            id: "event_AAAAAAAAAAAAAAAAAAAAAA",
+            start: 0,
+            end: 3,
+          }),
+          sessionEventFixture({
+            id: "event_BBBBBBBBBBBBBBBBBBBBBB",
+            start: 0,
+            end: 3,
+          }),
+        ], 3);
+      },
+    },
+    {
+      label: "session source prefix exceeds snapshot cursor",
+      source: session,
+      mutate(artifact) {
+        artifact.body.capture.snapshot_cursor.byte_offset = 2;
+        artifact.body.capture.source_prefix.byte_length = 3;
+      },
+      createBody(body) {
+        body.capture.snapshot_cursor.byte_offset = 2;
+        body.capture.source_prefix.byte_length = 3;
       },
     },
   ];

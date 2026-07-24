@@ -12,6 +12,10 @@ import {
   decodeAirMarkdownArtifact,
   validateAirArtifact,
 } from "../src/air.mjs";
+import {
+  canonicalizeJcs,
+  decodeBase64,
+} from "../shared/air-codec.mjs";
 import { CATALOG_LIMITS, createSkillCatalog } from "../src/catalog.mjs";
 import { importSkillBytes } from "../src/core.mjs";
 import { createStudioServer } from "../src/server.mjs";
@@ -37,6 +41,32 @@ async function invoke(script, args) {
     maxBuffer: 40 * 1024 * 1024,
   });
   return JSON.parse(result.stdout);
+}
+
+function rewriteCarrierManifest(carrier, mutate) {
+  const text = carrier.toString("utf8");
+  const marker = text.match(/<!-- air:v1 ([A-Za-z0-9_-]+) -->\n$/u);
+  assert.ok(marker);
+  const manifest = JSON.parse(
+    Buffer.from(decodeBase64(marker[1], { url: true })).toString("utf8"),
+  );
+  mutate(manifest);
+  const token = Buffer.from(canonicalizeJcs(manifest), "utf8")
+    .toString("base64url");
+  return Buffer.from(text.replace(marker[1], token), "utf8");
+}
+
+function rewriteCarrierJsonText(carrier, manifestText) {
+  const text = carrier.toString("utf8");
+  const marker = text.match(/<!-- air:v1 ([A-Za-z0-9_-]+) -->\n$/u);
+  assert.ok(marker);
+  return Buffer.from(
+    text.replace(
+      marker[1],
+      Buffer.from(manifestText, "utf8").toString("base64url"),
+    ),
+    "utf8",
+  );
 }
 
 function http(address, path, { method = "GET", host } = {}) {
@@ -314,6 +344,70 @@ test("mixed-newline carriers round-trip through CLI and integrity failures reach
         item.code === "AIR_CATALOG_IMPORT_AIR_CARRIER_INVALID",
     ),
   );
+});
+
+test("claimed AIR carrier discriminator failures reach CLI, catalog, and HTTP", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-claimed-carrier-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const carrier = await readFile(join(
+    ROOT,
+    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+  ));
+  const claimed = [
+    rewriteCarrierJsonText(carrier, '{"carrier":"air.md"'),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      manifest.carrier_version = "2";
+    }),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      manifest.carrier = "air.json";
+    }),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      delete manifest.carrier_version;
+    }),
+  ];
+  for (const [index, source] of claimed.entries()) {
+    const path = join(directory, `claimed-${index}`, "SKILL.md");
+    await put(path, source);
+    await assert.rejects(
+      run(process.execPath, [
+        AIR,
+        "import",
+        path,
+        "--out",
+        join(directory, `claimed-${index}.air.json`),
+      ], { cwd: ROOT }),
+      (error) => error.stderr.includes('"code":"AIR_CARRIER_INVALID"'),
+    );
+  }
+
+  const catalog = createSkillCatalog({
+    roots: [{ path: directory, label: "claimed", kind: "explicit" }],
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, claimed.length);
+  for (const item of snapshot.items) {
+    assert.ok(item.diagnostics.some(
+      (diagnostic) =>
+        diagnostic.code === "AIR_CATALOG_IMPORT_AIR_CARRIER_INVALID",
+    ));
+  }
+  const studio = createStudioServer({
+    artifact: importSkillBytes(SKILL, { sourcePath: "bootstrap/SKILL.md" }),
+    assetsDir: ASSETS,
+    schemasDir: SCHEMAS,
+    catalog,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  for (const item of snapshot.items) {
+    const response = await http(
+      address,
+      `/air/v1/skills/${item.id}/artifact?token=` +
+        encodeURIComponent(studio.token),
+    );
+    assert.equal(response.status, 422);
+    assert.equal(JSON.parse(response.body).code, "AIR_CARRIER_INVALID");
+  }
 });
 
 test("AIR read-only routes require exact token, expose bounded catalog/schema data, and return validated artifacts", async (t) => {

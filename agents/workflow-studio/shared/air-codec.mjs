@@ -25,6 +25,23 @@ const MAX_JSON_DEPTH = 128;
 const MAX_JSON_ITEMS = 2_000_000;
 const MAX_CARRIER_TOKEN_BYTES = 32 * 1024 * 1024;
 const MAX_ENVELOPE_COLLECTION_ITEMS = 1_000;
+export const AIR_LIMITS = Object.freeze({
+  base64Text: 44_739_244,
+  bytes: MAX_JSON_BYTES,
+  commandArgv: 128,
+  commandArgument: 8_192,
+  diagnostics: 10_000,
+  diagnosticTargets: 1_000,
+  envelopeCollections: MAX_ENVELOPE_COLLECTION_ITEMS,
+  evidenceRefs: 1_000,
+  graphItems: 30_000,
+  identifier: 256,
+  longText: 4_096,
+  migrationText: 128,
+  opaqueRanges: 60_001,
+  shortText: 128,
+  title: 8_192,
+});
 const ROOT_KEYS = Object.freeze([
   "$schema",
   "air_version",
@@ -439,9 +456,29 @@ function exactKeys(value, expected, label, { optional = [] } = {}) {
   }
 }
 
-function requireText(value, label) {
-  if (typeof value !== "string" || value.length === 0) {
-    fail("AIR_SCHEMA_INVALID", `${label} must be non-empty text.`);
+function codePointLength(value, maximum) {
+  let length = 0;
+  for (const ignored of value) {
+    void ignored;
+    length += 1;
+    if (length > maximum) return length;
+  }
+  return length;
+}
+
+function requireText(value, label, {
+  minimum = 1,
+  maximum = Number.MAX_SAFE_INTEGER,
+} = {}) {
+  if (typeof value !== "string") {
+    fail("AIR_SCHEMA_INVALID", `${label} must be text.`);
+  }
+  const length = codePointLength(value, maximum);
+  if (length < minimum || length > maximum) {
+    fail(
+      "AIR_SCHEMA_INVALID",
+      `${label} must contain ${minimum}-${maximum} Unicode characters.`,
+    );
   }
 }
 
@@ -553,8 +590,12 @@ export function validateAirEnvelopeShape(value, {
   }
   exactKeys(artifact.provenance, PROVENANCE_KEYS, "provenance");
   exactKeys(artifact.provenance.created_by, ["name", "version"], "created_by");
-  requireText(artifact.provenance.created_by.name, "created_by.name");
-  requireText(artifact.provenance.created_by.version, "created_by.version");
+  requireText(artifact.provenance.created_by.name, "created_by.name", {
+    maximum: AIR_LIMITS.identifier,
+  });
+  requireText(artifact.provenance.created_by.version, "created_by.version", {
+    maximum: AIR_LIMITS.identifier,
+  });
   for (const field of ["origins", "derived_from", "migrations"]) {
     requireBoundedArray(
       artifact.provenance[field],
@@ -572,12 +613,18 @@ export function validateAirEnvelopeShape(value, {
     if (!["source", "legacy-artifact", "session-store"].includes(origin.kind)) {
       fail("AIR_SCHEMA_INVALID", `provenance.origins[${index}].kind is invalid.`);
     }
-    requireText(origin.format, `provenance.origins[${index}].format`);
-    requireText(origin.version, `provenance.origins[${index}].version`);
+    requireText(origin.format, `provenance.origins[${index}].format`, {
+      maximum: AIR_LIMITS.shortText,
+    });
+    requireText(origin.version, `provenance.origins[${index}].version`, {
+      maximum: AIR_LIMITS.shortText,
+    });
     requireDigest(origin.digest, `provenance.origins[${index}].digest`);
     if (origin.locator !== undefined) {
       exactKeys(origin.locator, ["display", "disclosure"], "origin locator");
-      requireText(origin.locator.display, "origin locator display");
+      requireText(origin.locator.display, "origin locator display", {
+        maximum: AIR_LIMITS.longText,
+      });
       if (!["local-only", "redacted"].includes(origin.locator.disclosure)) {
         fail("AIR_SCHEMA_INVALID", "Origin locator disclosure is invalid.");
       }
@@ -620,7 +667,12 @@ export function validateAirEnvelopeShape(value, {
       "migrator",
       "migrator_version",
     ]) {
-      requireText(migration[field], `migration.${field}`);
+      requireText(migration[field], `migration.${field}`, {
+        maximum:
+          field === "migrator"
+            ? AIR_LIMITS.identifier
+            : AIR_LIMITS.migrationText,
+      });
     }
     requireDigest(migration.source_digest, "migration.source_digest");
     if (
@@ -629,7 +681,16 @@ export function validateAirEnvelopeShape(value, {
         "migration.warnings",
         MAX_ENVELOPE_COLLECTION_ITEMS,
       ).some(
-        (warning) => typeof warning !== "string" || warning.length === 0,
+        (warning) => {
+          try {
+            requireText(warning, "migration warning", {
+              maximum: AIR_LIMITS.longText,
+            });
+            return false;
+          } catch {
+            return true;
+          }
+        },
       ) ||
       (migration.cleared_approval !== undefined &&
         typeof migration.cleared_approval !== "boolean")
@@ -800,21 +861,35 @@ export function hasRecognizedAirMarkdownCarrier(input) {
     if (!marker || !hasNewline) {
       continue;
     }
+    const isTerminal = offset === sourceText.length;
     try {
-      const manifest = parseIJson(
-        decodeBase64(marker[1], {
-          url: true,
-          code: "AIR_CARRIER_INVALID",
-          maxBytes: MAX_CARRIER_TOKEN_BYTES,
-        }),
-        { maxBytes: MAX_CARRIER_TOKEN_BYTES },
+      const manifestBytes = decodeBase64(marker[1], {
+        url: true,
+        code: "AIR_CARRIER_INVALID",
+        maxBytes: MAX_CARRIER_TOKEN_BYTES,
+      });
+      const manifestText = decodeUtf8(
+        manifestBytes,
+        "AIR_CARRIER_INVALID",
       );
+      const claimsObject =
+        isTerminal && manifestText.trimStart().startsWith("{");
+      let manifest;
+      try {
+        manifest = parseIJson(manifestBytes, {
+          maxBytes: MAX_CARRIER_TOKEN_BYTES,
+        });
+      } catch {
+        if (claimsObject) return true;
+        continue;
+      }
       if (
         manifest?.carrier === "air.md" &&
         manifest?.carrier_version === "1"
       ) {
         return true;
       }
+      if (claimsObject && plainRecord(manifest)) return true;
     } catch {
       // Marker-shaped ordinary prose is not a recognized AIR carrier.
     }
@@ -916,18 +991,37 @@ export function decodeAirMarkdown(input) {
     code: "AIR_CARRIER_INVALID",
     maxBytes: MAX_CARRIER_TOKEN_BYTES,
   });
-  const manifest = parseIJson(manifestBytes, { maxBytes: MAX_CARRIER_TOKEN_BYTES });
+  let manifest;
+  try {
+    manifest = parseIJson(manifestBytes, {
+      maxBytes: MAX_CARRIER_TOKEN_BYTES,
+    });
+  } catch (error) {
+    if (error?.code === "AIR_REQUEST_TOO_LARGE") throw error;
+    fail("AIR_CARRIER_INVALID", "AIR Markdown carrier JSON is invalid.");
+  }
   if (canonicalizeJcs(manifest) !== decodeUtf8(manifestBytes, "AIR_CARRIER_INVALID")) {
     fail("AIR_CARRIER_INVALID", "AIR Markdown carrier JSON is not JCS.");
   }
+  const carrierKeys = [
+    "carrier",
+    "carrier_version",
+    "envelope_without_source_content",
+    "logical_source",
+  ];
+  if (
+    !plainRecord(manifest) ||
+    carrierKeys.some((key) => !Object.hasOwn(manifest, key)) ||
+    Object.keys(manifest).some((key) => !carrierKeys.includes(key))
+  ) {
+    fail(
+      "AIR_CARRIER_INVALID",
+      "AIR Markdown carrier has unsupported or missing fields.",
+    );
+  }
   exactKeys(
     manifest,
-    [
-      "carrier",
-      "carrier_version",
-      "envelope_without_source_content",
-      "logical_source",
-    ],
+    carrierKeys,
     "AIR Markdown carrier",
   );
   if (manifest.carrier !== "air.md" || manifest.carrier_version !== "1") {

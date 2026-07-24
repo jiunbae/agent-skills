@@ -80,14 +80,22 @@ All public surfaces omit raw prompts, messages, reasoning, commands and
 arguments, results, stdout/stderr, attachments, file content, environment and
 credentials, branches, filesystem paths, and provider identifiers. Use only
 opaque server-instance session/snapshot IDs. The artifact must retain the
-metadata-only privacy manifest and omission counts.
+metadata-only privacy manifest and omission counts. Require every published
+catalog row to have a unique opaque session ID that resolves to exactly one
+server-private source authority. Never reissue a public snapshot ID during one
+server registry lifetime, even after its private continuation handle expires.
 
 **Refresh resources** takes another bounded catalog snapshot and, for the
 selected session, requests continuation from the last server-owned cursor.
 Incomplete trailing JSONL remains uncommitted until a later manual refresh.
-If the source was truncated, replaced, rotated, or rewritten, report the source
-change instead of joining histories. Provider lifecycle evidence is
-asymmetric; `unknown` is correct when no authoritative evidence exists.
+If a continuation source was truncated, replaced, rotated, or rewritten,
+report the source change instead of joining histories. Even when no prior
+snapshot handle is supplied, verify the server-owned last-published bounded
+continuity high-water before reusing an epoch or event IDs. Revalidate that
+high-water at every later publication cut and do not lower it when a fresh
+capture accepts a shorter prefix; start a new epoch with disjoint event IDs
+after a mismatch. Provider lifecycle evidence is asymmetric; `unknown` is
+correct when no authoritative evidence exists.
 
 Session graphs are evidence, not editable workflows. Do not enable step/edge
 editing, plan setup, Markdown export, source, or diff for them, and never expose

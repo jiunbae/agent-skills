@@ -6,9 +6,11 @@ import {
 } from "node:fs";
 import {
   appendFile,
+  link,
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -577,6 +579,259 @@ test("port-0 HTTP continues an unchanged session after catalog refresh", async (
   assert.equal(continued.generation, catalog.generation);
   assert.equal(continued.artifact.body.events.length, 2);
   assert.equal(continuedResponse.body.includes(directory), false);
+});
+
+test("port-0 HTTP gives fresh snapshots stable unchanged and reset rewrite identities", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-http-fresh-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceRoot = join(directory, "codex");
+  const source = join(sourceRoot, "fresh.jsonl");
+  const records = [
+    fixedRecord("session_meta", 0),
+    fixedRecord("event_msg", 1),
+    fixedRecord("event_msg", 2),
+  ];
+  await mkdir(sourceRoot, { recursive: true });
+  await writeFile(source, Buffer.concat(records));
+  let randomByte = 1;
+  const registry = createSessionRegistry({
+    roots: [{ path: sourceRoot, provider: "codex" }],
+    randomBytes(length) {
+      const bytes = Buffer.alloc(length, randomByte);
+      randomByte += 1;
+      return bytes;
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  const path =
+    `/air/v1/sessions/${sessionId}/snapshots?token=${encodeURIComponent(studio.token)}`;
+  const capture = () => http(address, {
+    method: "POST",
+    path,
+    body: JSON.stringify({ generation: catalog.generation }),
+    headers: { "Content-Type": "application/json" },
+  });
+  const firstResponse = await capture();
+  const unchangedResponse = await capture();
+  assert.equal(firstResponse.status, 200);
+  assert.equal(unchangedResponse.status, 200);
+  const first = JSON.parse(firstResponse.body);
+  const unchanged = JSON.parse(unchangedResponse.body);
+  assert.equal(
+    unchanged.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.deepEqual(
+    unchanged.artifact.body.events.map(({ id }) => id),
+    first.artifact.body.events.map(({ id }) => id),
+  );
+
+  const writer = openSync(source, "r+");
+  try {
+    writeSync(
+      writer,
+      fixedRecord("response_item", 1),
+      0,
+      records[1].byteLength,
+      records[0].byteLength,
+    );
+  } finally {
+    closeSync(writer);
+  }
+  const rewrittenResponse = await capture();
+  assert.equal(rewrittenResponse.status, 200);
+  const rewritten = JSON.parse(rewrittenResponse.body);
+  assert.notEqual(
+    rewritten.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    rewritten.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+  for (const response of [firstResponse, unchangedResponse, rewrittenResponse]) {
+    assert.equal(response.body.includes(directory), false);
+    assert.equal(response.body.includes("fresh.jsonl"), false);
+  }
+});
+
+test("port-0 HTTP keeps hard-linked rows unique and bound to one private target", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-http-links-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const left = join(directory, "left");
+  const right = join(directory, "right");
+  const sentinel = "AIR_HTTP_PRIVATE_LINK_CANARY";
+  const leftSource = join(left, `${sentinel}.jsonl`);
+  const rightSource = join(right, `${sentinel}.jsonl`);
+  await Promise.all([
+    mkdir(left, { recursive: true }),
+    mkdir(right, { recursive: true }),
+  ]);
+  await writeFile(leftSource, fixedRecord("session_meta", 0));
+  await link(leftSource, rightSource);
+  const registry = createSessionRegistry({
+    roots: [
+      { path: right, provider: "codex" },
+      { path: left, provider: "codex" },
+      { path: right, provider: "codex" },
+    ],
+    randomBytes: (length) => Buffer.alloc(length, 0x33),
+  });
+  await registry.catalog({ refresh: true });
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  const token = encodeURIComponent(studio.token);
+  const list = await http(address, {
+    path: `/air/v1/sessions?token=${token}`,
+  });
+  assert.equal(list.status, 200);
+  const catalog = JSON.parse(list.body);
+  assert.equal(catalog.items.length, 2);
+  assert.equal(new Set(catalog.items.map(({ id }) => id)).size, 2);
+
+  const capture = (id, generation = catalog.generation) => http(address, {
+    method: "POST",
+    path: `/air/v1/sessions/${id}/snapshots?token=${token}`,
+    body: JSON.stringify({ generation }),
+    headers: { "Content-Type": "application/json" },
+  });
+  const initial = await Promise.all(catalog.items.map(({ id }) => capture(id)));
+  assert.deepEqual(initial.map(({ status }) => status), [200, 200]);
+  assert.equal(
+    new Set(initial.map(({ body }) => JSON.parse(body).snapshot_id)).size,
+    2,
+  );
+
+  const replacement = join(directory, "replacement.jsonl");
+  await writeFile(replacement, fixedRecord("response_item", 1));
+  await rename(replacement, leftSource);
+  const targeted = await Promise.all(catalog.items.map(({ id }) => capture(id)));
+  assert.deepEqual(
+    targeted.map(({ status }) => status).sort(),
+    [200, 409],
+  );
+  assert.equal(
+    targeted
+      .filter(({ status }) => status === 409)
+      .every(({ body }) =>
+        JSON.parse(body).code === "AIR_SESSION_SOURCE_CHANGED"),
+    true,
+  );
+
+  const refreshedResponse = await http(address, {
+    path: `/air/v1/sessions?refresh=1&token=${token}`,
+  });
+  assert.equal(refreshedResponse.status, 200);
+  const refreshed = JSON.parse(refreshedResponse.body);
+  assert.equal(refreshed.items.length, 2);
+  assert.equal(new Set(refreshed.items.map(({ id }) => id)).size, 2);
+  const retainedId = catalog.items[
+    targeted.findIndex(({ status }) => status === 200)
+  ].id;
+  assert.equal(refreshed.items.some(({ id }) => id === retainedId), true);
+  const publicBytes = Buffer.concat([
+    list.body,
+    ...initial.map(({ body }) => body),
+    ...targeted.map(({ body }) => body),
+    refreshedResponse.body,
+  ]);
+  assert.equal(publicBytes.includes(directory), false);
+  assert.equal(publicBytes.includes(sentinel), false);
+});
+
+test("port-0 HTTP never rebinds an evicted snapshot handle", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-http-evict-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceRoot = join(directory, "codex");
+  const source = join(sourceRoot, "eviction-private.jsonl");
+  await mkdir(sourceRoot, { recursive: true });
+  await writeFile(source, fixedRecord("session_meta", 0));
+  const registry = createSessionRegistry({
+    roots: [{ path: sourceRoot, provider: "codex" }],
+    limits: { ...SESSION_LIMITS, maxSnapshotHandles: 1 },
+    randomBytes: (length) => Buffer.alloc(length, 0x55),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  const path =
+    `/air/v1/sessions/${sessionId}/snapshots?token=${encodeURIComponent(studio.token)}`;
+  const capture = (priorSnapshotId) => http(address, {
+    method: "POST",
+    path,
+    body: JSON.stringify({
+      generation: catalog.generation,
+      ...(priorSnapshotId
+        ? { prior_snapshot_id: priorSnapshotId }
+        : {}),
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+  const firstResponse = await capture();
+  const secondResponse = await capture();
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  const first = JSON.parse(firstResponse.body);
+  const second = JSON.parse(secondResponse.body);
+  assert.notEqual(second.snapshot_id, first.snapshot_id);
+  const staleBeforeReset = await capture(first.snapshot_id);
+  assert.equal(staleBeforeReset.status, 409);
+  assert.equal(
+    JSON.parse(staleBeforeReset.body).code,
+    "AIR_SESSION_STALE_SNAPSHOT",
+  );
+
+  const writer = openSync(source, "r+");
+  try {
+    writeSync(writer, fixedRecord("response_item", 0), 0, 128, 0);
+  } finally {
+    closeSync(writer);
+  }
+  const resetResponse = await capture();
+  assert.equal(resetResponse.status, 200);
+  const reset = JSON.parse(resetResponse.body);
+  assert.equal(
+    new Set([first.snapshot_id, second.snapshot_id, reset.snapshot_id]).size,
+    3,
+  );
+  assert.notEqual(
+    reset.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  for (const staleId of [first.snapshot_id, second.snapshot_id]) {
+    const stale = await capture(staleId);
+    assert.equal(stale.status, 409);
+    assert.equal(JSON.parse(stale.body).code, "AIR_SESSION_STALE_SNAPSHOT");
+    assert.equal(stale.body.includes(directory), false);
+  }
+  assert.equal(resetResponse.body.includes(directory), false);
+  assert.equal(resetResponse.body.includes("eviction-private"), false);
 });
 
 test("snapshot POST enforces the published global request concurrency bound", async (t) => {

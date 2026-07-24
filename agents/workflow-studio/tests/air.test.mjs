@@ -108,6 +108,19 @@ function rewriteCarrierManifest(carrier, mutate) {
   );
 }
 
+function rewriteCarrierJsonText(carrier, manifestText) {
+  const text = carrier.toString("utf8");
+  const marker = text.match(/<!-- air:v1 ([A-Za-z0-9_-]+) -->\n$/u);
+  assert.ok(marker);
+  return Buffer.from(
+    text.replace(
+      marker[1],
+      Buffer.from(manifestText, "utf8").toString("base64url"),
+    ),
+    "utf8",
+  );
+}
+
 function buildCarrierWithoutEncoder(artifact) {
   const source = artifact.body.source;
   const sourceBytes = Buffer.from(source.bytes_base64, "base64");
@@ -435,8 +448,9 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
     `${logical.toString("utf8")}\n<!-- air:v1 ordinary-prose -->\n`,
     "utf8",
   );
+  expectCode(() => recognizeAirSkillCarrier(invalid), "AIR_CARRIER_INVALID");
+  expectCode(() => importSkillBytesAsAir(invalid), "AIR_CARRIER_INVALID");
   for (const source of [
-    invalid,
     fenced,
     closedFenced,
     quoted,
@@ -545,6 +559,48 @@ test("recognized terminal AIR carriers propagate integrity failures", async () =
     expectCode(
       () => importSkillBytesAsAir(failure),
       "AIR_INTEGRITY_MISMATCH",
+    );
+  }
+});
+
+test("terminal AIR object claims fail closed for wrong or missing carrier discriminators", async () => {
+  const carrier = await readFile(
+    resolve(
+      ROOT,
+      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    ),
+  );
+  const claimed = [
+    rewriteCarrierJsonText(carrier, '{"carrier":"air.md"'),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      manifest.carrier_version = "2";
+    }),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      manifest.carrier = "air.json";
+    }),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      delete manifest.carrier_version;
+    }),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      delete manifest.carrier;
+    }),
+  ];
+  for (const source of claimed) {
+    expectCode(() => recognizeAirSkillCarrier(source), "AIR_CARRIER_INVALID");
+    expectCode(() => importSkillBytesAsAir(source), "AIR_CARRIER_INVALID");
+
+    const outer = migrateLegacyToAir(importSkillBytes(source, {
+      sourcePath: "claimed-inner/SKILL.md",
+    }));
+    outer.extensions = {};
+    resealContent(outer);
+    expectCode(
+      () => encodeAirMarkdownArtifact(outer),
+      "AIR_CARRIER_DUPLICATE",
+    );
+    expectCode(
+      () => decodeAirMarkdownArtifact(buildCarrierWithoutEncoder(outer)),
+      "AIR_CARRIER_DUPLICATE",
     );
   }
 });
@@ -755,6 +811,8 @@ test("native AIR validates without the optional legacy bridge, including session
     nodes: [sessionEventId],
     edges: [],
   };
+  sessionWithEvent.body.capture.snapshot_cursor.byte_offset =
+    eventBytes.byteLength;
   assert.equal(validateAirArtifact(resealContent(sessionWithEvent)), true);
   for (const mutate of [
     (body) => { body.capture.adapter.version = "AIR_PRIVATE_CANARY"; },

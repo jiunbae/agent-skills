@@ -94,16 +94,23 @@ messages, reasoning, commands and arguments, results, stdout/stderr,
 attachments, file contents, environment and credentials, branches, filesystem
 paths, and provider identifiers. Opaque server-instance item/snapshot IDs are
 used instead. The AIR artifact includes the metadata-only privacy manifest
-and omission counts.
+and omission counts. Every published catalog row has a unique opaque item ID
+that resolves to exactly one server-private source authority. Snapshot IDs are
+not reused during the server registry lifetime, even after an old private
+continuation handle expires.
 
 **Refresh resources** performs a new bounded catalog scan and refreshes the
 selected session snapshot from its last server-owned cursor when possible.
 Incomplete trailing JSONL is not committed until a later manual refresh.
-Truncation, replacement, rotation, or a mismatched prefix is reported as a
-source change instead of joining different histories. AIR Workbench does not
-watch files, follow a session live, signal a provider process, or infer that
-Codex has completed. Provider lifecycle evidence remains asymmetric and may be
-`unknown`.
+A continuation reports truncation, replacement, rotation, or a mismatched
+prefix as a source change instead of joining different histories. A fresh
+snapshot request without a prior handle also verifies the server-owned
+last-published bounded continuity high-water before reusing its epoch or event
+IDs. Every later publication cut revalidates that high-water, and a shorter
+fresh capture cannot lower it. A mismatch starts a new epoch with disjoint
+event IDs. AIR Workbench does not watch files, follow a session live, signal a
+provider process, or infer that Codex has completed. Provider lifecycle
+evidence remains asymmetric and may be `unknown`.
 
 ## Legacy compatibility
 
