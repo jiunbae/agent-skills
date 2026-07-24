@@ -492,6 +492,7 @@ export function createSessionRegistry({
   randomBytes = cryptoRandomBytes,
   now = Date.now,
   processEvidence = async () => null,
+  publicationCheckpoint = () => {},
 } = {}) {
   const boundedLimits = Object.freeze({ ...SESSION_LIMITS, ...limits });
   const normalizedRootKeys = new Set();
@@ -613,6 +614,7 @@ export function createSessionRegistry({
     info,
     item,
     attemptEpoch,
+    checkpoint = null,
   ) {
     for (
       let attempt = 0;
@@ -634,10 +636,12 @@ export function createSessionRegistry({
       const afterState = sourceStates.get(item.sourceKey);
       if (!afterState || afterState.epoch !== attemptEpoch) return false;
       if (afterState.published !== published) continue;
-      return (
+      const matches = (
         continuity !== null &&
         continuity.continuity === published.continuity
       );
+      if (matches && checkpoint !== null) checkpoint();
+      return matches;
     }
     return false;
   }
@@ -1398,9 +1402,34 @@ export function createSessionRegistry({
           publicationInfo,
           item,
           epoch,
+          publicationCheckpoint,
         ))
       ) {
         markSourceReset(item, epoch, identity(publicationInfo));
+        return sourceChanged(sessionId, requestedGeneration);
+      }
+      const finalPublicationInfo = await handle.stat({ bigint: true });
+      if (
+        identity(finalPublicationInfo) !== sourceIdentity ||
+        Number(finalPublicationInfo.size) < nextOffset
+      ) {
+        markSourceReset(item, epoch, identity(finalPublicationInfo));
+        return sourceChanged(sessionId, requestedGeneration);
+      }
+      const finalPublicationContinuity =
+        await boundedContinuityFingerprint(
+          handle,
+          finalPublicationInfo,
+          boundedLimits,
+          secret,
+          nextOffset,
+        );
+      if (
+        finalPublicationContinuity === null ||
+        finalPublicationContinuity.continuity !==
+          publicationContinuity.continuity
+      ) {
+        markSourceReset(item, epoch, identity(finalPublicationInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
       if (generation !== requestedGeneration) {

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 import {
+  AIR_APPROVAL_DOMAIN,
   AIR_CONTENT_DOMAIN,
   AIR_PROFILES,
   AIR_SCHEMA,
@@ -93,6 +94,28 @@ function resealContent(artifact) {
   delete artifact.integrity.envelope_digest;
   artifact.artifact_id = `urn:air:sha256:${contentDigest}`;
   return artifact;
+}
+
+function approveNativeAirPlan(artifact) {
+  delete artifact.body.approval;
+  const scope = "exact-native-run-envelope";
+  const statement =
+    "plan approved for native execution; graph not enforced";
+  artifact.body.approval = {
+    algorithm: "sha-256",
+    scope,
+    statement,
+    digest: domainDigest(AIR_APPROVAL_DOMAIN, {
+      format: artifact.format,
+      air_version: artifact.air_version,
+      kind: artifact.kind,
+      profile: artifact.profile,
+      body_without_approval: structuredClone(artifact.body),
+      scope,
+      statement,
+    }),
+  };
+  return resealContent(artifact);
 }
 
 function rewriteCarrierManifest(carrier, mutate) {
@@ -648,6 +671,72 @@ test("legacy approved-plan migration clears executable approval with provenance"
   assert.equal(Object.hasOwn(migratedLegacy, "approval"), false);
   assert.equal(validateArtifact(migratedLegacy), true);
   assert.equal(validateAirArtifact(air), true);
+});
+
+test("bridge-free AIR plans bind canonical Skill, safety, argv, and approval", async () => {
+  const workflow = await importSkillFile(
+    resolve(ROOT, "agents/background-implementer/SKILL.md"),
+  );
+  const nativePlans = new Map();
+  for (const agent of ["codex", "claude"]) {
+    const plan = migrateLegacyToAir(buildRunEnvelope({
+      workflow,
+      prompt: `${agent} native plan`,
+      agent,
+      cwd: ROOT,
+      safetyIntent: "read-only",
+    }));
+    plan.extensions = {};
+    plan.required_extensions = [];
+    delete plan.integrity.envelope_digest;
+    approveNativeAirPlan(plan);
+    assert.equal(validateAirArtifact(plan), true);
+    nativePlans.set(agent, plan);
+  }
+
+  const unrelatedSkill = structuredClone(nativePlans.get("codex"));
+  const unrelatedBytes = Buffer.from(
+    "---\nname: unrelated\ndescription: Unrelated Skill\n---\n",
+    "utf8",
+  );
+  unrelatedSkill.body.rendered_skill.bytes_base64 =
+    unrelatedBytes.toString("base64");
+  unrelatedSkill.body.rendered_skill.byte_length = unrelatedBytes.byteLength;
+  unrelatedSkill.body.rendered_skill.sha256 = createHash("sha256")
+    .update(unrelatedBytes)
+    .digest("hex");
+  expectCode(
+    () => validateAirArtifact(approveNativeAirPlan(unrelatedSkill)),
+    "AIR_SEMANTIC_INVALID",
+  );
+
+  const bypassArgv = structuredClone(nativePlans.get("codex"));
+  bypassArgv.body.command.argv = [
+    "exec",
+    "--json",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-",
+  ];
+  expectCode(
+    () => validateAirArtifact(approveNativeAirPlan(bypassArgv)),
+    "AIR_SEMANTIC_INVALID",
+  );
+
+  const mismatchedClaudeSafety = structuredClone(nativePlans.get("claude"));
+  mismatchedClaudeSafety.body.safety.permission_mode = "acceptEdits";
+  mismatchedClaudeSafety.body.command.argv = [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+    "--permission-mode",
+    "acceptEdits",
+  ];
+  expectCode(
+    () => validateAirArtifact(approveNativeAirPlan(mismatchedClaudeSafety)),
+    "AIR_SEMANTIC_INVALID",
+  );
 });
 
 test("legacy native trace migrates without upgrading observed or inferred truth", () => {

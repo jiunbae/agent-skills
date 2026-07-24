@@ -989,6 +989,69 @@ test("snapshot rejects an accepted middle rewrite at the final publication cut",
   });
 });
 
+test("snapshot rechecks newly accepted bytes after old high-water reconciliation", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "publication-new-suffix.jsonl");
+  const initial = Buffer.concat([
+    fixedRecord("session_meta", 0),
+    fixedRecord("event_msg", 1),
+  ]);
+  await writeFile(source, initial);
+  let armed = false;
+  let checkpointCalls = 0;
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+    publicationCheckpoint() {
+      if (!armed) return;
+      checkpointCalls += 1;
+      const writer = openSync(source, "r+");
+      try {
+        const replacement = fixedRecord("response_item", 2);
+        writeSync(
+          writer,
+          replacement,
+          0,
+          replacement.byteLength,
+          initial.byteLength,
+        );
+      } finally {
+        closeSync(writer);
+      }
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const input = {
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  };
+  const first = await registry.snapshot(input);
+  await appendFile(source, fixedRecord("event_msg", 2));
+  armed = true;
+
+  const changed = await registry.snapshot({
+    ...input,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(checkpointCalls, 1);
+  assert.equal(changed.source_changed, true);
+  assert.equal(changed.artifact, null);
+
+  armed = false;
+  const reset = await registry.snapshot(input);
+  assert.equal(reset.source_changed, false);
+  assert.notEqual(
+    reset.artifact.body.capture.snapshot_cursor.epoch,
+    first.artifact.body.capture.snapshot_cursor.epoch,
+  );
+  assert.equal(
+    reset.artifact.body.events.some(({ id }) =>
+      first.artifact.body.events.some((event) => event.id === id)),
+    false,
+  );
+  assert.equal(JSON.stringify({ first, changed, reset }).includes(dirs.root), false);
+});
+
 test("snapshot rejects a catalog refresh committed at the final publication cut", async (t) => {
   const dirs = await fixture(t);
   await writeFile(

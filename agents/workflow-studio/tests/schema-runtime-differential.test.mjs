@@ -553,6 +553,7 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
         artifact.body.command.argv = Array.from({ length: amount }, () => "");
       },
       maximum: 128,
+      runtimeAtLimit: false,
     },
     {
       label: "plan argv item length",
@@ -562,6 +563,7 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
         artifact.body.command.argv = ["x".repeat(amount)];
       },
       maximum: 8_192,
+      runtimeAtLimit: false,
     },
     {
       label: "native trace adapter identifier length",
@@ -607,7 +609,9 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
     );
     assert.deepEqual(
       runtimeDisposition(accepted),
-      { valid: true, code: null },
+      scenario.runtimeAtLimit === false
+        ? { valid: false, code: "AIR_SEMANTIC_INVALID" }
+        : { valid: true, code: null },
       `${scenario.label} at limit`,
     );
 
@@ -955,6 +959,60 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
       mutate(artifact) {
         artifact.body.command.executable =
           artifact.body.agent === "codex" ? "claude" : "codex";
+      },
+    },
+    {
+      label: "plan rendered Skill differs from its workflow",
+      source: plan,
+      mutate(artifact) {
+        const bytes = Buffer.from(
+          "---\nname: unrelated\ndescription: Unrelated Skill\n---\n",
+          "utf8",
+        );
+        artifact.body.rendered_skill.bytes_base64 = bytes.toString("base64");
+        artifact.body.rendered_skill.byte_length = bytes.byteLength;
+        artifact.body.rendered_skill.sha256 = createHash("sha256")
+          .update(bytes)
+          .digest("hex");
+      },
+    },
+    {
+      label: "plan Codex argv bypasses its declared sandbox",
+      source: plan,
+      mutate(artifact) {
+        artifact.body.command.argv = [
+          "exec",
+          "--json",
+          "--dangerously-bypass-approvals-and-sandbox",
+          "-",
+        ];
+      },
+    },
+    {
+      label: "plan Claude read-only intent uses write-capable permission",
+      source: plan,
+      mutate(artifact) {
+        artifact.body.agent = "claude";
+        artifact.body.safety = {
+          intent: "read-only",
+          provider: "claude",
+          permission_mode: "acceptEdits",
+          boundary: "tool-permission-policy-not-os-sandbox",
+        };
+        artifact.body.command = {
+          executable: "claude",
+          argv: [
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--no-session-persistence",
+            "--permission-mode",
+            "acceptEdits",
+          ],
+          stdin: "approved-prompt-context",
+          shell: false,
+        };
       },
     },
     {

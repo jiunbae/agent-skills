@@ -911,10 +911,12 @@ function validateSafety(value, agent, label) {
     return;
   }
   record(value, ["intent", "provider", "permission_mode", "boundary"], [], label);
+  const expectedPermissionMode =
+    value.intent === "read-only" ? "plan" : "acceptEdits";
   if (
     value.provider !== "claude" ||
     !["read-only", "workspace-write"].includes(value.intent) ||
-    !["plan", "acceptEdits"].includes(value.permission_mode) ||
+    value.permission_mode !== expectedPermissionMode ||
     value.boundary !== "tool-permission-policy-not-os-sandbox"
   ) {
     throw airError("AIR_SEMANTIC_INVALID", `${label} is invalid.`);
@@ -949,12 +951,23 @@ function validatePlanBody(artifact) {
   }
   digest(body.workflow_content_digest, "plan workflow digest");
   byteRecordSemantic(body.prompt, "plan prompt");
-  byteRecordSemantic(body.rendered_skill, "plan rendered Skill", ["delivery"]);
+  const renderedSkill = byteRecordSemantic(
+    body.rendered_skill,
+    "plan rendered Skill",
+    ["delivery"],
+  );
+  const canonicalSkill = Buffer.from(
+    decodeBase64(body.workflow.body.source.bytes_base64),
+  );
   if (
     body.rendered_skill.delivery !== "prompt-context" ||
+    !renderedSkill.equals(canonicalSkill) ||
     !["codex", "claude"].includes(body.agent)
   ) {
-    throw airError("AIR_SEMANTIC_INVALID", "Plan delivery or agent is invalid.");
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      "Plan rendered Skill, delivery, or agent is invalid.",
+    );
   }
   locator(body.cwd, "plan cwd");
   validateSafety(body.safety, body.agent, "plan safety");
@@ -964,11 +977,31 @@ function validatePlanBody(artifact) {
     "plan command argv",
     AIR_LIMITS.commandArgv,
   );
+  const expectedArgv = body.agent === "codex"
+    ? [
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--sandbox",
+        body.safety.sandbox,
+        "-C",
+        body.cwd.display,
+        "-",
+      ]
+    : [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--permission-mode",
+        body.safety.permission_mode,
+      ];
   if (
     body.command.executable !== body.agent ||
     body.command.stdin !== "approved-prompt-context" ||
     body.command.shell !== false ||
-    commandArgv.length === 0
+    stableStringify(commandArgv) !== stableStringify(expectedArgv)
   ) {
     throw airError("AIR_SEMANTIC_INVALID", "Plan command is invalid.");
   }
