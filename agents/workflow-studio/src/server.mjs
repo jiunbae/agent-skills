@@ -784,6 +784,17 @@ export function createStudioServer({
             404,
             "Resource not found",
           );
+        } else if (
+          skillItemMatch !== null &&
+          error?.code === "AIR_INTEGRITY_MISMATCH"
+        ) {
+          sendProblem(
+            response,
+            method,
+            "AIR_INTEGRITY_MISMATCH",
+            422,
+            "AIR artifact integrity mismatch",
+          );
         } else if (!sessionErrorResponse(response, method, error)) {
           sendProblem(
             response,

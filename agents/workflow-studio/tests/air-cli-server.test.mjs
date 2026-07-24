@@ -225,6 +225,65 @@ test("air import recognizes an activated carrier by bytes and does not nest it",
   }
 });
 
+test("mixed-newline carriers round-trip through CLI and integrity failures reach catalog", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-mixed-cli-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = Buffer.from(
+    "---\r\nname: air-mixed-cli\ndescription: Mixed newline CLI fixture\r\n---\n\n## Workflow\r\n### Step 1: Inspect\nInspect safely.\r\n",
+    "utf8",
+  );
+  const skillPath = join(directory, "SKILL.md");
+  const jsonPath = join(directory, "mixed.air.json");
+  const carrierPath = join(directory, "mixed.air.md");
+  await writeFile(skillPath, source);
+  await invoke(AIR, ["import", skillPath, "--out", jsonPath]);
+  await invoke(AIR, ["convert", jsonPath, "--out", carrierPath]);
+  const carrier = await readFile(carrierPath);
+  assert.deepEqual(decodeAirMarkdownArtifact(carrier).logicalSource, source);
+  assert.match(carrier.toString("utf8"), /-->\n$/u);
+
+  const activatedPath = join(directory, "ACTIVATED.md");
+  const reopenedPath = join(directory, "reopened.air.json");
+  const repeatedPath = join(directory, "repeated.air.md");
+  await writeFile(activatedPath, carrier);
+  await invoke(AIR, ["import", activatedPath, "--out", reopenedPath]);
+  await invoke(AIR, ["convert", reopenedPath, "--out", repeatedPath]);
+  assert.deepEqual(await readFile(repeatedPath), carrier);
+
+  const corrupted = Buffer.from(carrier);
+  const bodyOffset = source.indexOf("Inspect safely.", 0, "utf8");
+  assert.ok(bodyOffset >= 0);
+  corrupted[bodyOffset] = "i".charCodeAt(0);
+  const corruptPath = join(directory, "catalog", "broken", "SKILL.md");
+  await put(corruptPath, corrupted);
+  await assert.rejects(
+    run(process.execPath, [
+      AIR,
+      "import",
+      corruptPath,
+      "--out",
+      join(directory, "corrupt.air.json"),
+    ], { cwd: ROOT }),
+    (error) => error.stderr.includes('"code":"AIR_INTEGRITY_MISMATCH"'),
+  );
+
+  const catalog = createSkillCatalog({
+    roots: [{
+      path: join(directory, "catalog"),
+      label: "corrupt-carrier",
+      kind: "explicit",
+    }],
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, 1);
+  assert.ok(
+    snapshot.items[0].diagnostics.some(
+      (item) =>
+        item.code === "AIR_CATALOG_IMPORT_AIR_INTEGRITY_MISMATCH",
+    ),
+  );
+});
+
 test("AIR read-only routes require exact token, expose bounded catalog/schema data, and return validated artifacts", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-server-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -334,6 +393,57 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
   );
   assert.equal(write.status, 405);
   assert.match(write.headers["content-type"], /^application\/problem\+json/u);
+
+  const integrityRoot = join(directory, "integrity-root");
+  const checkedCarrier = await readFile(join(
+    ROOT,
+    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+  ));
+  const checkedSource = decodeAirMarkdownArtifact(checkedCarrier).logicalSource;
+  const corruptedCarrier = Buffer.from(checkedCarrier);
+  const changedByte = checkedSource.indexOf("Inspect the requested inputs.");
+  assert.ok(changedByte >= 0);
+  corruptedCarrier[changedByte] = "i".charCodeAt(0);
+  await put(join(integrityRoot, "broken", "SKILL.md"), corruptedCarrier);
+  const integrityCatalog = createSkillCatalog({
+    roots: [{
+      path: integrityRoot,
+      label: "integrity-fixture",
+      kind: "explicit",
+    }],
+  });
+  const integritySnapshot = await integrityCatalog.initialize();
+  assert.equal(integritySnapshot.item_count, 1);
+  const integrityStudio = createStudioServer({
+    artifact: importSkillBytes(SKILL, { sourcePath: "bootstrap/SKILL.md" }),
+    assetsDir: ASSETS,
+    schemasDir: SCHEMAS,
+    catalog: integrityCatalog,
+  });
+  const integrityAddress = await integrityStudio.listen();
+  t.after(() => integrityStudio.close());
+  const integrityPath =
+    `/air/v1/skills/${integritySnapshot.items[0].id}/artifact` +
+    `?token=${encodeURIComponent(integrityStudio.token)}`;
+  const integrityResponse = await http(integrityAddress, integrityPath);
+  assert.equal(integrityResponse.status, 422);
+  assert.match(
+    integrityResponse.headers["content-type"],
+    /^application\/problem\+json/u,
+  );
+  assert.deepEqual(JSON.parse(integrityResponse.body), {
+    type: "https://open330.github.io/air/problems/air-integrity-mismatch",
+    title: "AIR artifact integrity mismatch",
+    status: 422,
+    code: "AIR_INTEGRITY_MISMATCH",
+  });
+  assert.equal(integrityResponse.body.includes(Buffer.from(directory)), false);
+  assert.equal(integrityResponse.body.includes(checkedSource), false);
+  const integrityHead = await http(integrityAddress, integrityPath, {
+    method: "HEAD",
+  });
+  assert.equal(integrityHead.status, 422);
+  assert.equal(integrityHead.body.byteLength, 0);
 });
 
 test("AIR Workbench starts with zero inputs, default discovery, and an explicit plaintext-LAN warning", async (t) => {

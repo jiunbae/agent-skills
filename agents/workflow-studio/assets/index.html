@@ -43,15 +43,19 @@
         </div>
       </header>
 
-      <div class="mobile-switcher" role="tablist" aria-label="Workbench region">
-        <button type="button" data-mobile-region="graph" role="tab"
-          aria-selected="true">Graph</button>
-        <button type="button" data-mobile-region="inspector" role="tab"
-          aria-selected="false" tabindex="-1">Inspector</button>
-        <button type="button" data-mobile-region="panel" role="tab"
-          aria-selected="false" tabindex="-1">Panel</button>
-        <button type="button" data-mobile-region="resources" role="tab"
-          aria-selected="false" tabindex="-1">Resources</button>
+      <div class="mobile-switcher" role="toolbar"
+        aria-label="Workbench regions">
+        <button type="button" data-mobile-region="graph"
+          aria-controls="workspace" aria-pressed="true">Graph</button>
+        <button type="button" data-mobile-region="inspector"
+          aria-controls="inspectorRegion" aria-pressed="false"
+          tabindex="-1">Inspector</button>
+        <button type="button" data-mobile-region="panel"
+          aria-controls="bottomPanel" aria-pressed="false"
+          tabindex="-1">Panel</button>
+        <button type="button" data-mobile-region="resources"
+          aria-controls="resourcesRegion" aria-pressed="false"
+          tabindex="-1">Resources</button>
       </div>
 
       <aside id="resourcesRegion" class="resources region" data-region="resources"
@@ -85,9 +89,8 @@
       </aside>
 
       <main id="workspace" class="canvas-region region" data-region="canvas"
-        tabindex="-1">
-        <section id="viewGraph" class="view-panel graph-card" role="tabpanel"
-          aria-labelledby="tabGraph">
+        tabindex="-1" aria-label="Graph">
+        <section id="viewGraph" class="view-panel graph-card">
           <div class="canvas-titlebar">
             <div>
               <p id="graphEyebrow" class="eyebrow">Declared flow</p>
@@ -141,14 +144,15 @@
       </main>
 
       <aside id="inspectorRegion" class="inspector region" data-region="inspector"
-        tabindex="-1" aria-labelledby="inspectorHeading">
+        tabindex="-1" aria-label="Inspector">
         <nav class="view-tabs" aria-label="Inspector views" role="tablist">
           <button id="tabGraph" type="button" role="tab" aria-selected="true"
             aria-controls="propertiesPanel" data-view="graph">Properties</button>
           <button id="tabPlan" type="button" role="tab" aria-selected="false"
             aria-controls="viewPlan" data-view="plan" tabindex="-1">Run setup</button>
         </nav>
-        <section id="propertiesPanel" class="inspector-content">
+        <section id="propertiesPanel" class="inspector-content" role="tabpanel"
+          aria-labelledby="tabGraph">
           <div class="section-heading inspector-heading">
             <div>
               <p id="inspectorEyebrow" class="eyebrow">Selection</p>

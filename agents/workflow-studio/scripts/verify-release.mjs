@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertBrowserTapSummary,
   assertConfiguredBrowserModule,
-  assertTapSummary,
+  assertTapFileInventory,
   fixedNodeTestEnvironment,
 } from "./release-gate.mjs";
 
@@ -45,9 +45,9 @@ const PRIVACY_TOTAL_BYTES = 64 * 1024 * 1024;
 const PRIVACY_TIME_MS = 5_000;
 const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
-  "air-cli-server.test.mjs": 6,
+  "air-cli-server.test.mjs": 7,
   "air-spec.test.mjs": 2,
-  "air.test.mjs": 11,
+  "air.test.mjs": 12,
   "catalog.test.mjs": 6,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
@@ -160,22 +160,35 @@ async function verifyPackageAndSource() {
     (total, count) => total + count,
     0,
   );
-  const componentOutput = run(
+  announce(
     `Run isolated component suite (${testNames.length} files, ${expectedTests} tests)`,
-    process.execPath,
-    [
-      "--test",
-      "--test-reporter=tap",
-      ...testNames.map((name) => join(COMPONENT, "tests", name)),
-    ],
-    COMPONENT,
-    {
-      ...fixedNodeTestEnvironment(process.env),
-      TMPDIR: testTmp,
-    },
-    true,
   );
-  assertTapSummary(componentOutput, "component suite", expectedTests);
+  const componentEnvironment = {
+    ...fixedNodeTestEnvironment(process.env),
+    TMPDIR: testTmp,
+  };
+  const componentOutputs = new Map();
+  for (const name of testNames) {
+    const output = execute(
+      process.execPath,
+      [
+        "--test",
+        "--test-reporter=tap",
+        join(COMPONENT, "tests", name),
+      ],
+      COMPONENT,
+      componentEnvironment,
+      true,
+    );
+    process.stdout.write(output);
+    componentOutputs.set(name, output);
+  }
+  const componentResult = assertTapFileInventory(
+    componentOutputs,
+    COMPONENT_TEST_INVENTORY,
+  );
+  assert.equal(componentResult.tests, expectedTests);
+  assert.equal(componentResult.pass, expectedTests);
   assert.deepEqual(readdirSync(testTmp), [], "The component suite left TMPDIR residue.");
   removeTemporary(testTmp);
 

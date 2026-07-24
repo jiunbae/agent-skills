@@ -16,6 +16,7 @@ import {
 } from "../assets/editor-model.mjs";
 import {
   decodeAirMarkdownArtifact,
+  importSkillBytesAsAir,
   migrateLegacyToAir,
   validateAirArtifact,
 } from "../src/air.mjs";
@@ -96,6 +97,107 @@ async function browserRuntime() {
   };
 }
 
+const MOBILE_REGIONS = Object.freeze([
+  {
+    name: "Graph",
+    region: "graph",
+    target: "workspace",
+    targetRole: "main",
+    targetName: "Graph",
+  },
+  {
+    name: "Inspector",
+    region: "inspector",
+    target: "inspectorRegion",
+    targetRole: "complementary",
+    targetName: "Inspector",
+  },
+  {
+    name: "Panel",
+    region: "panel",
+    target: "bottomPanel",
+    targetRole: "region",
+    targetName: "Problems, evidence, source, and diff",
+  },
+  {
+    name: "Resources",
+    region: "resources",
+    target: "resourcesRegion",
+    targetRole: "complementary",
+    targetName: "Resources",
+  },
+]);
+
+function accessibilityProperty(node, name) {
+  return node?.properties?.find((property) => property.name === name)?.value;
+}
+
+async function assertMobileRegionAccessibility(page, cdp, expected) {
+  const selector =
+    `.mobile-switcher [data-mobile-region="${expected.region}"]`;
+  const control = page.locator(selector);
+  assert.equal(await control.getAttribute("role"), null);
+  assert.equal(await control.getAttribute("aria-controls"), expected.target);
+  await control.click();
+  assert.equal(await control.getAttribute("aria-pressed"), "true");
+  for (const candidate of MOBILE_REGIONS) {
+    assert.equal(
+      await page.locator(`#${candidate.target}`).isVisible(),
+      candidate === expected,
+    );
+  }
+
+  const { nodes } = await cdp.send("Accessibility.getFullAXTree");
+  const toolbar = nodes.find(
+    (node) =>
+      node.role?.value === "toolbar" &&
+      node.name?.value === "Workbench regions",
+  );
+  assert.ok(toolbar, "mobile region controls must expose one named toolbar");
+  const button = nodes.find(
+    (node) =>
+      node.role?.value === "button" &&
+      node.name?.value === expected.name &&
+      accessibilityProperty(node, "pressed")?.value === "true",
+  );
+  assert.ok(button, `${expected.name} must be the pressed accessible control`);
+  assert.equal(
+    nodes.filter(
+      (node) =>
+        node.role?.value === "button" &&
+        MOBILE_REGIONS.some((region) => region.name === node.name?.value) &&
+        accessibilityProperty(node, "pressed")?.value === "true",
+    ).length,
+    1,
+  );
+  const controls = accessibilityProperty(button, "controls");
+  assert.equal(controls?.value, expected.target);
+  assert.deepEqual(
+    controls?.relatedNodes?.map((node) => node.idref),
+    [expected.target],
+  );
+  assert.ok(
+    nodes.some(
+      (node) =>
+        node.role?.value === expected.targetRole &&
+        node.name?.value?.toLocaleLowerCase() ===
+          expected.targetName.toLocaleLowerCase(),
+    ),
+    `${expected.name} must expose its visible controlled region`,
+  );
+  if (expected.region === "graph") {
+    assert.equal(
+      nodes.some(
+        (node) =>
+          node.role?.value === "tabpanel" &&
+          node.name?.value === "Properties",
+      ),
+      false,
+      "the Graph region must not be exposed as a Properties tabpanel",
+    );
+  }
+}
+
 async function downloadAndValidate(page, selector, filename) {
   const pending = page.waitForEvent("download");
   await page.locator(selector).click();
@@ -106,7 +208,7 @@ async function downloadAndValidate(page, selector, filename) {
   const validationPath = resolve(dirname(path), filename);
   await copyFile(path, validationPath);
   validateWithCli(validationPath);
-  return path;
+  return validationPath;
 }
 
 function skillItem(id, hash, sourceKind) {
@@ -345,6 +447,7 @@ async function runPass(browser, executablePath, pass) {
     viewport: { width: 1440, height: 900 },
   });
   const page = await context.newPage();
+  const accessibilitySession = await context.newCDPSession(page);
   const errors = [];
   page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
   page.on("console", (message) => {
@@ -719,7 +822,7 @@ async function runPass(browser, executablePath, pass) {
         );
         assert.equal(
           await page.locator('.mobile-switcher [data-mobile-region="inspector"]')
-            .getAttribute("aria-selected"),
+            .getAttribute("aria-pressed"),
           "true",
         );
         assert.equal(await page.locator("#inspectorRegion").isVisible(), true);
@@ -730,7 +833,7 @@ async function runPass(browser, executablePath, pass) {
         );
         assert.equal(
           await page.locator('.mobile-switcher [data-mobile-region="resources"]')
-            .getAttribute("aria-selected"),
+            .getAttribute("aria-pressed"),
           "true",
         );
         assert.equal(await page.locator("#resourcesRegion").isVisible(), true);
@@ -751,6 +854,13 @@ async function runPass(browser, executablePath, pass) {
           ),
           1,
         );
+        for (const expected of MOBILE_REGIONS) {
+          await assertMobileRegionAccessibility(
+            page,
+            accessibilitySession,
+            expected,
+          );
+        }
         await page.locator(
           '.mobile-switcher [data-mobile-region="graph"]',
         ).click();
@@ -820,6 +930,58 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
   const skillsPattern = "**/air/v1/skills?*";
   const sessionsPattern = "**/air/v1/sessions?*";
   try {
+    const checkedCarrier = await readFile(
+      resolve(STUDIO_ROOT, "examples/hello-agent/workflow.air.md"),
+    );
+    const corruptCarrier = Buffer.from(checkedCarrier);
+    corruptCarrier[0] = corruptCarrier[0] === 0x2d ? 0x23 : 0x2d;
+    assert.throws(
+      () => importSkillBytesAsAir(corruptCarrier),
+      (error) => error?.code === "AIR_INTEGRITY_MISMATCH",
+    );
+    const corruptCatalog = {
+      ...catalog,
+      importAirArtifact: async () => importSkillBytesAsAir(corruptCarrier),
+    };
+    const corruptStudio = createStudioServer({
+      artifact: first,
+      assetsDir: ASSETS_DIR,
+      schemasDir: SCHEMAS_DIR,
+      catalog: corruptCatalog,
+      sessionRegistry,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const corruptAddress = await corruptStudio.listen();
+    const corruptPage = await context.newPage();
+    try {
+      await corruptPage.goto(
+        `http://127.0.0.1:${corruptAddress.port}/?token=${
+          encodeURIComponent(corruptStudio.token)
+        }`,
+        { waitUntil: "domcontentloaded" },
+      );
+      await corruptPage.waitForFunction(
+        () => document.querySelector("#resourceStatus")?.textContent
+          ?.includes("AIR_INTEGRITY_MISMATCH"),
+      );
+      assert.match(
+        (await corruptPage.locator("#resourceStatus").textContent()) ?? "",
+        /Could not open resource\. \[AIR_INTEGRITY_MISMATCH\] Request failed with HTTP 422\./u,
+      );
+      assert.match(
+        (await corruptPage.locator("#statusMessage").textContent()) ?? "",
+        /Could not open resource: \[AIR_INTEGRITY_MISMATCH\] Request failed with HTTP 422\./u,
+      );
+      assert.doesNotMatch(
+        (await corruptPage.locator("body").innerText()) ?? "",
+        /air:v1|envelope_without_source_content/u,
+      );
+    } finally {
+      await corruptPage.close();
+      await corruptStudio.close();
+    }
+
     const capabilitiesPage = await context.newPage();
     await capabilitiesPage.route(capabilitiesPattern, failDiscovery);
     await capabilitiesPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
@@ -1051,6 +1213,70 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     } finally {
       await explicitPage.close();
       await explicitStudio.close();
+    }
+
+    const mixedSource = Buffer.from(
+      "---\r\nname: browser-mixed\ndescription: Mixed newline browser fixture\r\n" +
+        "---\n\n## Workflow\r\n### Step 1: Inspect\nInspect safely.\r\n",
+      "utf8",
+    );
+    const mixedArtifact = migrateLegacyToAir(importSkillBytes(mixedSource, {
+      sourcePath: "synthetic-mixed/SKILL.md",
+    }));
+    assert.equal(mixedArtifact.body.source.newline, "mixed");
+    const mixedStudio = createStudioServer({
+      artifact: mixedArtifact,
+      assetsDir: ASSETS_DIR,
+      schemasDir: SCHEMAS_DIR,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const mixedAddress = await mixedStudio.listen();
+    const mixedPage = await context.newPage();
+    try {
+      await mixedPage.goto(
+        `http://127.0.0.1:${mixedAddress.port}/?token=${
+          encodeURIComponent(mixedStudio.token)
+        }&initial=explicit`,
+        { waitUntil: "domcontentloaded" },
+      );
+      await mixedPage.locator(".react-flow.air-flow-ready")
+        .waitFor({ state: "visible" });
+      assert.equal(await mixedPage.locator(".react-flow__node").count(), 1);
+      const carrierPath = await downloadAndValidate(
+        mixedPage,
+        "#downloadMarkdown",
+        "workflow.air.md",
+      );
+      const carrier = await readFile(carrierPath);
+      const decoded = decodeAirMarkdownArtifact(carrier);
+      assert.deepEqual(decoded.logicalSource, mixedSource);
+      assert.equal(carrier.subarray(-4).toString("utf8"), "-->\n");
+
+      const reopenedPath = resolve(dirname(carrierPath), "reopened.air.json");
+      const reopenedResult = spawnSync(
+        process.execPath,
+        [AIR_CLI, "convert", carrierPath, "--out", reopenedPath],
+        { cwd: STUDIO_ROOT, encoding: "utf8" },
+      );
+      assert.equal(
+        reopenedResult.status,
+        0,
+        `AIR CLI reopen failed: ${
+          reopenedResult.stderr || reopenedResult.stdout
+        }`,
+      );
+      validateWithCli(reopenedPath);
+      const reopened = JSON.parse(await readFile(reopenedPath, "utf8"));
+      validateAirArtifact(reopened);
+      assert.equal(reopened.body.source.newline, "mixed");
+      assert.deepEqual(
+        Buffer.from(reopened.body.source.bytes_base64, "base64"),
+        mixedSource,
+      );
+    } finally {
+      await mixedPage.close();
+      await mixedStudio.close();
     }
 
     const skillSource = await readFile(BACKGROUND_IMPLEMENTER, "utf8");

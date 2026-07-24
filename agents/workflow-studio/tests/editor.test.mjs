@@ -1511,6 +1511,10 @@ test("browser AIR Markdown export matches native context safety", () => {
       "---\r\nname: closed\r\ndescription: Closed fence\r\n---\r\n\r\n~~~text\r\nok\r\n~~~\r\n",
       "utf8",
     ),
+    Buffer.from(
+      "---\r\nname: mixed\ndescription: Mixed newline source\r\n---\n\n## Workflow\r\n### Step 1: Inspect\nInspect safely.\r\n",
+      "utf8",
+    ),
   ]) {
     const state = createEditorState(
       migrateLegacyToAir(importSkillBytes(source, {
@@ -1519,6 +1523,12 @@ test("browser AIR Markdown export matches native context safety", () => {
     );
     const decoded = decodeAirMarkdownArtifact(buildAirMarkdownBytes(state));
     assert.deepEqual(decoded.logicalSource, source);
+    if (decoded.artifact.body.source.newline === "mixed") {
+      assert.match(
+        Buffer.from(buildAirMarkdownBytes(state)).toString("utf8"),
+        /-->\n$/u,
+      );
+    }
     validateAirArtifact(decoded.artifact);
   }
 });
@@ -1763,6 +1773,31 @@ test("static editor exposes semantic views, live status, and labeled controls", 
   }
   assert.match(html, /role="tablist"/);
   assert.match(html, /role="tabpanel"/);
+  assert.match(
+    html,
+    /class="mobile-switcher" role="toolbar"\s+aria-label="Workbench regions"/,
+  );
+  for (const [region, target] of [
+    ["graph", "workspace"],
+    ["inspector", "inspectorRegion"],
+    ["panel", "bottomPanel"],
+    ["resources", "resourcesRegion"],
+  ]) {
+    assert.match(
+      html,
+      new RegExp(
+        `data-mobile-region="${region}"\\s+aria-controls="${target}"`,
+      ),
+    );
+  }
+  assert.doesNotMatch(
+    html,
+    /id="viewGraph"[^>]*role="tabpanel"/,
+  );
+  assert.match(
+    html,
+    /id="propertiesPanel"[^>]*role="tabpanel"\s+aria-labelledby="tabGraph"/,
+  );
   assert.match(html, /aria-live="polite"/);
   assert.match(html, /aria-atomic="true"/);
   assert.match(html, /<ol id="workflowOutline"/);

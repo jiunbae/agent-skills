@@ -95,6 +95,19 @@ function resealContent(artifact) {
   return artifact;
 }
 
+function rewriteCarrierManifest(carrier, mutate) {
+  const text = carrier.toString("utf8");
+  const marker = text.match(/<!-- air:v1 ([A-Za-z0-9_-]+) -->\n$/u);
+  assert.ok(marker);
+  const manifest = parseIJson(decodeBase64(marker[1], { url: true }));
+  mutate(manifest);
+  const token = Buffer.from(canonicalizeJcs(manifest), "utf8").toString("base64url");
+  return Buffer.from(
+    text.replace(marker[1], token),
+    "utf8",
+  );
+}
+
 function completedTrace() {
   return {
     ir_version: "1.0",
@@ -206,6 +219,7 @@ test("AIR Markdown retains LF, CRLF, final-newline, Unicode, and marker prose", 
   const variants = [
     Buffer.from("---\nname: air-lf\ndescription: no final newline\n---\n\n## Workflow\n### Step 1: 한글\nBody", "utf8"),
     Buffer.from("---\r\nname: air-crlf\r\ndescription: CRLF\r\n---\r\n\r\n## Workflow\r\n### Step 1: One\r\nBody\r\n", "utf8"),
+    Buffer.from("---\r\nname: air-mixed\ndescription: mixed\r\n---\n\n## Workflow\r\n### Step 1: One\nBody\r\n", "utf8"),
     Buffer.from("---\nname: air-marker\ndescription: marker prose\n---\n\n<!-- air:v1 fake -->\n\n## Workflow\n### Step 1: One\nBody\n", "utf8"),
   ];
   for (const [index, source] of variants.entries()) {
@@ -217,6 +231,14 @@ test("AIR Markdown retains LF, CRLF, final-newline, Unicode, and marker prose", 
     const decoded = decodeAirMarkdownArtifact(carrier);
     assert.deepEqual(decoded.logicalSource, source);
     assert.deepEqual(encodeAirMarkdownArtifact(decoded.artifact), carrier);
+    if (air.body.source.newline === "mixed") {
+      assert.match(carrier.toString("utf8"), /-->\n$/u);
+      let activated = carrier;
+      for (let cycle = 0; cycle < 3; cycle += 1) {
+        activated = encodeAirMarkdownArtifact(importSkillBytesAsAir(activated));
+        assert.deepEqual(activated, carrier);
+      }
+    }
   }
 
   const fencedSource = Buffer.from(
@@ -368,6 +390,46 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
   );
 });
 
+test("recognized terminal AIR carriers propagate integrity failures", async () => {
+  const carrier = await readFile(
+    resolve(
+      ROOT,
+      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    ),
+  );
+  const decoded = decodeAirMarkdownArtifact(carrier);
+  const sourceMismatch = Buffer.from(carrier);
+  sourceMismatch[0] = sourceMismatch[0] === 0x2d ? 0x23 : 0x2d;
+  const failures = [
+    sourceMismatch,
+    rewriteCarrierManifest(carrier, (manifest) => {
+      manifest.envelope_without_source_content.integrity.content_digest =
+        "0".repeat(64);
+      manifest.envelope_without_source_content.artifact_id =
+        `urn:air:sha256:${"0".repeat(64)}`;
+    }),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      manifest.envelope_without_source_content.artifact_id =
+        `urn:air:sha256:${"0".repeat(64)}`;
+    }),
+    rewriteCarrierManifest(carrier, (manifest) => {
+      manifest.envelope_without_source_content.integrity.envelope_digest =
+        "0".repeat(64);
+    }),
+  ];
+  assert.ok(decoded.logicalSource.length > 0);
+  for (const failure of failures) {
+    expectCode(
+      () => recognizeAirSkillCarrier(failure),
+      "AIR_INTEGRITY_MISMATCH",
+    );
+    expectCode(
+      () => importSkillBytesAsAir(failure),
+      "AIR_INTEGRITY_MISMATCH",
+    );
+  }
+});
+
 test("AIR Markdown refuses plan and trace carriers", async () => {
   const workflow = await importSkillFile(
     resolve(ROOT, "agents/background-implementer/SKILL.md"),
@@ -431,6 +493,51 @@ test("native AIR validates without the optional legacy bridge, including session
   nativeWorkflow.extensions = {};
   delete nativeWorkflow.integrity.envelope_digest;
   assert.equal(validateAirArtifact(nativeWorkflow), true);
+  const sourceBytes = Buffer.from(
+    nativeWorkflow.body.source.bytes_base64,
+    "base64",
+  );
+  const fullOpaque = structuredClone(nativeWorkflow);
+  fullOpaque.body.source_maps = [];
+  fullOpaque.body.opaque_ranges = [{
+    start_byte: 0,
+    end_byte: sourceBytes.length,
+    sha256: createHash("sha256").update(sourceBytes).digest("hex"),
+    reason: "The complete authoritative source remains opaque.",
+  }];
+  assert.equal(validateAirArtifact(resealContent(fullOpaque)), true);
+
+  const duplicateMap = structuredClone(nativeWorkflow);
+  duplicateMap.body.source_maps.push(
+    structuredClone(duplicateMap.body.source_maps[0]),
+  );
+  expectCode(
+    () => validateAirArtifact(resealContent(duplicateMap)),
+    "AIR_SEMANTIC_INVALID",
+  );
+  const partitionGap = structuredClone(fullOpaque);
+  partitionGap.body.opaque_ranges[0].end_byte -= 1;
+  partitionGap.body.opaque_ranges[0].sha256 = createHash("sha256")
+    .update(sourceBytes.subarray(0, sourceBytes.length - 1))
+    .digest("hex");
+  expectCode(
+    () => validateAirArtifact(resealContent(partitionGap)),
+    "AIR_SEMANTIC_INVALID",
+  );
+  const forgedGraph = structuredClone(fullOpaque);
+  forgedGraph.body.graph.nodes[0].title = "Forged graph title";
+  expectCode(
+    () => validateAirArtifact(resealContent(forgedGraph)),
+    "AIR_SEMANTIC_INVALID",
+  );
+  const forgedMap = structuredClone(nativeWorkflow);
+  forgedMap.body.source_maps[0].body = structuredClone(
+    forgedMap.body.source_maps[0].title,
+  );
+  expectCode(
+    () => validateAirArtifact(resealContent(forgedMap)),
+    "AIR_SEMANTIC_INVALID",
+  );
   const falseNewline = structuredClone(nativeWorkflow);
   falseNewline.body.source.final_newline =
     !falseNewline.body.source.final_newline;

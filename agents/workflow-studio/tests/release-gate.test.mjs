@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertBrowserTapSummary,
   assertConfiguredBrowserModule,
+  assertTapFileInventory,
   assertTapSummary,
   fixedNodeTestEnvironment,
 } from "../scripts/release-gate.mjs";
@@ -124,7 +125,7 @@ test("release help and README disclose the untracked worktree boundary", () => {
   }
 });
 
-test("omitting the schema/runtime differential fails fixed component TAP accounting", () => {
+test("omitted and compensated tests fail fixed per-file TAP accounting", () => {
   const fixture = resolve(
     COMPONENT,
     "tests/fixtures/release-selection.fixture.mjs",
@@ -161,6 +162,56 @@ test("omitting the schema/runtime differential fails fixed component TAP account
   assert.deepEqual(
     assertTapSummary(complete, "component selection fixture", 2),
     {
+      tests: 2,
+      pass: 2,
+      fail: 0,
+      cancelled: 0,
+      skipped: 0,
+      todo: 0,
+    },
+  );
+
+  const expectedInventory = {
+    "required.test.mjs": 1,
+    "support.test.mjs": 1,
+  };
+  const compensatedOutputs = new Map([
+    ["required.test.mjs", tapSummary({ tests: 0, pass: 0 })],
+    ["support.test.mjs", tapSummary({ tests: 2, pass: 2 })],
+  ]);
+  assert.deepEqual(
+    assertTapSummary(
+      tapSummary({ tests: 2, pass: 2 }),
+      "old aggregate-only accounting",
+      2,
+    ),
+    {
+      tests: 2,
+      pass: 2,
+      fail: 0,
+      cancelled: 0,
+      skipped: 0,
+      todo: 0,
+    },
+  );
+  assert.throws(
+    () =>
+      assertTapFileInventory(
+        compensatedOutputs,
+        expectedInventory,
+        "compensated inventory",
+      ),
+    /required\.test\.mjs.*plan does not match|required number/,
+  );
+
+  const exactOutputs = new Map([
+    ["required.test.mjs", tapSummary({ tests: 1, pass: 1 })],
+    ["support.test.mjs", tapSummary({ tests: 1, pass: 1 })],
+  ]);
+  assert.deepEqual(
+    assertTapFileInventory(exactOutputs, expectedInventory),
+    {
+      files: 2,
       tests: 2,
       pass: 2,
       fail: 0,

@@ -1342,6 +1342,15 @@ async function fetchJson(path, {
   return response.json();
 }
 
+function safeProblemCode(error) {
+  return (
+    typeof error?.code === "string" &&
+    /^AIR_[A-Z0-9_]{1,64}$/u.test(error.code)
+  )
+    ? error.code
+    : "";
+}
+
 function currentResource() {
   return resourceItems.find(
     (resource) => resourceKey(resource) === activeResourceKey,
@@ -1486,7 +1495,9 @@ async function loadResource(
       `${resourceItems.length} local resource${resourceItems.length === 1 ? "" : "s"}`;
   } catch (error) {
     if (epoch !== loadRequestEpoch) return;
-    const message = error instanceof Error ? error.message : String(error);
+    const code = safeProblemCode(error);
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = code ? `[${code}] ${detail}` : detail;
     element("resourceStatus").textContent = `Could not open resource. ${message}`;
     setStatus(`Could not open resource: ${message}`);
     renderResources();
@@ -1786,7 +1797,7 @@ function showMobileRegion(region) {
     ".mobile-switcher [data-mobile-region]",
   )) {
     const selected = button.dataset.mobileRegion === region;
-    button.setAttribute("aria-selected", String(selected));
+    button.setAttribute("aria-pressed", String(selected));
     button.tabIndex = selected ? 0 : -1;
   }
 }

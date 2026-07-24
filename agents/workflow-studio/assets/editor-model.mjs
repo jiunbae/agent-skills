@@ -2391,9 +2391,6 @@ function sourceEndsInOpenAirMarkdownContext(sourceText) {
 export function buildAirMarkdownBytes(state) {
   const artifact = buildAirArtifact(state);
   const sourceBytes = decodeBase64(artifact.body.source.bytes_base64);
-  if (artifact.body.source.newline === "mixed") {
-    throw new Error("Mixed-newline sources cannot use the AIR Markdown carrier.");
-  }
   const withoutSource = clone(artifact);
   delete withoutSource.body.source.bytes_base64;
   const manifest = {

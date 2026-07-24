@@ -99,6 +99,51 @@ export function assertTapSummary(output, name, expectedTests) {
   return result;
 }
 
+export function assertTapFileInventory(
+  outputs,
+  expectedInventory,
+  name = "component suite",
+) {
+  assert(
+    outputs instanceof Map,
+    `${name} TAP outputs must be a filename-keyed Map.`,
+  );
+  assert(
+    expectedInventory !== null &&
+      typeof expectedInventory === "object" &&
+      !Array.isArray(expectedInventory),
+    `${name} expected inventory must be a filename-keyed object.`,
+  );
+  const expectedEntries = Object.entries(expectedInventory).sort(
+    ([left], [right]) => left.localeCompare(right),
+  );
+  assert(expectedEntries.length > 0, `${name} expected inventory is empty.`);
+  assert.deepEqual(
+    [...outputs.keys()].sort(),
+    expectedEntries.map(([filename]) => filename),
+    `${name} TAP output filenames do not match the required inventory.`,
+  );
+
+  const totals = {
+    files: expectedEntries.length,
+    tests: 0,
+    pass: 0,
+    fail: 0,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+  };
+  for (const [filename, expectedTests] of expectedEntries) {
+    const result = assertTapSummary(
+      outputs.get(filename),
+      `${name} ${filename}`,
+      expectedTests,
+    );
+    for (const field of TAP_RESULT_FIELDS) totals[field] += result[field];
+  }
+  return totals;
+}
+
 export function assertBrowserTapSummary(output, name, expectedTests) {
   return assertTapSummary(output, name, expectedTests);
 }

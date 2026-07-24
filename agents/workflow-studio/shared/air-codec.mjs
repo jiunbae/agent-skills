@@ -691,7 +691,7 @@ function sourceBytesFromWorkflow(artifact) {
   });
 }
 
-function sourceEndsInOpenFence(sourceText) {
+export function sourceEndsInOpenAirMarkdownContext(sourceText) {
   let fence = null;
   let firstLine = true;
   let frontmatter = false;
@@ -726,7 +726,7 @@ export function encodeAirMarkdown(artifact) {
   validateAirEnvelopeShape(artifact);
   const sourceBytes = sourceBytesFromWorkflow(artifact);
   const sourceText = decodeUtf8(sourceBytes, "AIR_MD_UNREPRESENTABLE_SOURCE");
-  if (sourceEndsInOpenFence(sourceText)) {
+  if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
     fail(
       "AIR_MD_UNREPRESENTABLE_SOURCE",
       "Source ends in an open frontmatter or fenced-code context.",
@@ -736,13 +736,7 @@ export function encodeAirMarkdown(artifact) {
   if (source.byte_length !== sourceBytes.byteLength) {
     fail("AIR_CARRIER_INVALID", "Workflow source byte length does not match.");
   }
-  const eol = source.newline === "lf" ? "\n" : source.newline === "crlf" ? "\r\n" : null;
-  if (eol === null) {
-    fail(
-      "AIR_MD_UNREPRESENTABLE_SOURCE",
-      "Mixed-newline sources cannot use the AIR 1 Markdown carrier.",
-    );
-  }
+  const eol = source.newline === "crlf" ? "\r\n" : "\n";
   const withoutSource = {
     ...artifact,
     body: {
@@ -851,19 +845,15 @@ export function decodeAirMarkdown(input) {
   }
   const sourceBytes = inputBytes.slice(0, sourceLength);
   const sourceText = decodeUtf8(sourceBytes, "AIR_CARRIER_INVALID");
-  if (sourceEndsInOpenFence(sourceText)) {
+  if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
     fail(
       "AIR_CARRIER_INVALID",
       "AIR Markdown carrier is nested in an open frontmatter or fenced-code context.",
     );
   }
-  const eol =
-    artifact.body.source.newline === "lf"
-      ? "\n"
-      : artifact.body.source.newline === "crlf"
-        ? "\r\n"
-        : null;
-  if (eol === null) {
+  const newline = artifact.body.source.newline;
+  const eol = newline === "crlf" ? "\r\n" : "\n";
+  if (!["lf", "crlf", "mixed"].includes(newline)) {
     fail("AIR_CARRIER_INVALID", "AIR Markdown newline metadata is invalid.");
   }
   const sourceEndsEol =

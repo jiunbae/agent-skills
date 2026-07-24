@@ -939,7 +939,7 @@ fieldset {
   font-size: 1rem;
 }
 
-.mobile-switcher button[aria-selected="true"] {
+.mobile-switcher button[aria-pressed="true"] {
   color: var(--accent-dark);
   background: var(--accent-soft);
 }

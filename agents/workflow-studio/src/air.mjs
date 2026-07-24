@@ -16,6 +16,8 @@ import {
   decodeAirMarkdown,
   encodeAirMarkdown,
   inspectAir,
+  parseIJson,
+  sourceEndsInOpenAirMarkdownContext,
   validateAirEnvelopeShape,
 } from "../shared/air-codec.mjs";
 import {
@@ -443,6 +445,169 @@ function acyclicGraph(
   }
 }
 
+function sameRange(left, right) {
+  return (
+    left?.start_byte === right?.start_byte &&
+    left?.end_byte === right?.end_byte
+  );
+}
+
+function graphSemanticsByOrder(graph) {
+  const orderById = new Map(
+    graph.nodes.map((node, order) => [node.id, order]),
+  );
+  const edgeKey = (edge) => stableStringify(edge);
+  return {
+    entry_node_orders: graph.entry_node_ids
+      .map((id) => orderById.get(id))
+      .sort((left, right) => left - right),
+    nodes: graph.nodes.map((node, order) => ({
+      order,
+      title: node.title,
+      body: node.body,
+      assertion: node.assertion,
+    })),
+    edges: graph.edges
+      .map((edge) => ({
+        from_order: orderById.get(edge.from),
+        to_order: orderById.get(edge.to),
+        kind: edge.kind,
+        assertion: edge.assertion,
+      }))
+      .sort((left, right) => edgeKey(left).localeCompare(edgeKey(right))),
+  };
+}
+
+function legacyTitleRange(sourceBytes, mapping) {
+  const heading = sourceBytes
+    .subarray(mapping.heading.start_byte, mapping.heading.end_byte)
+    .toString("utf8");
+  const marker = heading.match(/^#{2,6}[ \t]+/u);
+  if (!marker) return null;
+  return {
+    start_byte:
+      mapping.heading.start_byte + Buffer.byteLength(marker[0], "utf8"),
+    end_byte: mapping.title.end_byte,
+  };
+}
+
+function validateWorkflowSourceTruth(body, sourceBytes) {
+  const graph = body.graph;
+  const maps = body.source_maps;
+  const mapsByNode = new Map();
+  for (const map of maps) {
+    if (mapsByNode.has(map.node_id)) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        "AIR workflow source maps must identify unique nodes.",
+      );
+    }
+    mapsByNode.set(map.node_id, map);
+  }
+
+  let parsedBody;
+  try {
+    parsedBody = workflowBody(importSkillBytes(sourceBytes, {
+      sourcePath: "air-native/SKILL.md",
+    }));
+  } catch {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      "AIR workflow source cannot be reimported safely.",
+    );
+  }
+  if (
+    stableStringify(graphSemanticsByOrder(graph)) !==
+    stableStringify(graphSemanticsByOrder(parsedBody.graph))
+  ) {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      "AIR workflow graph does not match its authoritative Skill source.",
+    );
+  }
+
+  const parsedMapsByNode = new Map(
+    parsedBody.source_maps.map((map) => [map.node_id, map]),
+  );
+  for (const [order, node] of graph.nodes.entries()) {
+    const map = mapsByNode.get(node.id);
+    if (!map) continue;
+    const parsedNode = parsedBody.graph.nodes[order];
+    const expected = parsedMapsByNode.get(parsedNode.id);
+    if (!expected) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `AIR workflow node ${order} has no reimportable source map.`,
+      );
+    }
+    const legacyTitle = legacyTitleRange(sourceBytes, expected);
+    const titleMatches =
+      sameRange(map.title, expected.title) ||
+      (legacyTitle !== null && sameRange(map.title, legacyTitle));
+    if (
+      !sameRange(map.span, expected.span) ||
+      !sameRange(map.heading, expected.heading) ||
+      !titleMatches ||
+      !sameRange(map.body, expected.body) ||
+      map.span.end_byte <= map.span.start_byte ||
+      map.heading.end_byte <= map.heading.start_byte ||
+      map.title.end_byte <= map.title.start_byte ||
+      map.span.start_byte > map.heading.start_byte ||
+      map.heading.end_byte > map.span.end_byte ||
+      map.heading.start_byte > map.title.start_byte ||
+      map.title.end_byte > map.heading.end_byte ||
+      map.heading.end_byte > map.body.start_byte ||
+      map.body.end_byte > map.span.end_byte
+    ) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `AIR workflow source map ${order} does not match the authoritative Markdown scan.`,
+      );
+    }
+    const mappedTitle = sourceBytes
+      .subarray(expected.title.start_byte, expected.title.end_byte)
+      .toString("utf8");
+    const mappedBody = sourceBytes
+      .subarray(map.body.start_byte, map.body.end_byte)
+      .toString("utf8");
+    if (mappedTitle !== node.title || mappedBody !== node.body) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        `AIR workflow node ${order} text does not match its source map.`,
+      );
+    }
+  }
+
+  const coverage = [
+    ...maps.map((map) => map.span),
+    ...body.opaque_ranges,
+  ].sort(
+    (left, right) =>
+      left.start_byte - right.start_byte ||
+      left.end_byte - right.end_byte,
+  );
+  let cursor = 0;
+  for (const range of coverage) {
+    if (
+      range.start_byte !== cursor ||
+      range.end_byte <= range.start_byte ||
+      range.end_byte > sourceBytes.length
+    ) {
+      throw airError(
+        "AIR_SEMANTIC_INVALID",
+        "AIR workflow source maps and opaque ranges must form one exact non-overlapping partition.",
+      );
+    }
+    cursor = range.end_byte;
+  }
+  if (cursor !== sourceBytes.length) {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      "AIR workflow source maps and opaque ranges must cover every source byte.",
+    );
+  }
+}
+
 function validateWorkflowBody(artifact) {
   const body = record(
     artifact.body,
@@ -548,6 +713,7 @@ function validateWorkflowBody(artifact) {
     uniqueTextList(graph.entry_node_ids, "workflow entry IDs"),
     "workflow graph",
   );
+  const nodeIdSet = new Set(nodeIds);
   for (const [index, map] of array(body.source_maps, "workflow source maps").entries()) {
     record(
       map,
@@ -555,7 +721,7 @@ function validateWorkflowBody(artifact) {
       [],
       `workflow source map ${index}`,
     );
-    if (!nodeIds.includes(map.node_id) || map.source_id !== source.source_id) {
+    if (!nodeIdSet.has(map.node_id) || map.source_id !== source.source_id) {
       throw airError("AIR_SEMANTIC_INVALID", `Workflow source map ${index} is invalid.`);
     }
     for (const field of ["span", "heading", "title", "body"]) {
@@ -578,6 +744,7 @@ function validateWorkflowBody(artifact) {
     }
   }
   diagnostics(body.diagnostics, "workflow diagnostics");
+  validateWorkflowSourceTruth(body, sourceBytes);
 }
 
 function validateSafety(value, agent, label) {
@@ -1435,12 +1602,44 @@ export function decodeAirMarkdownArtifact(input) {
   };
 }
 
+function isRecognizedTerminalAirCarrier(input) {
+  let text;
+  try {
+    text = UTF8_FATAL.decode(input);
+  } catch {
+    return false;
+  }
+  const terminal = text.match(
+    /(?:^|\r?\n)<!-- air:v1 ([A-Za-z0-9_-]+) -->(?:\r\n|\n)$/u,
+  );
+  if (!terminal) return false;
+  const leadingEolLength = terminal[0].startsWith("\r\n")
+    ? 2
+    : terminal[0].startsWith("\n")
+      ? 1
+      : 0;
+  const sourcePrefix = text.slice(0, terminal.index + leadingEolLength);
+  if (sourceEndsInOpenAirMarkdownContext(sourcePrefix)) return false;
+  try {
+    const manifest = parseIJson(
+      decodeBase64(terminal[1], {
+        url: true,
+        code: "AIR_CARRIER_INVALID",
+      }),
+    );
+    return manifest?.carrier === "air.md" && manifest?.carrier_version === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function recognizeAirSkillCarrier(input) {
   const bytes = Buffer.from(input);
   let decoded;
   try {
     decoded = decodeAirMarkdownArtifact(bytes);
-  } catch {
+  } catch (error) {
+    if (isRecognizedTerminalAirCarrier(bytes)) throw error;
     return null;
   }
 
