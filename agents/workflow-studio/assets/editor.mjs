@@ -53,6 +53,7 @@ let catalogGeneration = null;
 let sessionGeneration = null;
 let resourceItems = [];
 let workbenchCapabilities = null;
+let catalogStatusMessage = "";
 let pendingResource = null;
 let pendingSwitchReturnFocus = null;
 let pendingSwitchReturnResourceKey = null;
@@ -1004,6 +1005,7 @@ function visibleResources() {
 function resourceButton(resource) {
   const button = create("button", "resource-row");
   button.type = "button";
+  button.tabIndex = -1;
   button.dataset.resourceKey = resourceKey(resource);
   button.setAttribute(
     "aria-current",
@@ -1052,10 +1054,10 @@ function resourceButton(resource) {
   });
   button.addEventListener("keydown", (event) => {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-    const rows = [...document.querySelectorAll(".resource-row")].filter(
-      (candidate) => !candidate.closest("#quickOpenDialog"),
-    );
+    const scope = button.closest("#quickOpenList, .resource-tree");
+    const rows = [...(scope?.querySelectorAll(".resource-row") ?? [])];
     const index = rows.indexOf(button);
+    if (index < 0 || !rows.length) return;
     let next = null;
     if (event.key === "ArrowDown") next = rows[(index + 1) % rows.length];
     if (event.key === "ArrowUp") {
@@ -1065,10 +1067,22 @@ function resourceButton(resource) {
     if (event.key === "End") next = rows[rows.length - 1];
     if (next) {
       event.preventDefault();
+      for (const row of rows) row.tabIndex = row === next ? 0 : -1;
       next.focus();
     }
   });
   return button;
+}
+
+function reconcileResourceTabStop(scope, preferredKey, restoreFocus = false) {
+  const rows = [...scope.querySelectorAll(".resource-row")];
+  if (!rows.length) return;
+  const target =
+    rows.find((row) => row.dataset.resourceKey === preferredKey) ??
+    rows.find((row) => row.dataset.resourceKey === activeResourceKey) ??
+    rows[0];
+  for (const row of rows) row.tabIndex = row === target ? 0 : -1;
+  if (restoreFocus) target.focus({ preventScroll: true });
 }
 
 function replaceResourceRows(list, resources, emptyMessage) {
@@ -1086,6 +1100,10 @@ function replaceResourceRows(list, resources, emptyMessage) {
 }
 
 function renderResources() {
+  const focusedRow = document.activeElement?.closest?.(
+    ".resource-tree .resource-row",
+  );
+  const focusedKey = focusedRow?.dataset.resourceKey;
   const visible = visibleResources();
   const skills = visible.filter((resource) => resource.type === "skill");
   replaceResourceRows(
@@ -1103,6 +1121,11 @@ function renderResources() {
     visible.filter((resource) => resource.type === "session"),
     "No metadata-only sessions available.",
   );
+  reconcileResourceTabStop(
+    element("resourcesRegion").querySelector(".resource-tree"),
+    focusedKey,
+    Boolean(focusedRow),
+  );
 }
 
 function renderPanel() {
@@ -1111,10 +1134,12 @@ function renderPanel() {
   element("viewTrace").hidden = activePanel !== "evidence";
   element("reviewDrawer").hidden = !reviewSelected;
   for (const button of document.querySelectorAll("[data-panel]")) {
+    const selected = button.dataset.panel === activePanel;
     button.setAttribute(
       "aria-selected",
-      String(button.dataset.panel === activePanel),
+      String(selected),
     );
+    button.tabIndex = selected ? 0 : -1;
   }
 }
 
@@ -1148,7 +1173,6 @@ function openReview(mode, returnTarget) {
   reviewReturnFocus = returnTarget || document.activeElement;
   renderReviewDrawer();
   renderPanel();
-  requestAnimationFrame(() => element("reviewDrawer").focus());
 }
 
 function closeReview() {
@@ -1398,6 +1422,7 @@ async function loadResource(resource, { refreshSession = false } = {}) {
           : "Metadata-only session snapshot opened read only.",
     );
     element("resourceStatus").textContent =
+      catalogStatusMessage ||
       `${resourceItems.length} local resource${resourceItems.length === 1 ? "" : "s"}`;
   } catch (error) {
     if (epoch !== loadRequestEpoch) return;
@@ -1508,62 +1533,88 @@ async function loadCatalogs({ refresh = false } = {}) {
   element("refreshResources").disabled = true;
   element("resourceStatus").textContent =
     refresh ? "Refreshing local resources…" : "Discovering local resources…";
-  if (workbenchCapabilities === null) {
-    workbenchCapabilities = await fetchJson("/air/v1/capabilities");
-  }
-  const operations = workbenchCapabilities?.operations ?? {};
-  const skillsAvailable =
-    operations["skills.catalog.read"] === "available";
-  const sessionsAvailable =
-    operations["sessions.catalog.read"] === "available";
-  const [skillsResult, sessionsResult] = await Promise.allSettled([
-    skillsAvailable
-      ? fetchJson("/air/v1/skills", {
-          parameters: refresh ? { refresh: "1" } : undefined,
-        })
-      : Promise.resolve({ items: [], generation: 0 }),
-    sessionsAvailable
-      ? fetchJson("/air/v1/sessions", { parameters: { refresh: "1" } })
-      : Promise.resolve({ items: [], generation: 0 }),
-  ]);
-  const skills = skillsResult.status === "fulfilled"
-    ? skillsResult.value
-    : { items: [] };
-  const sessions = sessionsResult.status === "fulfilled"
-    ? sessionsResult.value
-    : { items: [] };
-  catalogGeneration = skills.generation ?? catalogGeneration;
-  sessionGeneration = sessions.generation ?? sessionGeneration;
-  const nextResources = [
-    ...normalizeSkillResources(skills),
-    ...normalizeSessionResources(sessions),
-  ];
-  markChangedDocuments(nextResources);
-  resourceItems = nextResources;
-  element("refreshResources").disabled = false;
-  const partial =
-    Boolean(skills.truncated) ||
-    Boolean(sessions.truncated) ||
-    skillsResult.status === "rejected" ||
-    sessionsResult.status === "rejected";
-  element("resourceStatus").textContent = resourceItems.length
-    ? `${resourceItems.length} resource${resourceItems.length === 1 ? "" : "s"}${partial ? " · partial" : ""}`
-    : partial
-      ? "Resource discovery unavailable; legacy artifact remains available."
-      : "No local Skills or sessions found.";
-  renderResources();
-
-  if (refresh) {
-    const active = currentResource();
-    if (active?.type === "session") {
-      await loadResource(active, { refreshSession: true });
+  try {
+    if (workbenchCapabilities === null) {
+      workbenchCapabilities = await fetchJson("/air/v1/capabilities");
     }
+    const operations = workbenchCapabilities?.operations ?? {};
+    const skillsAvailable =
+      operations["skills.catalog.read"] === "available";
+    const sessionsAvailable =
+      operations["sessions.catalog.read"] === "available";
+    const [skillsResult, sessionsResult] = await Promise.allSettled([
+      skillsAvailable
+        ? fetchJson("/air/v1/skills", {
+            parameters: refresh ? { refresh: "1" } : undefined,
+          })
+        : Promise.resolve({ items: [], generation: 0 }),
+      sessionsAvailable
+        ? fetchJson("/air/v1/sessions", { parameters: { refresh: "1" } })
+        : Promise.resolve({ items: [], generation: 0 }),
+    ]);
+    const skills = skillsResult.status === "fulfilled"
+      ? skillsResult.value
+      : { items: [] };
+    const sessions = sessionsResult.status === "fulfilled"
+      ? sessionsResult.value
+      : { items: [] };
+    catalogGeneration = skills.generation ?? catalogGeneration;
+    sessionGeneration = sessions.generation ?? sessionGeneration;
+    const nextResources = [
+      ...normalizeSkillResources(skills),
+      ...normalizeSessionResources(sessions),
+    ];
+    markChangedDocuments(nextResources);
+    resourceItems = nextResources;
+    const unavailable = [
+      ...(skillsResult.status === "rejected" ? ["Skills"] : []),
+      ...(sessionsResult.status === "rejected" ? ["sessions"] : []),
+    ];
+    const truncated = Boolean(skills.truncated) || Boolean(sessions.truncated);
+    if (unavailable.length) {
+      const subject =
+        unavailable.length === 2 ? "Skills and sessions catalogs" : `${unavailable[0]} catalog`;
+      catalogStatusMessage = `${unavailable.length === 2 ? "Discovery unavailable" : "Partial discovery"}: ${subject} failed. ${
+        nextResources.length
+          ? `${nextResources.length} resource${nextResources.length === 1 ? "" : "s"} loaded.`
+          : "The command-line artifact remains available."
+      } Refresh to retry.`;
+    } else if (truncated) {
+      catalogStatusMessage =
+        `${nextResources.length} resource${nextResources.length === 1 ? "" : "s"} loaded · partial catalog. Refresh to retry.`;
+    } else {
+      catalogStatusMessage = nextResources.length
+        ? `${nextResources.length} resource${nextResources.length === 1 ? "" : "s"}`
+        : "No local Skills or sessions found.";
+    }
+    element("resourceStatus").textContent = catalogStatusMessage;
+    renderResources();
+
+    if (refresh) {
+      const active = currentResource();
+      if (active?.type === "session") {
+        await loadResource(active, { refreshSession: true });
+      }
+    }
+    return nextResources;
+  } catch (error) {
+    catalogStatusMessage =
+      "Discovery unavailable: capabilities request failed. Refresh to retry.";
+    element("resourceStatus").textContent = catalogStatusMessage;
+    renderResources();
+    setStatus(catalogStatusMessage);
+    throw error;
+  } finally {
+    element("refreshResources").disabled = false;
   }
-  return nextResources;
 }
 
 function renderQuickOpen() {
   const dialog = element("quickOpenDialog");
+  const focusedRow = document.activeElement?.closest?.(
+    "#quickOpenList .resource-row",
+  );
+  const focusedKey = focusedRow?.dataset.resourceKey;
   const query = element("quickOpenSearch").value.trim().toLocaleLowerCase();
   const matches = resourceItems.filter((resource) => {
     const label = resource.type === "skill"
@@ -1576,9 +1627,11 @@ function renderQuickOpen() {
     matches,
     "No matching local resource.",
   );
-  if (!dialog.open) return;
-  const first = element("quickOpenList").querySelector(".resource-row");
-  if (first) first.tabIndex = 0;
+  reconcileResourceTabStop(
+    element("quickOpenList"),
+    focusedKey,
+    Boolean(dialog.open && focusedRow),
+  );
 }
 
 function showMobileRegion(region) {
@@ -1620,7 +1673,9 @@ function installHandlers() {
 
   element("resourceSearch").addEventListener("input", renderResources);
   element("refreshResources").addEventListener("click", () => {
-    loadCatalogs({ refresh: true });
+    loadCatalogs({ refresh: true }).catch(() => {
+      // loadCatalogs publishes a typed, retryable failure state.
+    });
   });
   element("quickOpen").addEventListener("click", () => {
     element("quickOpenSearch").value = "";
@@ -1629,6 +1684,17 @@ function installHandlers() {
     requestAnimationFrame(() => element("quickOpenSearch").focus());
   });
   element("quickOpenSearch").addEventListener("input", renderQuickOpen);
+  element("quickOpenSearch").addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    const rows = [
+      ...element("quickOpenList").querySelectorAll(".resource-row"),
+    ];
+    if (!rows.length) return;
+    event.preventDefault();
+    const target = event.key === "ArrowDown" ? rows[0] : rows[rows.length - 1];
+    for (const row of rows) row.tabIndex = row === target ? 0 : -1;
+    target.focus();
+  });
   element("dirtySwitchDialog").addEventListener("cancel", (event) => {
     event.preventDefault();
     completeResourceSwitch("cancel");
@@ -1680,6 +1746,29 @@ function installHandlers() {
         if (panel === "evidence") renderTrace();
       }
     });
+    button.addEventListener("keydown", (event) => {
+      if (
+        !["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"]
+          .includes(event.key)
+      ) {
+        return;
+      }
+      const tabs = [...document.querySelectorAll("[data-panel]")];
+      const index = tabs.indexOf(button);
+      let target = null;
+      if (["ArrowRight", "ArrowDown"].includes(event.key)) {
+        target = tabs[(index + 1) % tabs.length];
+      }
+      if (["ArrowLeft", "ArrowUp"].includes(event.key)) {
+        target = tabs[(index - 1 + tabs.length) % tabs.length];
+      }
+      if (event.key === "Home") target = tabs[0];
+      if (event.key === "End") target = tabs[tabs.length - 1];
+      if (!target) return;
+      event.preventDefault();
+      target.click();
+      target.focus({ preventScroll: true });
+    });
   }
   element("togglePanel").addEventListener("click", () => {
     const panel = element("bottomPanel");
@@ -1706,12 +1795,6 @@ function installHandlers() {
   element("redoEdit").addEventListener("click", redo);
   element("fitGraph").addEventListener("click", () => graphIsland?.fitView());
   element("resetLayout").addEventListener("click", () => graphIsland?.resetLayout());
-  element("openSource").addEventListener("click", (event) => {
-    openReview("source", event.currentTarget);
-  });
-  element("openDiff").addEventListener("click", (event) => {
-    openReview("diff", event.currentTarget);
-  });
   element("closeReview").addEventListener("click", closeReview);
   const reviewTabs = [
     [element("reviewSourceTab"), "source"],
@@ -2068,12 +2151,25 @@ async function loadLegacyArtifact() {
   element("resourceStatus").textContent = "Opened command-line artifact";
 }
 
+function settleBootstrapFailure(message) {
+  element("artifactKind").textContent = "Error";
+  element("sourcePath").textContent = "No artifact loaded";
+  element("sourcePath").title = "";
+  element("parseSummary").textContent = "Artifact unavailable";
+  element("resourceStatus").textContent = message;
+  setStatus(message);
+  renderResources();
+  renderPanel();
+}
+
 async function loadArtifact() {
   installHandlers();
   document.body.dataset.mobileRegion = mobileRegion;
   accessToken = new URLSearchParams(window.location.search).get("token") ?? "";
   if (!accessToken) {
-    setStatus("Missing session token. Reopen AIR Workbench from its CLI URL.");
+    settleBootstrapFailure(
+      "Missing session token. Reopen AIR Workbench from its CLI URL.",
+    );
     return;
   }
   try {
@@ -2082,16 +2178,24 @@ async function loadArtifact() {
       await loadResource(discovered[0]);
     } else {
       await loadLegacyArtifact();
+      if (catalogStatusMessage.startsWith("Discovery unavailable:")) {
+        element("resourceStatus").textContent = catalogStatusMessage;
+        setStatus(
+          `${catalogStatusMessage} The command-line artifact is open for editing.`,
+        );
+      }
     }
   } catch (error) {
     try {
       await loadLegacyArtifact();
+      element("resourceStatus").textContent = catalogStatusMessage;
+      setStatus(
+        `${catalogStatusMessage} The command-line artifact is open for editing.`,
+      );
     } catch (legacyError) {
       const message =
         legacyError instanceof Error ? legacyError.message : String(legacyError);
-      setStatus(`Could not load AIR Workbench: ${message}`);
-      element("artifactKind").textContent = "Error";
-      element("resourceStatus").textContent = "Resource loading failed";
+      settleBootstrapFailure(`Could not load AIR Workbench: ${message}`);
     }
   }
 }

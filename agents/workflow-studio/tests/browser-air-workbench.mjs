@@ -23,6 +23,12 @@ const SKILL_B = "skill_BBBBBBBBBBBBBBBBBBBBBB";
 const SESSION = "session_CCCCCCCCCCCCCCCCCCCCCC";
 const SNAPSHOT = "snapshot_DDDDDDDDDDDDDDDDDDDDDD";
 
+function boundedSkillId(index) {
+  const bytes = Buffer.alloc(16);
+  bytes.writeUInt32BE(index, 12);
+  return `skill_${bytes.toString("base64url")}`;
+}
+
 function moduleSpecifier(value) {
   if (!value) return null;
   return isAbsolute(value) || value.startsWith(".")
@@ -169,7 +175,7 @@ function sessionArtifact(eventCount = 3) {
   };
 }
 
-async function fixtures() {
+async function fixtures({ bounded = false } = {}) {
   const first = await importSkillFile(BACKGROUND_IMPLEMENTER);
   const source = await readFile(BACKGROUND_IMPLEMENTER);
   const second = importSkillBytes(
@@ -181,17 +187,28 @@ async function fixtures() {
     ),
     { sourcePath: "synthetic-installed/background-implementer/SKILL.md" },
   );
-  const items = [
-    skillItem(SKILL_A, "a".repeat(64), "repository"),
-    skillItem(SKILL_B, "b".repeat(64), "user"),
-  ];
+  const items = bounded
+    ? Array.from({ length: 1_000 }, (_, index) => ({
+        ...skillItem(
+          boundedSkillId(index),
+          index.toString(16).padStart(64, "0"),
+          index === 0 ? "repository" : "user",
+        ),
+        name: `bounded-skill-${String(index).padStart(4, "0")}`,
+        description: "Synthetic bounded keyboard fixture.",
+        name_conflict: false,
+      }))
+    : [
+        skillItem(SKILL_A, "a".repeat(64), "repository"),
+        skillItem(SKILL_B, "b".repeat(64), "user"),
+      ];
   const catalogSnapshot = {
     format: "air-skill-catalog",
     version: "1.0.0",
     generation: 1,
     truncated: false,
     roots: [],
-    item_count: 2,
+    item_count: items.length,
     items,
   };
   const catalog = {
@@ -200,6 +217,7 @@ async function fixtures() {
     importArtifact: async (id) => {
       if (id === SKILL_A) return first;
       if (id === SKILL_B) return second;
+      if (bounded && items.some((item) => item.id === id)) return first;
       throw Object.assign(new Error("missing"), {
         code: "AIR_CATALOG_ITEM_NOT_FOUND",
       });
@@ -210,15 +228,17 @@ async function fixtures() {
     version: "1.0.0",
     generation: 1,
     truncated: false,
-    items: [
-      {
-        id: SESSION,
-        provider: "codex",
-        stream_kind: "rollout",
-        lifecycle: "unknown",
-        snapshot_available: true,
-      },
-    ],
+    items: bounded
+      ? []
+      : [
+          {
+            id: SESSION,
+            provider: "codex",
+            stream_kind: "rollout",
+            lifecycle: "unknown",
+            snapshot_available: true,
+          },
+        ],
     diagnostics: [],
   };
   let snapshotCount = 0;
@@ -279,13 +299,91 @@ async function runPass(browser, executablePath, pass) {
       hasText: "background-implementer",
     }).count(), 2);
     assert.equal(await page.locator("img").count(), 0);
+    const explorerRows = page.locator(".resource-tree .resource-row");
+    assert.equal(await explorerRows.count(), 3);
+    assert.equal(
+      await explorerRows.evaluateAll(
+        (rows) => rows.filter((row) => row.tabIndex === 0).length,
+      ),
+      1,
+    );
+    await explorerRows.first().focus();
+    await page.keyboard.press("ArrowDown");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${SKILL_B}`,
+    );
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      () => document.querySelector("#installedSkillList .resource-row")
+        ?.getAttribute("aria-current") === "true",
+    );
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${SKILL_B}`,
+    );
+    await page.keyboard.press("Home");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${SKILL_A}`,
+    );
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      () => document.querySelector("#workspaceSkillList .resource-row")
+        ?.getAttribute("aria-current") === "true",
+    );
     await page.locator("#quickOpen").click();
     await page.locator("#quickOpenSearch").fill("background");
     assert.equal(
       await page.locator("#quickOpenList .resource-row").count(),
       2,
     );
-    await page.keyboard.press("Escape");
+    const quickRows = page.locator("#quickOpenList .resource-row");
+    assert.equal(
+      await quickRows.evaluateAll(
+        (rows) => rows.filter((row) => row.tabIndex === 0).length,
+      ),
+      1,
+    );
+    await page.evaluate(
+      () => new Promise((resolveFrame) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolveFrame))),
+    );
+    await quickRows.first().focus();
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${SKILL_A}`,
+    );
+    await page.keyboard.press("End");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${SKILL_B}`,
+    );
+    await page.keyboard.press("Home");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${SKILL_A}`,
+    );
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      () =>
+        document.querySelector("#installedSkillList .resource-row")
+          ?.getAttribute("aria-current") === "true" ||
+        document.querySelector("#dirtySwitchDialog")?.open,
+    );
+    assert.equal(await page.locator("#dirtySwitchDialog").getAttribute("open"), null);
+    assert.equal(
+      await page.locator("#installedSkillList .resource-row")
+        .first().getAttribute("aria-current"),
+      "true",
+    );
+    assert.equal(await page.locator("#quickOpenDialog").getAttribute("open"), null);
+    await page.locator("#workspaceSkillList .resource-row").first().click();
+    await page.waitForFunction(
+      () => document.querySelector("#workspaceSkillList .resource-row")
+        ?.getAttribute("aria-current") === "true",
+    );
 
     await page.evaluate(() => {
       globalThis.__airFlowRoot = document.querySelector(".react-flow");
@@ -317,6 +415,34 @@ async function runPass(browser, executablePath, pass) {
     await page.evaluate(() => {
       globalThis.__airFlowRoot = document.querySelector(".react-flow");
     });
+
+    const panelTabs = page.locator("[data-panel]");
+    await page.locator("#panelProblems").focus();
+    assert.equal(
+      await panelTabs.evaluateAll(
+        (tabs) => tabs.filter((tab) => tab.tabIndex === 0).length,
+      ),
+      1,
+    );
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "tabTrace");
+    assert.equal(await page.locator("#tabTrace").getAttribute("aria-selected"), "true");
+    await page.keyboard.press("End");
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "openDiff");
+    assert.equal(await page.locator("#openDiff").getAttribute("aria-selected"), "true");
+    await page.locator("#reviewDrawer").waitFor({ state: "visible" });
+    await page.keyboard.press("Home");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.id),
+      "panelProblems",
+    );
+    assert.equal(
+      await panelTabs.evaluateAll(
+        (tabs) => tabs.filter((tab) => tab.tabIndex === 0).length,
+      ),
+      1,
+    );
+    await page.locator("#reviewDrawer").waitFor({ state: "hidden" });
 
     await page.locator("#openSource").click();
     await page.locator("#reviewDrawer").waitFor({ state: "visible" });
@@ -418,5 +544,263 @@ test("AIR Workbench resources, documents, sessions, and responsive shell", async
   }
   for (let pass = 1; pass <= 2; pass += 1) {
     await runPass(runtime.chromium, runtime.executablePath, pass);
+  }
+});
+
+function failDiscovery(route) {
+  return route.fulfill({
+    status: 503,
+    contentType: "application/problem+json",
+    body: JSON.stringify({
+      code: "AIR_TEST_DISCOVERY_UNAVAILABLE",
+      detail: "Synthetic discovery failure.",
+    }),
+  });
+}
+
+test("AIR Workbench discovery failures terminate and retry", async (t) => {
+  const runtime = await browserRuntime();
+  if (runtime.skip) {
+    t.skip(runtime.skip);
+    return;
+  }
+  const { catalog, first, sessionRegistry } = await fixtures();
+  const studio = createStudioServer({
+    artifact: first,
+    assetsDir: ASSETS_DIR,
+    schemasDir: SCHEMAS_DIR,
+    catalog,
+    sessionRegistry,
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await studio.listen();
+  const instance = await runtime.chromium.launch({
+    executablePath: runtime.executablePath,
+    headless: true,
+  });
+  const context = await instance.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const baseUrl =
+    `http://127.0.0.1:${address.port}/?token=${encodeURIComponent(studio.token)}`;
+  const capabilitiesPattern = "**/air/v1/capabilities*";
+  const skillsPattern = "**/air/v1/skills?*";
+  const sessionsPattern = "**/air/v1/sessions?*";
+  try {
+    const capabilitiesPage = await context.newPage();
+    await capabilitiesPage.route(capabilitiesPattern, failDiscovery);
+    await capabilitiesPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await capabilitiesPage.waitForFunction(
+      () => document.querySelector("#resourceStatus")?.textContent
+        ?.includes("capabilities request failed"),
+    );
+    assert.equal(
+      await capabilitiesPage.locator("#artifactKind").textContent(),
+      "WORKFLOW",
+    );
+    assert.equal(
+      await capabilitiesPage.locator("#refreshResources").isDisabled(),
+      false,
+    );
+    assert.match(
+      (await capabilitiesPage.locator("#resourceStatus").textContent()) ?? "",
+      /Discovery unavailable: capabilities request failed.*Refresh to retry/u,
+    );
+    assert.doesNotMatch(
+      (await capabilitiesPage.locator("body").innerText()) ?? "",
+      /Loading local resources|Waiting for artifact/u,
+    );
+    await capabilitiesPage.unroute(capabilitiesPattern);
+    await capabilitiesPage.locator("#refreshResources").click();
+    await capabilitiesPage.waitForFunction(
+      () => document.querySelector("#resourceStatus")?.textContent ===
+        "3 resources",
+    );
+    assert.equal(
+      await capabilitiesPage.locator("#refreshResources").isDisabled(),
+      false,
+    );
+    await capabilitiesPage.close();
+
+    const partialPage = await context.newPage();
+    await partialPage.route(skillsPattern, failDiscovery);
+    await partialPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await partialPage.waitForFunction(
+      () => document.querySelector("#resourceStatus")?.textContent
+        ?.startsWith("Partial discovery: Skills catalog failed."),
+    );
+    assert.equal(await partialPage.locator("#artifactKind").textContent(), "TRACE");
+    assert.equal(await partialPage.locator("#refreshResources").isDisabled(), false);
+    await partialPage.unroute(skillsPattern);
+    await partialPage.locator("#refreshResources").click();
+    await partialPage.waitForFunction(
+      () => document.querySelector("#resourceStatus")?.textContent ===
+        "3 resources",
+    );
+    await partialPage.close();
+
+    const unavailablePage = await context.newPage();
+    await unavailablePage.route(skillsPattern, failDiscovery);
+    await unavailablePage.route(sessionsPattern, failDiscovery);
+    await unavailablePage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await unavailablePage.waitForFunction(
+      () => document.querySelector("#resourceStatus")?.textContent
+        ?.startsWith("Discovery unavailable: Skills and sessions catalogs failed."),
+    );
+    assert.equal(
+      await unavailablePage.locator("#artifactKind").textContent(),
+      "WORKFLOW",
+    );
+    assert.equal(
+      await unavailablePage.locator("#refreshResources").isDisabled(),
+      false,
+    );
+    assert.doesNotMatch(
+      (await unavailablePage.locator("body").innerText()) ?? "",
+      /Loading local resources|Waiting for artifact/u,
+    );
+    await unavailablePage.unroute(skillsPattern);
+    await unavailablePage.unroute(sessionsPattern);
+    await unavailablePage.locator("#refreshResources").click();
+    await unavailablePage.waitForFunction(
+      () => document.querySelector("#resourceStatus")?.textContent ===
+        "3 resources",
+    );
+    await unavailablePage.close();
+
+    const missingTokenPage = await context.newPage();
+    await missingTokenPage.goto(`http://127.0.0.1:${address.port}/`, {
+      waitUntil: "domcontentloaded",
+    });
+    await missingTokenPage.waitForFunction(
+      () => document.querySelector("#artifactKind")?.textContent === "Error",
+    );
+    assert.equal(
+      await missingTokenPage.locator("#sourcePath").textContent(),
+      "No artifact loaded",
+    );
+    assert.equal(
+      await missingTokenPage.locator("#refreshResources").isDisabled(),
+      false,
+    );
+    assert.match(
+      (await missingTokenPage.locator("#resourceStatus").textContent()) ?? "",
+      /Missing session token/u,
+    );
+    assert.doesNotMatch(
+      (await missingTokenPage.locator("body").innerText()) ?? "",
+      /Loading local resources|Waiting for artifact|Loading artifact/u,
+    );
+    await missingTokenPage.close();
+  } finally {
+    await context.close();
+    await instance.close();
+    await studio.close();
+  }
+});
+
+test("AIR Workbench resource roving model remains bounded at 1,000 rows", async (t) => {
+  const runtime = await browserRuntime();
+  if (runtime.skip) {
+    t.skip(runtime.skip);
+    return;
+  }
+  const { catalog, first, sessionRegistry } = await fixtures({ bounded: true });
+  const studio = createStudioServer({
+    artifact: first,
+    assetsDir: ASSETS_DIR,
+    schemasDir: SCHEMAS_DIR,
+    catalog,
+    sessionRegistry,
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await studio.listen();
+  const instance = await runtime.chromium.launch({
+    executablePath: runtime.executablePath,
+    headless: true,
+  });
+  const context = await instance.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(`console: ${message.text()}`);
+  });
+  try {
+    await page.goto(
+      `http://127.0.0.1:${address.port}/?token=${encodeURIComponent(studio.token)}`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page.locator(".react-flow.air-flow-ready").waitFor({ state: "visible" });
+    const rows = page.locator(".resource-tree .resource-row");
+    assert.equal(await rows.count(), 1_000);
+    assert.equal(
+      await rows.evaluateAll(
+        (targets) => targets.filter((target) => target.tabIndex === 0).length,
+      ),
+      1,
+    );
+    await rows.first().focus();
+    await page.keyboard.press("End");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${boundedSkillId(999)}`,
+    );
+    assert.equal(
+      await rows.evaluateAll(
+        (targets) => targets.filter((target) => target.tabIndex === 0).length,
+      ),
+      1,
+    );
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      (key) => document.activeElement?.dataset?.resourceKey === key,
+      `skill:${boundedSkillId(999)}`,
+    );
+    await page.keyboard.press("Home");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${boundedSkillId(0)}`,
+    );
+
+    await page.locator("#quickOpen").click();
+    const quickRows = page.locator("#quickOpenList .resource-row");
+    assert.equal(await quickRows.count(), 1_000);
+    assert.equal(
+      await quickRows.evaluateAll(
+        (targets) => targets.filter((target) => target.tabIndex === 0).length,
+      ),
+      1,
+    );
+    await page.evaluate(
+      () => new Promise((resolveFrame) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolveFrame))),
+    );
+    await quickRows.first().focus();
+    await page.keyboard.press("End");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${boundedSkillId(999)}`,
+    );
+    await page.keyboard.press("Home");
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
+      `skill:${boundedSkillId(0)}`,
+    );
+    assert.equal(
+      await quickRows.evaluateAll(
+        (targets) => targets.filter((target) => target.tabIndex === 0).length,
+      ),
+      1,
+    );
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+    await instance.close();
+    await studio.close();
   }
 });

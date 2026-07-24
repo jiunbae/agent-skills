@@ -631,31 +631,55 @@ async function serveWorkbench({
     host,
     port,
   });
-  const address = await studio.listen();
-  if (sessionRegistry !== null) {
-    void sessionRegistry.catalog({ refresh: true }).catch(() => {});
-  }
-  const literal = address.family === "IPv6" ? `[${address.address}]` : address.address;
-  const url = `http://${literal}:${address.port}/?token=${encodeURIComponent(studio.token)}`;
-  process.stdout.write(`${url}\n`);
-
-  await new Promise((resolvePromise, rejectPromise) => {
-    let closing = false;
-    const close = async () => {
-      if (closing) return;
-      closing = true;
-      process.off("SIGINT", close);
-      process.off("SIGTERM", close);
-      try {
-        await studio.close();
-        resolvePromise();
-      } catch (error) {
-        rejectPromise(error);
-      }
-    };
-    process.on("SIGINT", close);
-    process.on("SIGTERM", close);
+  let listening = false;
+  let shutdownRequested = false;
+  let closePromise = null;
+  let resolveShutdownRequest;
+  const shutdownRequest = new Promise((resolvePromise) => {
+    resolveShutdownRequest = resolvePromise;
   });
+  const beginClose = () => {
+    closePromise ??= studio.close();
+    return closePromise;
+  };
+  const requestShutdown = () => {
+    shutdownRequested = true;
+    resolveShutdownRequest();
+    if (listening) void beginClose().catch(() => {});
+  };
+
+  process.on("SIGINT", requestShutdown);
+  process.on("SIGTERM", requestShutdown);
+  try {
+    const address = await studio.listen();
+    listening = true;
+    if (shutdownRequested) {
+      beginClose();
+    } else {
+      if (sessionRegistry !== null) {
+        void sessionRegistry.catalog({ refresh: true }).catch(() => {});
+      }
+      const literal = address.family === "IPv6"
+        ? `[${address.address}]`
+        : address.address;
+      const url =
+        `http://${literal}:${address.port}/?token=${encodeURIComponent(studio.token)}`;
+      await new Promise((resolvePromise, rejectPromise) => {
+        process.stdout.write(`${url}\n`, (error) => {
+          if (error) rejectPromise(error);
+          else resolvePromise();
+        });
+      });
+    }
+    await shutdownRequest;
+    await beginClose();
+  } catch (error) {
+    await beginClose().catch(() => {});
+    throw error;
+  } finally {
+    process.off("SIGINT", requestShutdown);
+    process.off("SIGTERM", requestShutdown);
+  }
 }
 
 async function studioCommand(parsed) {

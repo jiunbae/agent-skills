@@ -8,7 +8,7 @@ import {
   readFile,
   rm,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
@@ -30,8 +30,15 @@ const BACKGROUND_IMPLEMENTER = resolve(
   REPOSITORY_ROOT,
   "agents/background-implementer/SKILL.md",
 );
-const INSTALLED_BACKGROUND_IMPLEMENTER =
-  "/Users/jiun/.agents/skills/background-implementer/SKILL.md";
+const INSTALLED_SKILLS_ROOT = resolve(
+  process.env.WORKFLOW_STUDIO_INSTALLED_SKILLS_ROOT ||
+    join(homedir(), ".agents", "skills"),
+);
+const INSTALLED_BACKGROUND_IMPLEMENTER = join(
+  INSTALLED_SKILLS_ROOT,
+  "background-implementer",
+  "SKILL.md",
+);
 const CONVERSATION_SKILL = "/tmp/conversation-skill/SKILL.md";
 const CONVERSATION_WORKFLOW = "/tmp/conversation-skill/workflow.json";
 const CLI = resolve(STUDIO_ROOT, "scripts/workflow-studio.mjs");

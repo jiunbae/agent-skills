@@ -58,6 +58,86 @@ function http(address, path, { method = "GET", host } = {}) {
   });
 }
 
+async function stopWorkbenchImmediately({ home, signal }) {
+  const child = spawn(process.execPath, [
+    AIR,
+    "workbench",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "0",
+  ], {
+    cwd: home,
+    env: { ...process.env, HOME: home },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  let stdout = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const exited = new Promise((resolvePromise) => {
+    child.once("exit", (code, receivedSignal) => {
+      resolvePromise({ code, signal: receivedSignal });
+    });
+  });
+
+  try {
+    const url = await new Promise((resolvePromise, rejectPromise) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        callback(value);
+      };
+      const timer = setTimeout(() => {
+        finish(rejectPromise, new Error("AIR Workbench did not print its URL."));
+      }, 8_000);
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+        const line = stdout.split("\n")[0];
+        if (line.startsWith("http://")) finish(resolvePromise, line);
+      });
+      child.once("error", (error) => finish(rejectPromise, error));
+      child.once("exit", (code, receivedSignal) => {
+        finish(
+          rejectPromise,
+          new Error(
+            `AIR Workbench exited before readiness: ${code}/${receivedSignal} ${stderr}`,
+          ),
+        );
+      });
+    });
+    assert.match(
+      url,
+      /^http:\/\/127\.0\.0\.1:[0-9]+\/\?token=[A-Za-z0-9_-]{43}$/u,
+    );
+    assert.equal(child.kill(signal), true);
+
+    let exitTimer;
+    const result = await Promise.race([
+      exited,
+      new Promise((_, rejectPromise) => {
+        exitTimer = setTimeout(() => {
+          rejectPromise(
+            new Error(`AIR Workbench did not stop after ${signal}.`),
+          );
+        }, 8_000);
+      }),
+    ]);
+    clearTimeout(exitTimer);
+    assert.deepEqual(result, { code: 0, signal: null });
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await exited;
+    }
+  }
+}
+
 test("AIR namespace and canonical wrapper share import, validate, convert, migrate, and no-overwrite behavior", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-cli-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -268,4 +348,15 @@ test("AIR Workbench starts with zero inputs, default discovery, and an explicit 
   assert.match(stderr, /Skill catalog/u);
   assert.match(stderr, /metadata-only session catalog\/snapshots/u);
   assert.match(stderr, /bearer authority/u);
+});
+
+test("AIR Workbench handles immediate shutdown signals under bounded parallel load", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-workbench-signal-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await Promise.all(
+    Array.from({ length: 12 }, (_, index) => stopWorkbenchImmediately({
+      home: directory,
+      signal: index % 2 === 0 ? "SIGINT" : "SIGTERM",
+    })),
+  );
 });

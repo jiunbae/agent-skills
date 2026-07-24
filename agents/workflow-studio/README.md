@@ -316,6 +316,21 @@ Repository copy installers intentionally omit directories named
 are retained, so an installed copy can run offline without carrying the build
 dependency tree.
 
+Run the complete release inventory from the repository root:
+
+```bash
+WORKFLOW_STUDIO_PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs \
+WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE=/path/to/chromium \
+node agents/workflow-studio/scripts/verify-release.mjs
+```
+
+The default delivery mode also requires a clean tracked worktree, a good
+signature on `HEAD`, and `HEAD == origin/main`. While preparing that commit,
+use `--precommit` (or `--source`) to run the same source, package, offline,
+privacy, and non-skipping browser gates without those delivery assertions.
+The command may also be run as `node scripts/verify-release.mjs` from this
+component directory.
+
 ## Outputs and safety
 
 All artifact and draft destinations are explicit `--out` paths, except that
