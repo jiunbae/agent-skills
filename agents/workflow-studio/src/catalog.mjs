@@ -57,6 +57,17 @@ const SKIP_DIRECTORIES = new Set([
   "temp",
   "tmp",
 ]);
+const REPOSITORY_SKILL_GROUPS = new Set([
+  "agents",
+  "business",
+  "common",
+  "context",
+  "development",
+  "integrations",
+  "meta",
+  "ml",
+  "security",
+]);
 const VALID_SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const VALID_PLUGIN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const REMOTE_PLUGIN_MARKER = ".codex-remote-plugin-install.json";
@@ -174,6 +185,9 @@ function normalizeRoot(root, index) {
     path: resolve(root.path),
     kind,
     label: sanitizeLabel(root.label, `${kind}-${index + 1}`),
+    ...(kind === "repository" && root.grouped === true
+      ? { grouped: true }
+      : {}),
   });
 }
 
@@ -256,6 +270,76 @@ async function readBoundedRegularFile(path, maxBytes) {
   }
 }
 
+function scanTomlLexicalLine(line, multilineState) {
+  let mode = multilineState ?? "normal";
+  for (let index = 0; index < line.length;) {
+    if (mode === "comment") break;
+    if (mode === "multiline-basic") {
+      if (line[index] === "\\") {
+        index += 2;
+        continue;
+      }
+      if (line.startsWith('"""', index)) {
+        while (line[index] === '"') index += 1;
+        mode = "normal";
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    if (mode === "multiline-literal") {
+      if (line.startsWith("'''", index)) {
+        while (line[index] === "'") index += 1;
+        mode = "normal";
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    if (mode === "basic") {
+      if (line[index] === "\\") {
+        index += 2;
+        continue;
+      }
+      if (line[index] === '"') mode = "normal";
+      index += 1;
+      continue;
+    }
+    if (mode === "literal") {
+      if (line[index] === "'") mode = "normal";
+      index += 1;
+      continue;
+    }
+    if (line[index] === "#") {
+      mode = "comment";
+      break;
+    }
+    if (line.startsWith('"""', index)) {
+      mode = "multiline-basic";
+      index += 3;
+      continue;
+    }
+    if (line.startsWith("'''", index)) {
+      mode = "multiline-literal";
+      index += 3;
+      continue;
+    }
+    if (line[index] === '"') {
+      mode = "basic";
+    } else if (line[index] === "'") {
+      mode = "literal";
+    }
+    index += 1;
+  }
+  if (mode === "comment") mode = "normal";
+  return Object.freeze({
+    state: mode === "multiline-basic" || mode === "multiline-literal"
+      ? mode
+      : "normal",
+    invalid: mode === "basic" || mode === "literal",
+  });
+}
+
 function parseEnabledPluginConfiguration(bytes, limits) {
   if (bytes === undefined) {
     return { states: new Map(), exceeded: false, partial: false };
@@ -278,6 +362,8 @@ function parseEnabledPluginConfiguration(bytes, limits) {
   let sections = 0;
   let current = null;
   let enabledValues = [];
+  let multilineState = "normal";
+  let ambiguous = false;
   const finishSection = () => {
     if (current === null) return;
     sections += 1;
@@ -293,7 +379,11 @@ function parseEnabledPluginConfiguration(bytes, limits) {
   };
 
   for (const line of lines) {
-    if (/^\s*\[/u.test(line)) {
+    const structural = multilineState === "normal";
+    const lexical = scanTomlLexicalLine(line, multilineState);
+    multilineState = lexical.state;
+    ambiguous ||= lexical.invalid;
+    if (structural && /^\s*\[/u.test(line)) {
       finishSection();
       const match = line.match(
         /^\s*\[plugins\."([^"]*)"\]\s*(?:#.*)?$/u,
@@ -301,7 +391,7 @@ function parseEnabledPluginConfiguration(bytes, limits) {
       current = match ? parsePluginAuthorityName(match[1]) : null;
       continue;
     }
-    if (current === null) continue;
+    if (!structural || current === null) continue;
     const enabled = line.match(
       /^\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$/u,
     );
@@ -312,6 +402,9 @@ function parseEnabledPluginConfiguration(bytes, limits) {
     }
   }
   finishSection();
+  if (multilineState !== "normal" || ambiguous) {
+    return { states: new Map(), exceeded: false, partial: true };
+  }
   return {
     states,
     exceeded: sections > limits.maxAuthorities,
@@ -582,16 +675,18 @@ export async function resolveEnabledPluginSkillRoots({
 export function resolveSkillRoots({
   cwd = process.cwd(),
   repositoryRoot,
+  repositorySourceRoot,
   userHome = homedir(),
   codexHome,
   claudeHome,
-  componentRoot,
   explicitRoots = [],
 } = {}) {
   const roots = [];
   const seen = new Set();
-  const projectBases = [resolve(cwd)];
-  if (repositoryRoot) projectBases.push(resolve(repositoryRoot));
+  const projectBases = [...new Set([
+    resolve(cwd),
+    ...(repositoryRoot ? [resolve(repositoryRoot)] : []),
+  ])];
 
   for (const [baseIndex, base] of projectBases.entries()) {
     for (const provider of ["agents", "codex", "claude"]) {
@@ -622,11 +717,12 @@ export function resolveSkillRoots({
     label: "system-codex",
   });
 
-  if (componentRoot) {
+  if (repositorySourceRoot) {
     pushUniqueRoot(roots, seen, {
-      path: resolve(componentRoot),
+      path: resolve(repositorySourceRoot),
       kind: "repository",
       label: "repository-source",
+      grouped: true,
     });
   }
 
@@ -1085,7 +1181,15 @@ async function walkRoot(root, allRoots, state) {
         return;
       }
       const path = join(current.path, entry.name);
+      if (
+        root.grouped === true &&
+        current.depth === 0 &&
+        (!entry.isDirectory() || !REPOSITORY_SKILL_GROUPS.has(entry.name))
+      ) {
+        continue;
+      }
       if (entry.isSymbolicLink()) {
+        if (root.grouped === true) continue;
         const linked = await maybeReadSkillDirectoryLink(
           path,
           root,
@@ -1116,6 +1220,7 @@ async function walkRoot(root, allRoots, state) {
           continue;
         }
         if (SKIP_DIRECTORIES.has(entry.name.toLowerCase())) continue;
+        if (root.grouped === true && current.depth >= 2) continue;
         if (current.depth < state.limits.maxDepth) {
           directories.push({ path, depth: current.depth + 1 });
         } else {
@@ -1125,6 +1230,7 @@ async function walkRoot(root, allRoots, state) {
         continue;
       }
       if (entry.name !== "SKILL.md") continue;
+      if (root.grouped === true && current.depth !== 2) continue;
       state.candidates += 1;
       if (state.candidates > state.limits.maxCandidates) {
         markTruncated(state, "AIR_CATALOG_CANDIDATE_LIMIT");

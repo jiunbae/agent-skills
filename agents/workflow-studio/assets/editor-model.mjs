@@ -45,6 +45,7 @@ const AIR_LEGACY_EXTENSION =
   "https://open330.github.io/air/extensions/legacy-workflow-ir-v1";
 const MAX_AIR_MARKDOWN_BYTES = 32 * 1024 * 1024;
 const MAX_AIR_CARRIER_TOKEN_BYTES = 32 * 1024 * 1024;
+const MAX_AIR_ENVELOPE_COLLECTION_ITEMS = 1_000;
 const MAX_AIR_GRAPH_ITEMS = 30_000;
 const MAX_AIR_TITLE_CODE_POINTS = 8_192;
 const MAX_AIR_BODY_CODE_POINTS = 33_554_432;
@@ -1788,6 +1789,7 @@ export function canDownloadArtifact(state) {
       if (candidateBytes.byteLength > MAX_AIR_MARKDOWN_BYTES) return false;
       const air = buildAirArtifact(state);
       return (
+        airEnvelopeWithinDownloadBounds(air) &&
         air.format === "air" &&
         air.kind === "workflow" &&
         air.artifact_id ===
@@ -2031,8 +2033,12 @@ export function buildCandidateBytes(state) {
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replace(/=+$/u, "");
-    const separator = candidate.endsWith("\n") ? "\n" : "\n\n";
-    candidate += `${separator}${MANAGED_INLINE_PREFIX}${encoded} -->\n`;
+    const newline = state.sourceNewline === "crlf" ? "\r\n" : "\n";
+    const separator = candidate.endsWith(newline)
+      ? newline
+      : `${newline}${newline}`;
+    candidate +=
+      `${separator}${MANAGED_INLINE_PREFIX}${encoded} -->${newline}`;
   }
   return UTF8.encode(candidate);
 }
@@ -2429,10 +2435,88 @@ export function buildAirArtifact(state) {
   return envelope;
 }
 
+function airEnvelopeWithinDownloadBounds(artifact) {
+  const provenance = artifact?.provenance;
+  const collections = [
+    provenance?.origins,
+    provenance?.derived_from,
+    provenance?.migrations,
+    artifact?.required_extensions,
+  ];
+  if (
+    collections.some(
+      (items) =>
+        !Array.isArray(items) ||
+        items.length > MAX_AIR_ENVELOPE_COLLECTION_ITEMS,
+    ) ||
+    provenance.migrations.some(
+      (migration) =>
+        !Array.isArray(migration?.warnings) ||
+        migration.warnings.length > MAX_AIR_ENVELOPE_COLLECTION_ITEMS,
+    )
+  ) {
+    return false;
+  }
+  return (
+    UTF8.encode(canonicalJson(artifact)).byteLength <= MAX_AIR_MARKDOWN_BYTES
+  );
+}
+
+const RAW_HTML_ELEMENT_END = Object.freeze({
+  pre: /<\/pre[ \t]*>/iu,
+  script: /<\/script[ \t]*>/iu,
+  style: /<\/style[ \t]*>/iu,
+  textarea: /<\/textarea[ \t]*>/iu,
+});
+
+function openRawHtmlContext(line) {
+  const content = line.replace(/^[ \t]{0,3}/u, "");
+  if (content.startsWith("<!--")) {
+    return content.includes("-->") ? null : /-->/u;
+  }
+  const element = content.match(
+    /^<(pre|script|style|textarea)(?=[ \t>]|$)/iu,
+  );
+  if (!element) return null;
+  const end = RAW_HTML_ELEMENT_END[element[1].toLowerCase()];
+  return end.test(content) ? null : end;
+}
+
+function markerClaimsAirCarrier(token, isTerminal) {
+  try {
+    const tokenBytes = decodeAirCarrierTokenBytes(token);
+    if (tokenBytes.byteLength > MAX_AIR_CARRIER_TOKEN_BYTES) return false;
+    const manifestText = UTF8_FATAL_DECODER.decode(tokenBytes);
+    const claimsObject =
+      isTerminal && manifestText.trimStart().startsWith("{");
+    let manifest;
+    try {
+      manifest = JSON.parse(manifestText);
+    } catch {
+      return claimsObject;
+    }
+    return (
+      (
+        manifest?.carrier === "air.md" &&
+        manifest?.carrier_version === "1"
+      ) ||
+      (
+        claimsObject &&
+        manifest !== null &&
+        typeof manifest === "object" &&
+        !Array.isArray(manifest)
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 function sourceEndsInOpenAirMarkdownContext(sourceText) {
   let fence = null;
   let firstLine = true;
   let frontmatter = false;
+  let rawHtmlEnd = null;
   for (const line of sourceText.split(/\r\n|\n/u)) {
     if (firstLine && line === "---") {
       frontmatter = true;
@@ -2444,21 +2528,30 @@ function sourceEndsInOpenAirMarkdownContext(sourceText) {
       if (line === "---") frontmatter = false;
       continue;
     }
-    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
-    if (!match) continue;
-    const marker = match[1][0];
-    if (fence === null) {
-      if (marker === "`" && match[2].includes("`")) continue;
-      fence = { marker, length: match[1].length };
-    } else if (
-      fence.marker === marker &&
-      match[1].length >= fence.length &&
-      match[2].trim().length === 0
-    ) {
-      fence = null;
+    if (rawHtmlEnd !== null) {
+      if (rawHtmlEnd.test(line)) rawHtmlEnd = null;
+      continue;
     }
+    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence !== null) {
+      if (
+        match &&
+        fence.marker === match[1][0] &&
+        match[1].length >= fence.length &&
+        match[2].trim().length === 0
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+    if (match) {
+      if (match[1][0] === "`" && match[2].includes("`")) continue;
+      fence = { marker: match[1][0], length: match[1].length };
+      continue;
+    }
+    rawHtmlEnd = openRawHtmlContext(line);
   }
-  return frontmatter || fence !== null;
+  return frontmatter || fence !== null || rawHtmlEnd !== null;
 }
 
 function hasRecognizedAirMarkdownCarrier(sourceText) {
@@ -2466,6 +2559,7 @@ function hasRecognizedAirMarkdownCarrier(sourceText) {
   let firstLine = true;
   let frontmatter = false;
   let fence = null;
+  let rawHtmlEnd = null;
   while (offset < sourceText.length) {
     const newlineIndex = sourceText.indexOf("\n", offset);
     const hasNewline = newlineIndex !== -1;
@@ -2482,6 +2576,22 @@ function hasRecognizedAirMarkdownCarrier(sourceText) {
     firstLine = false;
     if (frontmatter) {
       if (line === "---") frontmatter = false;
+      continue;
+    }
+    if (rawHtmlEnd !== null) {
+      const nestedMarker = line.match(
+        /^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u,
+      );
+      if (
+        nestedMarker &&
+        markerClaimsAirCarrier(
+          nestedMarker[1],
+          offset === sourceText.length,
+        )
+      ) {
+        return true;
+      }
+      if (rawHtmlEnd.test(line)) rawHtmlEnd = null;
       continue;
     }
 
@@ -2509,38 +2619,13 @@ function hasRecognizedAirMarkdownCarrier(sourceText) {
     }
 
     const marker = line.match(/^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u);
-    if (!marker) continue;
-    try {
-      const tokenBytes = decodeAirCarrierTokenBytes(marker[1]);
-      if (tokenBytes.byteLength > MAX_AIR_CARRIER_TOKEN_BYTES) continue;
-      const manifestText = UTF8_FATAL_DECODER.decode(tokenBytes);
-      const claimsObject =
-        offset === sourceText.length &&
-        manifestText.trimStart().startsWith("{");
-      let manifest;
-      try {
-        manifest = JSON.parse(manifestText);
-      } catch {
-        if (claimsObject) return true;
-        continue;
-      }
-      if (
-        manifest?.carrier === "air.md" &&
-        manifest?.carrier_version === "1"
-      ) {
-        return true;
-      }
-      if (
-        claimsObject &&
-        manifest !== null &&
-        typeof manifest === "object" &&
-        !Array.isArray(manifest)
-      ) {
-        return true;
-      }
-    } catch {
-      // Marker-shaped ordinary prose is not a recognized AIR carrier.
+    if (
+      marker &&
+      markerClaimsAirCarrier(marker[1], offset === sourceText.length)
+    ) {
+      return true;
     }
+    rawHtmlEnd = openRawHtmlContext(line);
   }
   return false;
 }
@@ -2574,7 +2659,7 @@ export function buildAirMarkdownBytes(state) {
   if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
     throw airMarkdownError(
       "AIR_MD_UNREPRESENTABLE_SOURCE",
-      "Source ends in an open frontmatter or fenced-code context.",
+      "Source ends in an open frontmatter, fenced-code, or raw-HTML context.",
     );
   }
   const separator = sourceText.endsWith(eol) ? eol : `${eol}${eol}`;

@@ -155,6 +155,32 @@ test("live privacy scanner requires and scans every repository installer", () =>
     "aws_session_token: " + "A".repeat(31),
     ["-----BEGIN", "ENCRYPTED", "PUBLIC", "KEY-----"].join(" "),
   ];
+  const unicodeProfileCanaries = [
+    { category: "letter", segment: "김 지운" },
+    { category: "mark", segment: "Jose\u0301-Smith" },
+    { category: "number", segment: "١٢٣.٤" },
+  ].flatMap(({ category, segment }) => [
+    [
+      "private macOS path",
+      ["", "Users", segment, "private.txt"].join("/"),
+      `Unicode ${category} macOS profile`,
+    ],
+    [
+      "private Unix path",
+      ["", "home", segment, "private.txt"].join("/"),
+      `Unicode ${category} Unix profile`,
+    ],
+    [
+      "private Windows path",
+      ["C:", "Users", segment, "private.txt"].join("\\"),
+      `Unicode ${category} Windows backslash profile`,
+    ],
+    [
+      "private Windows path",
+      ["C:", "Users", segment, "private.txt"].join("/"),
+      `Unicode ${category} Windows slash profile`,
+    ],
+  ]);
   const canaries = [
     ["private macOS path", ["", "Users", "Alice", "private.txt"].join("/")],
     [
@@ -182,6 +208,7 @@ test("live privacy scanner requires and scans every repository installer", () =>
       "private Windows path",
       ["c:", "uSeRs", "Alice Smith", "private.txt"].join("/"),
     ],
+    ...unicodeProfileCanaries,
     ...["", "RSA", "EC", "OPENSSH", "ENCRYPTED"].map((kind) => [
       "private key",
       ["-----BEGIN", kind, "PRIVATE", "KEY-----"].filter(Boolean).join(" "),
@@ -274,7 +301,7 @@ test("live privacy scanner requires and scans every repository installer", () =>
       execFileSync("git", ["add", "--", name], { cwd: repository });
     }
 
-    for (const [label, canary] of canaries) {
+    for (const [label, canary, variant = label] of canaries) {
       for (const name of installers) {
         const path = join(repository, name);
         const original = readFileSync(path, "utf8");
@@ -282,6 +309,7 @@ test("live privacy scanner requires and scans every repository installer", () =>
         assert.throws(
           () => verifyPrivacySurfaces({ repository, component }),
           new RegExp(`${name.replace(".", "\\.")}: ${label}`),
+          `${variant} was not rejected in ${name}`,
         );
         writeFileSync(path, original);
       }

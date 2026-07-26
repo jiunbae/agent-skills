@@ -6,9 +6,10 @@ import {
 } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
+  lstat,
   open,
   readdir,
-  stat,
+  realpath,
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
@@ -139,6 +140,134 @@ function opaqueToken(random, prefix) {
 
 function identity(info) {
   return `${String(info.dev)}:${String(info.ino)}`;
+}
+
+function isContainedPath(root, locator, { allowRoot = false } = {}) {
+  const difference = relative(root, locator);
+  return (
+    (allowRoot && difference === "") ||
+    (
+      difference !== "" &&
+      difference !== ".." &&
+      !difference.startsWith(`..${sep}`) &&
+      !isAbsolute(difference)
+    )
+  );
+}
+
+async function inspectAuthorizedEntry(
+  authorization,
+  locator,
+  kind,
+  expected = null,
+) {
+  const resolvedLocator = resolve(locator);
+  if (!isContainedPath(authorization.path, resolvedLocator, {
+    allowRoot: resolvedLocator === authorization.path,
+  })) {
+    return null;
+  }
+  try {
+    const before = await lstat(resolvedLocator, { bigint: true });
+    if (
+      before.isSymbolicLink() ||
+      (kind === "directory" ? !before.isDirectory() : !before.isFile())
+    ) {
+      return null;
+    }
+    const resolvedRealPath = await realpath(resolvedLocator);
+    if (!isContainedPath(authorization.realPath, resolvedRealPath, {
+      allowRoot: resolvedLocator === authorization.path,
+    })) {
+      return null;
+    }
+    const after = await lstat(resolvedLocator, { bigint: true });
+    const observedIdentity = identity(after);
+    if (
+      after.isSymbolicLink() ||
+      (kind === "directory" ? !after.isDirectory() : !after.isFile()) ||
+      observedIdentity !== identity(before) ||
+      (
+        expected !== null &&
+        (
+          observedIdentity !== expected.identity ||
+          resolvedRealPath !== expected.realPath
+        )
+      )
+    ) {
+      return null;
+    }
+    return Object.freeze({
+      identity: observedIdentity,
+      info: after,
+      locator: resolvedLocator,
+      realPath: resolvedRealPath,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function authorizeRoot(root) {
+  try {
+    const before = await lstat(root.path, { bigint: true });
+    if (before.isSymbolicLink() || !before.isDirectory()) return null;
+    const resolvedRealPath = await realpath(root.path);
+    const after = await lstat(root.path, { bigint: true });
+    if (
+      after.isSymbolicLink() ||
+      !after.isDirectory() ||
+      identity(after) !== identity(before)
+    ) {
+      return null;
+    }
+    const accepted = Object.freeze({
+      identity: identity(after),
+      info: after,
+      locator: root.path,
+      realPath: resolvedRealPath,
+    });
+    return Object.freeze({
+      path: root.path,
+      realPath: resolvedRealPath,
+      identity: accepted.identity,
+      directoryChain: Object.freeze([accepted]),
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function directoryChainIsAuthorized(authorization, chain) {
+  if (
+    !Array.isArray(chain) ||
+    chain.length === 0 ||
+    chain[0].locator !== authorization.path ||
+    chain[0].identity !== authorization.identity
+  ) {
+    return false;
+  }
+  let parent = null;
+  for (const expected of chain) {
+    if (
+      parent !== null &&
+      !isContainedPath(parent.locator, expected.locator)
+    ) {
+      return false;
+    }
+    if (
+      await inspectAuthorizedEntry(
+        authorization,
+        expected.locator,
+        "directory",
+        expected,
+      ) === null
+    ) {
+      return false;
+    }
+    parent = expected;
+  }
+  return true;
 }
 
 function publicDiagnostic(code, count = 1) {
@@ -688,7 +817,16 @@ export function createSessionRegistry({
     };
 
     for (const root of normalizedRoots) {
-      const queue = [{ directory: root.path, depth: 0 }];
+      const authorization = await authorizeRoot(root);
+      if (authorization === null) {
+        addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+        continue;
+      }
+      const queue = [{
+        directory: root.path,
+        directoryChain: authorization.directoryChain,
+        depth: 0,
+      }];
       while (queue.length > 0) {
         if (now() - started > boundedLimits.maxDurationMs) {
           addDiagnostic("AIR_SESSION_TIME_LIMIT");
@@ -696,14 +834,30 @@ export function createSessionRegistry({
           queue.length = 0;
           break;
         }
-        const { directory, depth } = queue.shift();
+        const { directory, directoryChain, depth } = queue.shift();
+        if (
+          !(await directoryChainIsAuthorized(
+            authorization,
+            directoryChain,
+          ))
+        ) {
+          addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+          continue;
+        }
         let dirents;
         try {
           dirents = await readdir(directory, { withFileTypes: true });
         } catch {
-          if (directory === root.path) {
-            addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
-          }
+          addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+          continue;
+        }
+        if (
+          !(await directoryChainIsAuthorized(
+            authorization,
+            directoryChain,
+          ))
+        ) {
+          addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
           continue;
         }
         dirents.sort((left, right) => left.name.localeCompare(right.name));
@@ -718,7 +872,23 @@ export function createSessionRegistry({
           const locator = resolve(directory, dirent.name);
           if (dirent.isDirectory()) {
             if (depth < boundedLimits.maxDepth) {
-              queue.push({ directory: locator, depth: depth + 1 });
+              const accepted = await inspectAuthorizedEntry(
+                authorization,
+                locator,
+                "directory",
+              );
+              if (accepted === null) {
+                addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+                continue;
+              }
+              queue.push({
+                directory: locator,
+                directoryChain: Object.freeze([
+                  ...directoryChain,
+                  accepted,
+                ]),
+                depth: depth + 1,
+              });
             }
             continue;
           }
@@ -730,13 +900,16 @@ export function createSessionRegistry({
             queue.length = 0;
             break;
           }
-          let info;
-          try {
-            info = await stat(locator, { bigint: true });
-          } catch {
+          const accepted = await inspectAuthorizedEntry(
+            authorization,
+            locator,
+            "file",
+          );
+          if (accepted === null) {
+            addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
             continue;
           }
-          if (!info.isFile()) continue;
+          const { info } = accepted;
           const kind = streamKind(root.provider, locator);
           const relativeLocator = relative(root.path, locator);
           const privateKey =
@@ -755,6 +928,9 @@ export function createSessionRegistry({
             identity: identity(info),
             epoch: state.epoch,
             modifiedAt: Number(info.mtimeMs),
+            authorization,
+            directoryChain,
+            realPath: accepted.realPath,
           });
         }
       }
@@ -765,6 +941,27 @@ export function createSessionRegistry({
       left.provider.localeCompare(right.provider) ||
       left.streamKind.localeCompare(right.streamKind) ||
       left.id.localeCompare(right.id));
+    const publishableCandidates = [];
+    for (const candidate of candidates) {
+      if (
+        !(await directoryChainIsAuthorized(
+          candidate.authorization,
+          candidate.directoryChain,
+        )) ||
+        await inspectAuthorizedEntry(
+          candidate.authorization,
+          candidate.locator,
+          "file",
+          candidate,
+        ) === null
+      ) {
+        addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+        continue;
+      }
+      publishableCandidates.push(candidate);
+    }
+    candidates.length = 0;
+    candidates.push(...publishableCandidates);
     const retainedCatalogLimit = Math.max(
       0,
       Math.min(
@@ -895,6 +1092,21 @@ export function createSessionRegistry({
 
     let handle;
     try {
+      if (
+        !(await directoryChainIsAuthorized(
+          item.authorization,
+          item.directoryChain,
+        )) ||
+        await inspectAuthorizedEntry(
+          item.authorization,
+          item.locator,
+          "file",
+          item,
+        ) === null
+      ) {
+        markSourceReset(item, epoch, null);
+        return sourceChanged(sessionId, requestedGeneration);
+      }
       handle = await open(
         item.locator,
         fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
@@ -905,7 +1117,17 @@ export function createSessionRegistry({
       if (
         item.identity !== sourceIdentity ||
         (prior && prior.sourceIdentity !== sourceIdentity) ||
-        (prior && Number(before.size) < prior.offset)
+        (prior && Number(before.size) < prior.offset) ||
+        !(await directoryChainIsAuthorized(
+          item.authorization,
+          item.directoryChain,
+        )) ||
+        await inspectAuthorizedEntry(
+          item.authorization,
+          item.locator,
+          "file",
+          item,
+        ) === null
       ) {
         markSourceReset(item, epoch, sourceIdentity);
         return sourceChanged(sessionId, requestedGeneration);
@@ -1464,6 +1686,21 @@ export function createSessionRegistry({
           publicationContinuity.continuity
       ) {
         markSourceReset(item, epoch, identity(finalPublicationInfo));
+        return sourceChanged(sessionId, requestedGeneration);
+      }
+      if (
+        !(await directoryChainIsAuthorized(
+          item.authorization,
+          item.directoryChain,
+        )) ||
+        await inspectAuthorizedEntry(
+          item.authorization,
+          item.locator,
+          "file",
+          item,
+        ) === null
+      ) {
+        markSourceReset(item, epoch, null);
         return sourceChanged(sessionId, requestedGeneration);
       }
       if (generation !== requestedGeneration) {

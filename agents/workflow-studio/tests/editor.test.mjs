@@ -58,6 +58,11 @@ import {
   migrateLegacyToAir,
   validateAirArtifact,
 } from "../src/air.mjs";
+import {
+  AIR_ENVELOPE_DOMAIN,
+  airEnvelopeProjection,
+  canonicalizeJcs,
+} from "../shared/air-codec.mjs";
 
 const ASSET_ROOT = new URL("../assets/", import.meta.url);
 
@@ -72,6 +77,15 @@ function byteSpan(text, needle, occurrence = 0) {
     from = offset + target.length;
   }
   return { start_byte: offset, end_byte: offset + target.length };
+}
+
+function resealEnvelope(artifact) {
+  delete artifact.integrity.envelope_digest;
+  artifact.integrity.envelope_digest = createHash("sha256")
+    .update(AIR_ENVELOPE_DOMAIN, "utf8")
+    .update(canonicalizeJcs(airEnvelopeProjection(artifact)), "utf8")
+    .digest("hex");
+  return artifact;
 }
 
 function workflowArtifact() {
@@ -388,6 +402,76 @@ test("downloaded browser artifacts survive canonical validation and rendering", 
   assert.match(
     renderWorkflow(structuralArtifact).toString(),
     /Opaque <script>alert\('xss'\)<\/script> content\./,
+  );
+});
+
+test("browser managed metadata preserves CRLF parity with core for mapped and structural edits", () => {
+  const source = Buffer.from(
+    "---\r\n" +
+      "name: crlf-browser-core\r\n" +
+      "description: CRLF parity\r\n" +
+      "---\r\n\r\n" +
+      "## Workflow\r\n" +
+      "### Step 1: Inspect\r\n" +
+      "Inspect safely.\r\n" +
+      "### Step 2: Report\r\n" +
+      "Report clearly.\r\n",
+    "utf8",
+  );
+  const workflow = importSkillBytes(source, {
+    sourcePath: "crlf-browser-core/SKILL.md",
+  });
+  const firstId = workflow.graph.nodes[0].id;
+
+  const mappedBrowser = editNode(
+    createEditorState(workflow),
+    firstId,
+    "title",
+    "Inspect CRLF safely",
+  );
+  const mappedCore = applyOperation(workflow, {
+    type: "edit-node",
+    node_id: firstId,
+    title: "Inspect CRLF safely",
+  });
+  const mappedBytes = Buffer.from(buildCandidateBytes(mappedBrowser));
+  assert.deepEqual(mappedBytes, renderWorkflow(mappedCore));
+  assert.doesNotMatch(
+    mappedBytes.toString("utf8").replaceAll("\r\n", ""),
+    /\n/u,
+  );
+
+  let structuralBrowser = addNode(
+    createEditorState(workflow),
+    firstId,
+    "after",
+  );
+  const insertedId = structuralBrowser.selectedId;
+  structuralBrowser = editNode(
+    structuralBrowser,
+    insertedId,
+    "title",
+    "Verify CRLF",
+  );
+  structuralBrowser = editNode(
+    structuralBrowser,
+    insertedId,
+    "body",
+    "Verify exact bytes.",
+  );
+  const structuralCore = applyOperation(workflow, {
+    type: "add-node",
+    reference_id: firstId,
+    position: "after",
+    id: insertedId,
+    title: "Verify CRLF",
+    body: "Verify exact bytes.",
+  });
+  const structuralBytes = Buffer.from(buildCandidateBytes(structuralBrowser));
+  assert.deepEqual(structuralBytes, renderWorkflow(structuralCore));
+  assert.doesNotMatch(
+    structuralBytes.toString("utf8").replaceAll("\r\n", ""),
+    /\n/u,
   );
 });
 
@@ -1550,6 +1634,46 @@ test("browser AIR download rejects candidate Skill bytes above 32 MiB", async ()
   assert.equal(canDownloadArtifact(legacy), true);
 });
 
+test("browser AIR download rejects an edit that exceeds envelope collection bounds", async () => {
+  const base = JSON.parse(
+    await readFile(
+      new URL("../examples/hello-agent/workflow.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const atLimit = structuredClone(base);
+  const ancestor = {
+    artifact_id: base.artifact_id,
+    content_digest: base.integrity.content_digest,
+    relationship: "render",
+  };
+  atLimit.provenance.derived_from = Array.from(
+    { length: 1_000 },
+    () => structuredClone(ancestor),
+  );
+  resealEnvelope(atLimit);
+  validateAirArtifact(atLimit);
+
+  const unchanged = createEditorState(atLimit);
+  assert.equal(canDownloadArtifact(unchanged), true);
+  assert.equal(canDownloadAirMarkdown(unchanged), true);
+
+  const edited = editNode(
+    unchanged,
+    unchanged.nodes[0].id,
+    "title",
+    "Inspect the bounded envelope",
+  );
+  const candidate = buildAirArtifact(edited);
+  assert.equal(candidate.provenance.derived_from.length, 1_001);
+  assert.throws(
+    () => validateAirArtifact(candidate),
+    /provenance\.derived_from may contain at most 1000 items/u,
+  );
+  assert.equal(canDownloadArtifact(edited), false);
+  assert.equal(canDownloadAirMarkdown(edited), false);
+});
+
 test("browser AIR Markdown export matches native context safety", () => {
   for (const source of [
     Buffer.from("---\nname: open\ndescription: Open frontmatter\n", "utf8"),
@@ -1561,6 +1685,15 @@ test("browser AIR Markdown export matches native context safety", () => {
       "---\nname: tilde-fenced\ndescription: Open tilde fence\n---\n\n~~~text",
       "utf8",
     ),
+    Buffer.from(
+      "---\nname: comment\ndescription: Open HTML comment\n---\n\n<!--\n",
+      "utf8",
+    ),
+    ...["pre", "script", "style", "textarea"].map((element) =>
+      Buffer.from(
+        `---\nname: raw-${element}\ndescription: Open raw element\n---\n\n<${element}>\n`,
+        "utf8",
+      )),
   ]) {
     const state = createEditorState(
       migrateLegacyToAir(importSkillBytes(source, {
@@ -1569,8 +1702,9 @@ test("browser AIR Markdown export matches native context safety", () => {
     );
     assert.throws(
       () => buildAirMarkdownBytes(state),
-      /open frontmatter or fenced-code context/u,
+      /open frontmatter, fenced-code, or raw-HTML context/u,
     );
+    assert.equal(canDownloadAirMarkdown(state), false);
   }
 
   for (const source of [
@@ -1589,6 +1723,22 @@ test("browser AIR Markdown export matches native context safety", () => {
     Buffer.from(
       "---\nname: pseudo-fence\ndescription: Backtick pseudo-fence\n---\n\n" +
         "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n```text`\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: closed-comment\ndescription: Closed HTML comment\n---\n\n<!-- note -->\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: closed-script\ndescription: Closed raw element\n---\n\n<script>\nconst ok = true;\n</script>\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: ordinary-scripture\ndescription: Ordinary HTML-like text\n---\n\n<scripture>\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: inline-script\ndescription: Inline raw-element text\n---\n\nParagraph <script>\n",
       "utf8",
     ),
   ]) {

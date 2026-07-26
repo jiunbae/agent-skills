@@ -52,19 +52,19 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
   "air-cli-server.test.mjs": 10,
   "air-spec.test.mjs": 2,
-  "air.test.mjs": 17,
-  "catalog.test.mjs": 10,
+  "air.test.mjs": 18,
+  "catalog.test.mjs": 12,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
-  "editor.test.mjs": 44,
+  "editor.test.mjs": 46,
   "identity.test.mjs": 4,
   "package-notices.test.mjs": 1,
   "r3-integration.test.mjs": 7,
   "release-gate.test.mjs": 5,
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
-  "session-api.test.mjs": 11,
-  "sessions.test.mjs": 25,
+  "session-api.test.mjs": 12,
+  "sessions.test.mjs": 26,
 });
 const NON_TEXT_EXTENSIONS = new Set([
   ".7z",
@@ -420,15 +420,15 @@ export function verifyPrivacySurfaces({
   const forbidden = [
     [
       "private macOS path",
-      /\/Users\/(?=[^/\r\n]*[A-Za-z0-9])[A-Za-z0-9._ -]+\//,
+      /\/Users\/(?=[^/\r\n]*[\p{L}\p{M}\p{N}])[\p{L}\p{M}\p{N}._ -]+\//u,
     ],
     [
       "private Unix path",
-      /\/home\/(?=[^/\r\n]*[A-Za-z0-9])[A-Za-z0-9._ -]+\//,
+      /\/home\/(?=[^/\r\n]*[\p{L}\p{M}\p{N}])[\p{L}\p{M}\p{N}._ -]+\//u,
     ],
     [
       "private Windows path",
-      /[A-Za-z]:[\\/]Users[\\/](?=[^\\/\r\n]*[A-Za-z0-9])[A-Za-z0-9._ -]+[\\/]/i,
+      /[A-Za-z]:[\\/]Users[\\/](?=[^\\/\r\n]*[\p{L}\p{M}\p{N}])[\p{L}\p{M}\p{N}._ -]+[\\/]/iu,
     ],
     [
       "private key",

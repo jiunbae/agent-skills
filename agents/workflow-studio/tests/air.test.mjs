@@ -368,6 +368,70 @@ test("AIR Markdown retains LF, CRLF, final-newline, Unicode, and marker prose", 
   );
 });
 
+test("AIR Markdown rejects open raw HTML contexts and accepts closed or ordinary controls", () => {
+  const prefix =
+    "---\nname: raw-html\ndescription: Raw HTML carrier context\n---\n\n" +
+    "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n";
+  const openTails = [
+    "<!--\n",
+    ...["pre", "script", "style", "textarea"].map(
+      (element) => `<${element}>\n`,
+    ),
+  ];
+  for (const [index, tail] of openTails.entries()) {
+    const source = Buffer.from(`${prefix}${tail}`, "utf8");
+    const artifact = migrateLegacyToAir(importSkillBytes(source, {
+      sourcePath: `raw-open-${index}/SKILL.md`,
+    }));
+    expectCode(
+      () => encodeAirMarkdownArtifact(artifact),
+      "AIR_MD_UNREPRESENTABLE_SOURCE",
+    );
+
+    const withoutSource = structuredClone(artifact);
+    delete withoutSource.body.source.bytes_base64;
+    const manifest = {
+      carrier: "air.md",
+      carrier_version: "1",
+      envelope_without_source_content: withoutSource,
+      logical_source: {
+        byte_length: source.length,
+        sha256: artifact.body.source.sha256,
+      },
+    };
+    const token = Buffer.from(
+      canonicalizeJcs(manifest),
+      "utf8",
+    ).toString("base64url");
+    const forged = Buffer.concat([
+      source,
+      Buffer.from(`\n<!-- air:v1 ${token} -->\n`, "utf8"),
+    ]);
+    expectCode(
+      () => decodeAirMarkdownArtifact(forged),
+      "AIR_CARRIER_INVALID",
+    );
+  }
+
+  const controls = [
+    "<!-- closed -->\n",
+    "<script>\nconst ok = true;\n</script>\n",
+    "<PRE>closed on one line</PRE>\n",
+    "<scripture>\n",
+    "Paragraph <script>\n",
+  ];
+  for (const [index, tail] of controls.entries()) {
+    const source = Buffer.from(`${prefix}${tail}`, "utf8");
+    const artifact = migrateLegacyToAir(importSkillBytes(source, {
+      sourcePath: `raw-control-${index}/SKILL.md`,
+    }));
+    const carrier = encodeAirMarkdownArtifact(artifact);
+    const decoded = decodeAirMarkdownArtifact(carrier);
+    assert.deepEqual(decoded.logicalSource, source);
+    validateAirArtifact(decoded.artifact);
+  }
+});
+
 test("AIR Markdown treats backtick-bearing pseudo-fence info as ordinary source", () => {
   const source = Buffer.from(
     "---\nname: pseudo-fence\ndescription: Backtick pseudo-fence fixture\n---\n\n" +

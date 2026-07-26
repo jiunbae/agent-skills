@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 
-import { link, open, readFile, lstat, mkdir, rename, rm } from "node:fs/promises";
+import {
+  link,
+  open,
+  readFile,
+  realpath,
+  lstat,
+  mkdir,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -45,7 +54,8 @@ import {
 
 const ASSETS_DIR = resolve(import.meta.dirname, "../assets");
 const SCHEMAS_DIR = resolve(import.meta.dirname, "../schemas");
-const COMPONENT_SKILLS_ROOT = resolve(import.meta.dirname, "../..");
+const COMPONENT_ROOT = resolve(import.meta.dirname, "..");
+const SOURCE_CHECKOUT_CANDIDATE = resolve(import.meta.dirname, "../../..");
 const HELP = `AIR Workbench
 
 Usage:
@@ -774,14 +784,19 @@ export async function resolveWorkbenchSkillRoots({
   claudeHome,
   configPath,
   pluginCacheRoot,
-  componentRoot = COMPONENT_SKILLS_ROOT,
+  componentRoot = COMPONENT_ROOT,
+  repositoryCandidate = SOURCE_CHECKOUT_CANDIDATE,
 } = {}) {
+  const repositoryRoot = await resolveSourceCheckoutRoot({
+    componentRoot,
+    repositoryCandidate,
+  });
   const roots = resolveSkillRoots({
     cwd,
+    repositorySourceRoot: repositoryRoot,
     userHome,
     codexHome,
     claudeHome,
-    componentRoot,
   });
   const available = CATALOG_LIMITS.maxRoots - roots.length;
   if (available < 1) {
@@ -803,6 +818,53 @@ export async function resolveWorkbenchSkillRoots({
     status: pluginResolution.status,
     diagnostics: pluginResolution.diagnostics,
   });
+}
+
+export async function resolveSourceCheckoutRoot({
+  componentRoot = COMPONENT_ROOT,
+  repositoryCandidate = SOURCE_CHECKOUT_CANDIDATE,
+} = {}) {
+  const repositoryRoot = resolve(repositoryCandidate);
+  const expectedComponent = join(
+    repositoryRoot,
+    "agents",
+    "workflow-studio",
+  );
+  try {
+    const [
+      repositoryInfo,
+      gitInfo,
+      profileInfo,
+      componentInfo,
+      repositoryPhysical,
+      componentPhysical,
+      expectedComponentPhysical,
+    ] = await Promise.all([
+      lstat(repositoryRoot),
+      lstat(join(repositoryRoot, ".git")),
+      lstat(join(repositoryRoot, "profiles.yml")),
+      lstat(resolve(componentRoot)),
+      realpath(repositoryRoot),
+      realpath(resolve(componentRoot)),
+      realpath(expectedComponent),
+    ]);
+    if (
+      repositoryInfo.isSymbolicLink() ||
+      !repositoryInfo.isDirectory() ||
+      gitInfo.isSymbolicLink() ||
+      (!gitInfo.isDirectory() && !gitInfo.isFile()) ||
+      profileInfo.isSymbolicLink() ||
+      !profileInfo.isFile() ||
+      componentInfo.isSymbolicLink() ||
+      !componentInfo.isDirectory() ||
+      componentPhysical !== expectedComponentPhysical
+    ) {
+      return undefined;
+    }
+    return repositoryPhysical;
+  } catch {
+    return undefined;
+  }
 }
 
 async function promptValue(parsed) {

@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -20,7 +21,10 @@ import {
 } from "../src/catalog.mjs";
 import { decodeAirMarkdownArtifact } from "../src/air.mjs";
 import { stableStringify } from "../src/core.mjs";
-import { resolveWorkbenchSkillRoots } from "../scripts/workflow-studio.mjs";
+import {
+  resolveSourceCheckoutRoot,
+  resolveWorkbenchSkillRoots,
+} from "../scripts/workflow-studio.mjs";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
 
@@ -67,14 +71,23 @@ test("standard roots are caller-owned, bounded, and exclude plugin caches", () =
   const roots = resolveSkillRoots({
     cwd: "/workspace/project",
     repositoryRoot: "/workspace/repository",
+    repositorySourceRoot: "/workspace/repository",
     userHome: "/users/tester",
     codexHome: "/providers/codex",
     claudeHome: "/providers/claude",
-    componentRoot: "/workspace/repository/agents",
     explicitRoots: [{ label: "../../private", path: "/extra/skills" }],
   });
   assert.ok(roots.length <= CATALOG_LIMITS.maxRoots);
   assert.ok(roots.some((root) => root.label === "user-codex"));
+  assert.deepEqual(
+    roots.find((root) => root.label === "repository-source"),
+    {
+      path: "/workspace/repository",
+      kind: "repository",
+      label: "repository-source",
+      grouped: true,
+    },
+  );
   assert.ok(roots.some((root) => root.label === "explicit-1"));
   assert.equal(roots.some((root) => root.path.includes("plugins/cache")), false);
 });
@@ -114,6 +127,98 @@ test("enabled-plugin resolver admits only configured or marked unambiguous roots
     ],
   );
   assert.equal(resolution.status, "ready");
+});
+
+test("enabled-plugin authority ignores multiline TOML content and recovers from ambiguous lexical state", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-toml-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "config.toml");
+  const cache = join(directory, "cache");
+  for (const plugin of ["basic-spoof", "literal-spoof", "real"]) {
+    await putPlugin(cache, "market", plugin, "1.0.0");
+  }
+  await put(
+    join(cache, "market", "real", "1.0.0", "skills", "real", "SKILL.md"),
+    skill("real-plugin-skill", "Real plugin Skill"),
+  );
+  await put(config, Buffer.from([
+    '[plugins."basic-spoof@market"]',
+    'note = """',
+    "enabled = true",
+    '"""',
+    "enabled = false",
+    "literal = '''",
+    '[plugins."literal-spoof@market"]',
+    "enabled = true",
+    "'''",
+    '[plugins."real@market"]',
+    "enabled = true",
+    "",
+  ].join("\n")));
+
+  const valid = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(valid.roots.map((root) => root.label), [
+    "enabled-plugin:market:real",
+  ]);
+  assert.equal(valid.status, "ready");
+
+  await put(config, Buffer.from([
+    'message = """',
+    '[plugins."basic-spoof@market"]',
+    "enabled = true",
+    "",
+  ].join("\n")));
+  const unterminated = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(unterminated.roots, []);
+  assert.equal(unterminated.status, "partial");
+  assert.equal(JSON.stringify(unterminated).includes(directory), false);
+
+  await put(config, Buffer.from([
+    'message = "unterminated',
+    '[plugins."real@market"]',
+    "enabled = true",
+    "",
+  ].join("\n")));
+  const ambiguous = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(ambiguous.roots, []);
+  assert.equal(ambiguous.status, "partial");
+
+  const resolvingCatalog = createSkillCatalog({
+    rootResolver: () => resolveEnabledPluginSkillRoots({
+      configPath: config,
+      cacheRoot: cache,
+    }),
+    randomIdBytes: ids(),
+  });
+  const partialCatalog = await resolvingCatalog.initialize();
+  assert.equal(partialCatalog.truncated, true);
+  assert.equal(partialCatalog.item_count, 0);
+  assert.equal(JSON.stringify(partialCatalog).includes(directory), false);
+
+  await put(config, Buffer.from(
+    '[plugins."real@market"]\nenabled = true\n',
+  ));
+  const recovered = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(recovered.roots.map((root) => root.label), [
+    "enabled-plugin:market:real",
+  ]);
+  assert.equal(recovered.status, "ready");
+  const recoveredCatalog = await resolvingCatalog.refresh();
+  assert.equal(recoveredCatalog.truncated, false);
+  assert.equal(recoveredCatalog.item_count, 1);
+  assert.equal(recoveredCatalog.items[0].name, "real-plugin-skill");
 });
 
 test("enabled-plugin resolver rejects disabled, stale, malformed, and traversal authorities", async (t) => {
@@ -262,6 +367,81 @@ test("zero-input Workbench root composition includes authoritative plugins withi
       kind: "enabled-plugin",
       label: "enabled-plugin:market:workbench",
     }],
+  );
+});
+
+test("Workbench proves a source checkout, discovers only grouped Skills, and does not relabel an installed copy", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-source-checkout-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const componentRoot = join(ROOT, "agents", "workflow-studio");
+  assert.equal(
+    await resolveSourceCheckoutRoot({
+      componentRoot,
+      repositoryCandidate: ROOT,
+    }),
+    await realpath(ROOT),
+  );
+
+  const checkoutResolution = await resolveWorkbenchSkillRoots({
+    cwd: join(directory, "checkout-project"),
+    userHome: join(directory, "checkout-home"),
+    codexHome: join(directory, "checkout-codex"),
+    claudeHome: join(directory, "checkout-claude"),
+    componentRoot,
+    repositoryCandidate: ROOT,
+  });
+  const checkoutCatalog = createSkillCatalog({
+    roots: checkoutResolution.roots,
+    randomIdBytes: ids(),
+  });
+  const checkout = await checkoutCatalog.initialize();
+  assert.equal(checkout.physical_record_count, 31);
+  assert.equal(checkout.item_count, 31);
+  assert.ok(
+    checkout.items.some((item) => item.name === "analyzing-business-model"),
+  );
+  assert.equal(
+    checkout.items.some((item) => item.name === "hello-agent"),
+    false,
+  );
+
+  const installedHome = join(directory, "installed-home");
+  const installedComponent = join(
+    installedHome,
+    ".agents",
+    "skills",
+    "workflow-studio",
+  );
+  await put(
+    join(installedComponent, "SKILL.md"),
+    skill("installed-workflow-studio", "Installed copy"),
+  );
+  const installedResolution = await resolveWorkbenchSkillRoots({
+    cwd: join(directory, "installed-project"),
+    userHome: installedHome,
+    codexHome: join(directory, "installed-codex"),
+    claudeHome: join(directory, "installed-claude"),
+    componentRoot: installedComponent,
+    repositoryCandidate: join(installedHome, ".agents"),
+  });
+  assert.equal(
+    installedResolution.roots.some((root) => root.kind === "repository"),
+    false,
+  );
+  const installedCatalog = createSkillCatalog({
+    roots: installedResolution.roots,
+    randomIdBytes: ids(),
+  });
+  const installed = await installedCatalog.initialize();
+  assert.equal(installed.item_count, 1);
+  assert.deepEqual(
+    installed.items[0].source_labels.map((source) => source.kind),
+    ["user"],
+  );
+  assert.equal(
+    installed.roots.some((root) => root.source_kind === "repository"),
+    false,
   );
 });
 

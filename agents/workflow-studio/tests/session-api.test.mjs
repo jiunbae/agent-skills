@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   openSync,
+  renameSync,
+  symlinkSync,
   writeSync,
 } from "node:fs";
 import {
@@ -266,6 +268,64 @@ test("session routes compose Host, token, exact methods, refresh, and no-CORS au
     });
     assert.equal(wrongHost.status, 421);
   });
+});
+
+test("session API omits a queued directory changed to an outside alias", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-api-queue-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceRoot = join(directory, "codex");
+  const queued = join(sourceRoot, "queued");
+  const moved = join(sourceRoot, "moved");
+  const outside = join(directory, "outside");
+  const sentinel = "AIR_QUEUED_OUTSIDE_CANARY";
+  await Promise.all([
+    mkdir(queued, { recursive: true }),
+    mkdir(outside, { recursive: true }),
+  ]);
+  await writeFile(
+    join(outside, `${sentinel}.jsonl`),
+    `{"prompt":"${sentinel}"}\n`,
+  );
+  let clockCalls = 0;
+  let changed = false;
+  const registry = createSessionRegistry({
+    roots: [{ path: sourceRoot, provider: "codex" }],
+    randomBytes: (length) => Buffer.alloc(length, 0x61),
+    now() {
+      clockCalls += 1;
+      if (clockCalls === 3) {
+        renameSync(queued, moved);
+        symlinkSync(outside, queued, "dir");
+        changed = true;
+      }
+      return 0;
+    },
+  });
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+
+  const response = await http(address, {
+    path:
+      `/air/v1/sessions?refresh=1&token=${encodeURIComponent(studio.token)}`,
+  });
+  assert.equal(changed, true);
+  assert.equal(response.status, 200);
+  const catalog = JSON.parse(response.body);
+  assert.deepEqual(catalog.items, []);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: "AIR_SESSION_ROOT_UNAVAILABLE",
+    count: 1,
+  }]);
+  assert.equal(response.body.includes(sentinel), false);
+  assert.equal(response.body.includes(directory), false);
 });
 
 test("snapshot POST accepts only a closed bounded I-JSON request and opaque handles", async (t) => {

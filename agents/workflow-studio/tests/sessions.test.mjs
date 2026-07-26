@@ -90,6 +90,32 @@ async function fixture(t) {
   return { claude, codex, root, subagents };
 }
 
+test("session catalog rejects a configured root symlink alias", async (t) => {
+  const dirs = await fixture(t);
+  const outside = join(dirs.root, "outside-root");
+  const alias = join(dirs.root, "root-alias");
+  await mkdir(outside);
+  await writeFile(
+    join(outside, `${SENTINEL}.jsonl`),
+    `{"prompt":"${SENTINEL}"}\n`,
+  );
+  await symlink(outside, alias, "dir");
+  const registry = createSessionRegistry({
+    roots: [{ path: alias, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  const catalog = await registry.catalog({ refresh: true });
+  assert.deepEqual(catalog.items, []);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: "AIR_SESSION_ROOT_UNAVAILABLE",
+    count: 1,
+  }]);
+  assert.equal(JSON.stringify(catalog).includes(SENTINEL), false);
+  assert.equal(JSON.stringify(catalog).includes(dirs.root), false);
+});
+
 test("session catalog is explicit-refresh, bounded, opaque, and provider-specific", async (t) => {
   const dirs = await fixture(t);
   await Promise.all([

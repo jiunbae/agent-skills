@@ -71,6 +71,33 @@ function rewriteCarrierJsonText(carrier, manifestText) {
   );
 }
 
+function nestedRawHtmlCarrier(tail, sourcePath) {
+  const source = Buffer.from(
+    "---\nname: nested-raw-html\ndescription: Nested carrier fixture\n---\n\n" +
+      "## Workflow\n\n### Step 1: Inspect\nInspect safely.\n\n" +
+      tail,
+    "utf8",
+  );
+  const artifact = migrateLegacyToAir(importSkillBytes(source, { sourcePath }));
+  const withoutSource = structuredClone(artifact);
+  delete withoutSource.body.source.bytes_base64;
+  const manifest = {
+    carrier: "air.md",
+    carrier_version: "1",
+    envelope_without_source_content: withoutSource,
+    logical_source: {
+      byte_length: source.byteLength,
+      sha256: artifact.body.source.sha256,
+    },
+  };
+  const token = Buffer.from(canonicalizeJcs(manifest), "utf8")
+    .toString("base64url");
+  return Buffer.concat([
+    source,
+    Buffer.from(`\n<!-- air:v1 ${token} -->\n`, "utf8"),
+  ]);
+}
+
 function http(address, path, { method = "GET", host } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     const req = request({
@@ -432,6 +459,8 @@ test("malformed AIR carrier claims reach CLI, catalog, and HTTP", async (t) => {
     rewriteCarrierManifest(carrier, (manifest) => {
       delete manifest.carrier_version;
     }),
+    nestedRawHtmlCarrier("<!--\n", "nested-comment/SKILL.md"),
+    nestedRawHtmlCarrier("<script>\n", "nested-script/SKILL.md"),
   ];
   for (const [index, source] of claimed.entries()) {
     const path = join(directory, `claimed-${index}`, "SKILL.md");

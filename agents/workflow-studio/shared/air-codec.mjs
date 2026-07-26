@@ -772,10 +772,64 @@ function sourceBytesFromWorkflow(artifact) {
   });
 }
 
+const RAW_HTML_ELEMENT_END = Object.freeze({
+  pre: /<\/pre[ \t]*>/iu,
+  script: /<\/script[ \t]*>/iu,
+  style: /<\/style[ \t]*>/iu,
+  textarea: /<\/textarea[ \t]*>/iu,
+});
+
+function openRawHtmlContext(line) {
+  const content = line.replace(/^[ \t]{0,3}/u, "");
+  if (content.startsWith("<!--")) {
+    return content.includes("-->") ? null : /-->/u;
+  }
+  const element = content.match(
+    /^<(pre|script|style|textarea)(?=[ \t>]|$)/iu,
+  );
+  if (!element) return null;
+  const end = RAW_HTML_ELEMENT_END[element[1].toLowerCase()];
+  return end.test(content) ? null : end;
+}
+
+function markerClaimsAirCarrier(token, isTerminal) {
+  try {
+    const manifestBytes = decodeBase64(token, {
+      url: true,
+      code: "AIR_CARRIER_INVALID",
+      maxBytes: MAX_CARRIER_TOKEN_BYTES,
+    });
+    const manifestText = decodeUtf8(
+      manifestBytes,
+      "AIR_CARRIER_INVALID",
+    );
+    const claimsObject =
+      isTerminal && manifestText.trimStart().startsWith("{");
+    let manifest;
+    try {
+      manifest = parseIJson(manifestBytes, {
+        maxBytes: MAX_CARRIER_TOKEN_BYTES,
+      });
+    } catch {
+      return claimsObject;
+    }
+    return (
+      (
+        manifest?.carrier === "air.md" &&
+        manifest?.carrier_version === "1"
+      ) ||
+      (claimsObject && plainRecord(manifest))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function sourceEndsInOpenAirMarkdownContext(sourceText) {
   let fence = null;
   let firstLine = true;
   let frontmatter = false;
+  let rawHtmlEnd = null;
   for (const line of sourceText.split(/\r\n|\n/u)) {
     if (firstLine && line === "---") {
       frontmatter = true;
@@ -787,21 +841,30 @@ export function sourceEndsInOpenAirMarkdownContext(sourceText) {
       if (line === "---") frontmatter = false;
       continue;
     }
-    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
-    if (!match) continue;
-    const marker = match[1][0];
-    if (fence === null) {
-      if (marker === "`" && match[2].includes("`")) continue;
-      fence = { marker, length: match[1].length };
-    } else if (
-      fence.marker === marker &&
-      match[1].length >= fence.length &&
-      match[2].trim().length === 0
-    ) {
-      fence = null;
+    if (rawHtmlEnd !== null) {
+      if (rawHtmlEnd.test(line)) rawHtmlEnd = null;
+      continue;
     }
+    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence !== null) {
+      if (
+        match &&
+        fence.marker === match[1][0] &&
+        match[1].length >= fence.length &&
+        match[2].trim().length === 0
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+    if (match) {
+      if (match[1][0] === "`" && match[2].includes("`")) continue;
+      fence = { marker: match[1][0], length: match[1].length };
+      continue;
+    }
+    rawHtmlEnd = openRawHtmlContext(line);
   }
-  return frontmatter || fence !== null;
+  return frontmatter || fence !== null || rawHtmlEnd !== null;
 }
 
 export function hasRecognizedAirMarkdownCarrier(input) {
@@ -819,6 +882,7 @@ export function hasRecognizedAirMarkdownCarrier(input) {
   let firstLine = true;
   let frontmatter = false;
   let fence = null;
+  let rawHtmlEnd = null;
   while (offset < sourceText.length) {
     const newlineIndex = sourceText.indexOf("\n", offset);
     const hasNewline = newlineIndex !== -1;
@@ -835,6 +899,22 @@ export function hasRecognizedAirMarkdownCarrier(input) {
     firstLine = false;
     if (frontmatter) {
       if (line === "---") frontmatter = false;
+      continue;
+    }
+    if (rawHtmlEnd !== null) {
+      const nestedMarker = line.match(
+        /^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u,
+      );
+      if (
+        nestedMarker &&
+        markerClaimsAirCarrier(
+          nestedMarker[1],
+          offset === sourceText.length,
+        )
+      ) {
+        return true;
+      }
+      if (rawHtmlEnd.test(line)) rawHtmlEnd = null;
       continue;
     }
 
@@ -865,41 +945,13 @@ export function hasRecognizedAirMarkdownCarrier(input) {
     }
 
     const marker = line.match(/^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u);
-    if (!marker) {
-      continue;
+    if (
+      marker &&
+      markerClaimsAirCarrier(marker[1], offset === sourceText.length)
+    ) {
+      return true;
     }
-    const isTerminal = offset === sourceText.length;
-    try {
-      const manifestBytes = decodeBase64(marker[1], {
-        url: true,
-        code: "AIR_CARRIER_INVALID",
-        maxBytes: MAX_CARRIER_TOKEN_BYTES,
-      });
-      const manifestText = decodeUtf8(
-        manifestBytes,
-        "AIR_CARRIER_INVALID",
-      );
-      const claimsObject =
-        isTerminal && manifestText.trimStart().startsWith("{");
-      let manifest;
-      try {
-        manifest = parseIJson(manifestBytes, {
-          maxBytes: MAX_CARRIER_TOKEN_BYTES,
-        });
-      } catch {
-        if (claimsObject) return true;
-        continue;
-      }
-      if (
-        manifest?.carrier === "air.md" &&
-        manifest?.carrier_version === "1"
-      ) {
-        return true;
-      }
-      if (claimsObject && plainRecord(manifest)) return true;
-    } catch {
-      // Marker-shaped ordinary prose is not a recognized AIR carrier.
-    }
+    rawHtmlEnd = openRawHtmlContext(line);
   }
   return false;
 }
@@ -917,7 +969,7 @@ export function encodeAirMarkdown(artifact) {
   if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
     fail(
       "AIR_MD_UNREPRESENTABLE_SOURCE",
-      "Source ends in an open frontmatter or fenced-code context.",
+      "Source ends in an open frontmatter, fenced-code, or raw-HTML context.",
     );
   }
   const source = artifact.body.source;
@@ -1071,7 +1123,7 @@ export function decodeAirMarkdown(input) {
   if (sourceEndsInOpenAirMarkdownContext(sourceText)) {
     fail(
       "AIR_CARRIER_INVALID",
-      "AIR Markdown carrier is nested in an open frontmatter or fenced-code context.",
+      "AIR Markdown carrier is nested in an open frontmatter, fenced-code, or raw-HTML context.",
     );
   }
   const newline = artifact.body.source.newline;
