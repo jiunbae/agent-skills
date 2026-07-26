@@ -125,6 +125,18 @@ test("release help and README disclose the untracked worktree boundary", () => {
   }
 });
 
+test("privacy inventory names and requires every repository installer", () => {
+  const source = readFileSync(VERIFY_RELEASE, "utf8");
+  assert.match(
+    source,
+    /COMPONENT_PATHSPEC,\s+"install\.sh",\s+"install\.ps1",\s+"setup\.sh"/,
+  );
+  assert.match(
+    source,
+    /paths\.includes\(join\(REPOSITORY, "install\.sh"\)\) &&\s+paths\.includes\(join\(REPOSITORY, "install\.ps1"\)\) &&\s+paths\.includes\(join\(REPOSITORY, "setup\.sh"\)\)/,
+  );
+});
+
 test("omitted and compensated tests fail fixed per-file TAP accounting", () => {
   const fixture = resolve(
     COMPONENT,

@@ -55,7 +55,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "identity.test.mjs": 4,
   "package-notices.test.mjs": 1,
   "r3-integration.test.mjs": 7,
-  "release-gate.test.mjs": 4,
+  "release-gate.test.mjs": 5,
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
   "session-api.test.mjs": 11,
@@ -376,6 +376,7 @@ function verifyPrivacySurfaces() {
       "--",
       COMPONENT_PATHSPEC,
       "install.sh",
+      "install.ps1",
       "setup.sh",
     ],
     {
@@ -398,6 +399,7 @@ function verifyPrivacySurfaces() {
       paths.includes(join(COMPONENT, "package-lock.json")) &&
       paths.includes(join(COMPONENT, ".gitignore")) &&
       paths.includes(join(REPOSITORY, "install.sh")) &&
+      paths.includes(join(REPOSITORY, "install.ps1")) &&
       paths.includes(join(REPOSITORY, "setup.sh")),
     "Privacy scan is missing a required package or installer surface.",
   );
