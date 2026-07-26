@@ -1557,6 +1557,10 @@ test("browser AIR Markdown export matches native context safety", () => {
       "---\nname: fenced\ndescription: Open fence\n---\n\n```text",
       "utf8",
     ),
+    Buffer.from(
+      "---\nname: tilde-fenced\ndescription: Open tilde fence\n---\n\n~~~text",
+      "utf8",
+    ),
   ]) {
     const state = createEditorState(
       migrateLegacyToAir(importSkillBytes(source, {
@@ -1580,6 +1584,11 @@ test("browser AIR Markdown export matches native context safety", () => {
     ),
     Buffer.from(
       "---\r\nname: mixed\ndescription: Mixed newline source\r\n---\n\n## Workflow\r\n### Step 1: Inspect\nInspect safely.\r\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: pseudo-fence\ndescription: Backtick pseudo-fence\n---\n\n" +
+        "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n```text`\n",
       "utf8",
     ),
   ]) {
@@ -1646,6 +1655,15 @@ test("browser AIR Markdown refuses recognized inner carriers and oversized publi
     checkedCarrier,
     Buffer.from("ordinary tail\n", "utf8"),
   ]);
+  const pseudoFenceCarrier = encodeAirMarkdownArtifact(
+    migrateLegacyToAir(importSkillBytes(Buffer.from(
+      "---\nname: browser-pseudo-fence\ndescription: Backtick pseudo-fence\n---\n\n" +
+        "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n```text`\n",
+      "utf8",
+    ), {
+      sourcePath: "browser-pseudo-fence/SKILL.md",
+    })),
+  );
   const crlfCarrier = encodeAirMarkdownArtifact(
     migrateLegacyToAir(importSkillBytes(Buffer.from(
       "---\r\nname: browser-missing-crlf\r\ndescription: Missing CRLF carrier newline\r\n---\r\n\r\n## Workflow\r\n### Step 1: Inspect\r\nInspect safely.\r\n",
@@ -1657,6 +1675,7 @@ test("browser AIR Markdown refuses recognized inner carriers and oversized publi
   for (const source of [
     corruptCarrier,
     nonterminalCarrier,
+    pseudoFenceCarrier,
     checkedCarrier.subarray(0, checkedCarrier.byteLength - 1),
     crlfCarrier.subarray(0, crlfCarrier.byteLength - 2),
     ...claimedCarriers,

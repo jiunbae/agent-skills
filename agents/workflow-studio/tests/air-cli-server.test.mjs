@@ -257,6 +257,62 @@ test("air import recognizes an activated carrier by bytes and does not nest it",
   }
 });
 
+test("pseudo-fence carriers retain AIR authority through CLI, catalog, and HTTP", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-pseudo-fence-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const source = Buffer.from(
+    "---\nname: pseudo-fence\ndescription: Backtick pseudo-fence fixture\n---\n\n" +
+      "## Workflow\n\n### Step 1: Inspect\nInspect safely.\n\n```text`\n",
+    "utf8",
+  );
+  const artifact = migrateLegacyToAir(importSkillBytes(source, {
+    sourcePath: "pseudo-fence/SKILL.md",
+  }));
+  const carrier = encodeAirMarkdownArtifact(artifact);
+  const root = join(directory, "catalog");
+  const skillPath = join(root, "pseudo-fence", "SKILL.md");
+  const output = join(directory, "pseudo-fence.air.json");
+  await put(skillPath, carrier);
+
+  const imported = await invoke(AIR, ["import", skillPath, "--out", output]);
+  assert.equal(imported.artifact_id, artifact.artifact_id);
+  assert.equal(
+    JSON.parse(await readFile(output, "utf8")).artifact_id,
+    artifact.artifact_id,
+  );
+
+  const catalog = createSkillCatalog({
+    roots: [{ path: root, label: "pseudo-fence", kind: "explicit" }],
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, 1);
+  assert.equal(snapshot.items[0].workflow_node_count, 1);
+  assert.equal(
+    (await catalog.importAirArtifact(snapshot.items[0].id)).artifact_id,
+    artifact.artifact_id,
+  );
+
+  const studio = createStudioServer({
+    artifact: migrateLegacyToAir(importSkillBytes(SKILL, {
+      sourcePath: "bootstrap/SKILL.md",
+    })),
+    assetsDir: ASSETS,
+    schemasDir: SCHEMAS,
+    catalog,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  const response = await http(
+    address,
+    `/air/v1/skills/${snapshot.items[0].id}/artifact?token=` +
+      encodeURIComponent(studio.token),
+  );
+  assert.equal(response.status, 200);
+  const served = JSON.parse(response.body);
+  validateAirArtifact(served);
+  assert.equal(served.artifact_id, artifact.artifact_id);
+});
+
 test("mixed-newline carriers round-trip through CLI and integrity failures reach catalog", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-mixed-cli-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

@@ -1498,6 +1498,54 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       await mixedStudio.close();
     }
 
+    const pseudoFenceSource = Buffer.from(
+      "---\nname: browser-pseudo-fence\ndescription: Backtick pseudo-fence browser fixture\n---\n\n" +
+        "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n```text`\n",
+      "utf8",
+    );
+    const pseudoFenceArtifact = migrateLegacyToAir(
+      importSkillBytes(pseudoFenceSource, {
+        sourcePath: "browser-pseudo-fence/SKILL.md",
+      }),
+    );
+    const pseudoFenceStudio = createStudioServer({
+      artifact: pseudoFenceArtifact,
+      assetsDir: ASSETS_DIR,
+      schemasDir: SCHEMAS_DIR,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const pseudoFenceAddress = await pseudoFenceStudio.listen();
+    const pseudoFencePage = await context.newPage();
+    try {
+      await pseudoFencePage.goto(
+        `http://127.0.0.1:${pseudoFenceAddress.port}/?token=${
+          encodeURIComponent(pseudoFenceStudio.token)
+        }&initial=explicit`,
+        { waitUntil: "domcontentloaded" },
+      );
+      await pseudoFencePage.locator(".react-flow.air-flow-ready")
+        .waitFor({ state: "visible" });
+      assert.equal(
+        await pseudoFencePage.locator("#downloadMarkdown").isEnabled(),
+        true,
+      );
+      const carrierPath = await downloadAndValidate(
+        pseudoFencePage,
+        "#downloadMarkdown",
+        "workflow.air.md",
+      );
+      const decoded = decodeAirMarkdownArtifact(await readFile(carrierPath));
+      assert.deepEqual(decoded.logicalSource, pseudoFenceSource);
+      assert.equal(
+        decoded.artifact.artifact_id,
+        pseudoFenceArtifact.artifact_id,
+      );
+    } finally {
+      await pseudoFencePage.close();
+      await pseudoFenceStudio.close();
+    }
+
     const skillSource = await readFile(BACKGROUND_IMPLEMENTER, "utf8");
     const changedSkill = (title, sourcePath) => importSkillBytes(
       Buffer.from(

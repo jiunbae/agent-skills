@@ -50,9 +50,9 @@ const PRIVACY_TOTAL_BYTES = 64 * 1024 * 1024;
 const PRIVACY_TIME_MS = 5_000;
 const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
-  "air-cli-server.test.mjs": 9,
+  "air-cli-server.test.mjs": 10,
   "air-spec.test.mjs": 2,
-  "air.test.mjs": 16,
+  "air.test.mjs": 17,
   "catalog.test.mjs": 10,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
@@ -418,14 +418,27 @@ export function verifyPrivacySurfaces({
     "Privacy scan is missing a required package or installer surface.",
   );
   const forbidden = [
-    ["private macOS path", /\/Users\/[A-Za-z0-9._-]+\//],
-    ["private Unix path", /\/home\/[A-Za-z0-9._-]+\//],
+    [
+      "private macOS path",
+      /\/Users\/(?=[^/\r\n]*[A-Za-z0-9])[A-Za-z0-9._ -]+\//,
+    ],
+    [
+      "private Unix path",
+      /\/home\/(?=[^/\r\n]*[A-Za-z0-9])[A-Za-z0-9._ -]+\//,
+    ],
     [
       "private Windows path",
-      /[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9._-]+[\\/]/,
+      /[A-Za-z]:[\\/]Users[\\/](?=[^\\/\r\n]*[A-Za-z0-9])[A-Za-z0-9._ -]+[\\/]/i,
     ],
-    ["private key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
+    [
+      "private key",
+      /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/,
+    ],
     ["AWS key", /(?:AKIA|ASIA)[0-9A-Z]{16}/],
+    [
+      "AWS credential assignment",
+      /\bAWS_(?:SECRET_ACCESS_KEY|SESSION_TOKEN)\b\s*(?:=|:)\s*["']?[A-Za-z0-9/+=_-]{32,}/i,
+    ],
     [
       "GitHub token",
       /(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{36,})/,

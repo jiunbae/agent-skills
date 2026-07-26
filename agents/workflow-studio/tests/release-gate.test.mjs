@@ -149,10 +149,23 @@ test("live privacy scanner requires and scans every repository installer", () =>
     "github_pat_EXAMPLE",
     "sk-EXAMPLE",
     "https://example.invalid/?token=TOKEN",
+    "AWS_SECRET_ACCESS_KEY=<secret>",
+    "aws_secret_access_key=$AWS_SECRET_ACCESS_KEY",
+    'Aws_Session_Token = "TOKEN"',
+    "aws_session_token: " + "A".repeat(31),
+    ["-----BEGIN", "ENCRYPTED", "PUBLIC", "KEY-----"].join(" "),
   ];
   const canaries = [
     ["private macOS path", ["", "Users", "Alice", "private.txt"].join("/")],
+    [
+      "private macOS path",
+      ["", "Users", "Alice Smith", "private.txt"].join("/"),
+    ],
     ["private Unix path", ["", "home", "alice", "private.txt"].join("/")],
+    [
+      "private Unix path",
+      ["", "home", "alice smith", "private.txt"].join("/"),
+    ],
     [
       "private Windows path",
       ["C:", "Users", "Alice", "private.txt"].join("\\"),
@@ -161,12 +174,40 @@ test("live privacy scanner requires and scans every repository installer", () =>
       "private Windows path",
       ["C:", "Users", "Alice", "private.txt"].join("/"),
     ],
-    ...["", "RSA", "EC", "OPENSSH"].map((kind) => [
+    [
+      "private Windows path",
+      ["C:", "USERS", "Alice Smith", "private.txt"].join("\\"),
+    ],
+    [
+      "private Windows path",
+      ["c:", "uSeRs", "Alice Smith", "private.txt"].join("/"),
+    ],
+    ...["", "RSA", "EC", "OPENSSH", "ENCRYPTED"].map((kind) => [
       "private key",
       ["-----BEGIN", kind, "PRIVATE", "KEY-----"].filter(Boolean).join(" "),
     ]),
     ["AWS key", "AKIA" + "A".repeat(16)],
     ["AWS key", "ASIA" + "A".repeat(16)],
+    [
+      "AWS credential assignment",
+      "AWS_SECRET_ACCESS_KEY=" + "A".repeat(40),
+    ],
+    [
+      "AWS credential assignment",
+      "aws_secret_access_key: " + "a".repeat(40),
+    ],
+    [
+      "AWS credential assignment",
+      'Aws_SeCrEt_AcCeSs_KeY = "' + "A".repeat(38) + '+/"',
+    ],
+    [
+      "AWS credential assignment",
+      "AWS_SESSION_TOKEN=" + "A".repeat(64),
+    ],
+    [
+      "AWS credential assignment",
+      "aws_session_token: '" + "A".repeat(30) + "+/='",
+    ],
     ...["p", "o", "u", "s", "r"].map((kind) => [
       "GitHub token",
       `gh${kind}_` + "a".repeat(36),
@@ -200,6 +241,22 @@ test("live privacy scanner requires and scans every repository installer", () =>
       assert(selected.includes(join(repository, name)), `${name} was not selected`);
     }
 
+    const untrackedCanary = join(component, "untracked-privacy.txt");
+    writeFileSync(untrackedCanary, "synthetic untracked component file\n");
+    assert(
+      verifyPrivacySurfaces({ repository, component }).includes(untrackedCanary),
+      "untracked component file was not selected",
+    );
+    writeFileSync(
+      untrackedCanary,
+      "aws_session_token=" + "A".repeat(64) + "\n",
+    );
+    assert.throws(
+      () => verifyPrivacySurfaces({ repository, component }),
+      /untracked-privacy\.txt: AWS credential assignment/,
+    );
+    rmSync(untrackedCanary);
+
     for (const name of installers) {
       const path = join(repository, name);
       execFileSync("git", ["rm", "--cached", "--quiet", "--", name], {
@@ -229,6 +286,19 @@ test("live privacy scanner requires and scans every repository installer", () =>
         writeFileSync(path, original);
       }
     }
+
+    const boundary = join(component, "privacy-boundary.txt");
+    writeFileSync(boundary, Buffer.alloc(2 * 1024 * 1024, "x"));
+    assert(
+      verifyPrivacySurfaces({ repository, component }).includes(boundary),
+      "exact per-file privacy bound was not selected",
+    );
+    writeFileSync(boundary, Buffer.alloc(2 * 1024 * 1024 + 1, "x"));
+    assert.throws(
+      () => verifyPrivacySurfaces({ repository, component }),
+      /Privacy scan file too large: agents\/workflow-studio\/privacy-boundary\.txt/,
+    );
+    rmSync(boundary);
   } finally {
     rmSync(repository, { force: true, recursive: true });
   }

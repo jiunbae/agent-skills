@@ -368,6 +368,40 @@ test("AIR Markdown retains LF, CRLF, final-newline, Unicode, and marker prose", 
   );
 });
 
+test("AIR Markdown treats backtick-bearing pseudo-fence info as ordinary source", () => {
+  const source = Buffer.from(
+    "---\nname: pseudo-fence\ndescription: Backtick pseudo-fence fixture\n---\n\n" +
+      "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n```text`\n",
+    "utf8",
+  );
+  const artifact = migrateLegacyToAir(importSkillBytes(source, {
+    sourcePath: "pseudo-fence/SKILL.md",
+  }));
+  const carrier = encodeAirMarkdownArtifact(artifact);
+  const decoded = decodeAirMarkdownArtifact(carrier);
+
+  assert.deepEqual(decoded.logicalSource, source);
+  assert.equal(
+    recognizeAirSkillCarrier(carrier)?.artifact.artifact_id,
+    artifact.artifact_id,
+  );
+  assert.equal(
+    importSkillBytesAsAir(carrier).artifact_id,
+    artifact.artifact_id,
+  );
+
+  const outer = migrateLegacyToAir(importSkillBytes(carrier, {
+    sourcePath: "pseudo-fence-outer/SKILL.md",
+  }));
+  outer.extensions = {};
+  delete outer.integrity.envelope_digest;
+  resealContent(outer);
+  expectCode(
+    () => encodeAirMarkdownArtifact(outer),
+    "AIR_CARRIER_DUPLICATE",
+  );
+});
+
 test("activated AIR Markdown reopens by bytes with stable authoritative semantics", async () => {
   const carrier = await readFile(
     resolve(
@@ -459,6 +493,15 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
       `<!-- air:v1 ${marker[1]} -->\n\`\`\`\n`,
     "utf8",
   );
+  const tildeFenced = Buffer.from(
+    `${logical.toString("utf8")}\n~~~text\n<!-- air:v1 ${marker[1]} -->\n`,
+    "utf8",
+  );
+  const closedTildeFenced = Buffer.from(
+    `${logical.toString("utf8")}\n~~~text\n` +
+      `<!-- air:v1 ${marker[1]} -->\n~~~\n`,
+    "utf8",
+  );
   const quoted = Buffer.from(
     `${logical.toString("utf8")}\n> <!-- air:v1 ${marker[1]} -->\n`,
     "utf8",
@@ -476,6 +519,8 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
   for (const source of [
     fenced,
     closedFenced,
+    tildeFenced,
+    closedTildeFenced,
     quoted,
     indented,
     markerProse,

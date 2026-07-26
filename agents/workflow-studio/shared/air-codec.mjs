@@ -791,6 +791,7 @@ export function sourceEndsInOpenAirMarkdownContext(sourceText) {
     if (!match) continue;
     const marker = match[1][0];
     if (fence === null) {
+      if (marker === "`" && match[2].includes("`")) continue;
       fence = { marker, length: match[1].length };
     } else if (
       fence.marker === marker &&
@@ -850,6 +851,12 @@ export function hasRecognizedAirMarkdownCarrier(input) {
       continue;
     }
     if (fenceMatch) {
+      if (
+        fenceMatch[1][0] === "`" &&
+        fenceMatch[2].includes("`")
+      ) {
+        continue;
+      }
       fence = {
         marker: fenceMatch[1][0],
         length: fenceMatch[1].length,
