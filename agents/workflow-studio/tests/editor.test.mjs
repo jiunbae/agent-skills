@@ -53,6 +53,7 @@ import {
 } from "../src/core.mjs";
 import {
   decodeAirMarkdownArtifact,
+  encodeAirMarkdownArtifact,
   importSkillBytesAsAir,
   migrateLegacyToAir,
   validateAirArtifact,
@@ -1645,9 +1646,19 @@ test("browser AIR Markdown refuses recognized inner carriers and oversized publi
     checkedCarrier,
     Buffer.from("ordinary tail\n", "utf8"),
   ]);
+  const crlfCarrier = encodeAirMarkdownArtifact(
+    migrateLegacyToAir(importSkillBytes(Buffer.from(
+      "---\r\nname: browser-missing-crlf\r\ndescription: Missing CRLF carrier newline\r\n---\r\n\r\n## Workflow\r\n### Step 1: Inspect\r\nInspect safely.\r\n",
+      "utf8",
+    ), {
+      sourcePath: "browser-missing-crlf/SKILL.md",
+    })),
+  );
   for (const source of [
     corruptCarrier,
     nonterminalCarrier,
+    checkedCarrier.subarray(0, checkedCarrier.byteLength - 1),
+    crlfCarrier.subarray(0, crlfCarrier.byteLength - 2),
     ...claimedCarriers,
   ]) {
     const state = createEditorState(

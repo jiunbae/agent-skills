@@ -93,13 +93,13 @@ test("enabled-plugin resolver admits only configured or marked unambiguous roots
     "",
   ].join("\n")));
 
-  const roots = await resolveEnabledPluginSkillRoots({
+  const resolution = await resolveEnabledPluginSkillRoots({
     userHome: directory,
     configPath: config,
     cacheRoot: cache,
   });
   assert.deepEqual(
-    roots.map((root) => [root.kind, root.label, root.path]),
+    resolution.roots.map((root) => [root.kind, root.label, root.path]),
     [
       [
         "enabled-plugin",
@@ -113,6 +113,7 @@ test("enabled-plugin resolver admits only configured or marked unambiguous roots
       ],
     ],
   );
+  assert.equal(resolution.status, "ready");
 });
 
 test("enabled-plugin resolver rejects disabled, stale, malformed, and traversal authorities", async (t) => {
@@ -142,13 +143,14 @@ test("enabled-plugin resolver rejects disabled, stale, malformed, and traversal 
     "",
   ].join("\n")));
 
-  const roots = await resolveEnabledPluginSkillRoots({
+  const resolution = await resolveEnabledPluginSkillRoots({
     configPath: config,
     cacheRoot: cache,
   });
-  assert.deepEqual(roots.map((root) => root.label), [
+  assert.deepEqual(resolution.roots.map((root) => root.label), [
     "enabled-plugin:market:control",
   ]);
+  assert.equal(resolution.status, "partial");
 });
 
 test("enabled-plugin resolver rejects symlink escape and fails closed on budgets", async (t) => {
@@ -178,36 +180,58 @@ test("enabled-plugin resolver rejects symlink escape and fails closed on budgets
     "",
   ].join("\n")));
 
-  const roots = await resolveEnabledPluginSkillRoots({
+  const resolution = await resolveEnabledPluginSkillRoots({
     configPath: config,
     cacheRoot: cache,
   });
-  assert.deepEqual(roots.map((root) => root.label), [
+  assert.deepEqual(resolution.roots.map((root) => root.label), [
     "enabled-plugin:market:one",
     "enabled-plugin:market:two",
   ]);
-  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+  const rootBounded = await resolveEnabledPluginSkillRoots({
     configPath: config,
     cacheRoot: cache,
     limits: { maxRoots: 1 },
-  }), []);
-  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+  });
+  assert.deepEqual(rootBounded.roots, []);
+  assert.equal(rootBounded.status, "partial");
+  const configBounded = await resolveEnabledPluginSkillRoots({
     configPath: config,
     cacheRoot: cache,
     limits: { maxConfigBytes: 1 },
-  }), []);
-  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+  });
+  assert.deepEqual(configBounded.roots, []);
+  assert.equal(configBounded.status, "partial");
+  const cacheBounded = await resolveEnabledPluginSkillRoots({
     configPath: config,
     cacheRoot: cache,
     limits: { maxCacheEntries: 1 },
-  }), []);
+  });
+  assert.deepEqual(cacheBounded.roots, []);
+  assert.equal(cacheBounded.status, "partial");
 
   const linkedCache = join(directory, "linked-cache");
   await symlink(cache, linkedCache);
-  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+  const linkedResolution = await resolveEnabledPluginSkillRoots({
     configPath: config,
     cacheRoot: linkedCache,
-  }), []);
+  });
+  assert.deepEqual(linkedResolution.roots, []);
+  assert.equal(linkedResolution.status, "partial");
+
+  const missingCache = join(directory, "missing-cache");
+  const unresolved = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: missingCache,
+  });
+  assert.deepEqual(unresolved.roots, []);
+  assert.equal(unresolved.status, "partial");
+  const absent = await resolveEnabledPluginSkillRoots({
+    configPath: join(directory, "missing-config.toml"),
+    cacheRoot: missingCache,
+  });
+  assert.deepEqual(absent.roots, []);
+  assert.equal(absent.status, "ready");
 });
 
 test("zero-input Workbench root composition includes authoritative plugins within the catalog cap", async (t) => {
@@ -221,7 +245,7 @@ test("zero-input Workbench root composition includes authoritative plugins withi
     '[plugins."workbench@market"]\nenabled = true\n',
   ));
 
-  const roots = await resolveWorkbenchSkillRoots({
+  const resolution = await resolveWorkbenchSkillRoots({
     cwd: join(directory, "project"),
     userHome: directory,
     codexHome,
@@ -230,9 +254,9 @@ test("zero-input Workbench root composition includes authoritative plugins withi
     pluginCacheRoot: cache,
     componentRoot: join(directory, "component"),
   });
-  assert.ok(roots.length <= CATALOG_LIMITS.maxRoots);
+  assert.ok(resolution.roots.length <= CATALOG_LIMITS.maxRoots);
   assert.deepEqual(
-    roots.filter((root) => root.kind === "enabled-plugin"),
+    resolution.roots.filter((root) => root.kind === "enabled-plugin"),
     [{
       path: join(cache, "market", "workbench", "current", "skills"),
       kind: "enabled-plugin",
@@ -452,6 +476,52 @@ test("bounded partial scans publish typed limits and failed refresh retains the 
   assert.equal(linkedPartial.physical_record_count, 1);
   assert.equal(linkedPartial.truncated, true);
   assert.ok(linkedPartial.limit_codes.includes("AIR_CATALOG_RECORD_LIMIT"));
+
+  let pluginStatus = "partial";
+  const resolving = createSkillCatalog({
+    rootResolver: async () => ({
+      roots: [{ label: "resolved", path: root }],
+      status: pluginStatus,
+    }),
+    randomIdBytes: ids(),
+  });
+  const pluginPartial = await resolving.initialize();
+  assert.equal(pluginPartial.truncated, true);
+  assert.ok(
+    pluginPartial.limit_codes.includes(
+      "AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL",
+    ),
+  );
+  assert.deepEqual(
+    pluginPartial.roots.find((state) =>
+      state.source_label === "enabled-plugins"),
+    {
+      source_label: "enabled-plugins",
+      source_kind: "enabled-plugin",
+      status: "partial",
+      record_count: 0,
+      diagnostics: [{
+        severity: "warning",
+        code: "AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL",
+        message:
+          "Enabled plugin discovery was incomplete; uncertain plugin roots were omitted.",
+      }],
+      omitted_diagnostic_count: 0,
+    },
+  );
+  assert.equal(JSON.stringify(pluginPartial).includes(directory), false);
+  pluginStatus = "ready";
+  const pluginReady = await resolving.refresh();
+  assert.equal(pluginReady.truncated, false);
+  assert.equal(
+    pluginReady.limit_codes.includes("AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL"),
+    false,
+  );
+  assert.equal(
+    pluginReady.roots.some((state) =>
+      state.source_label === "enabled-plugins"),
+    false,
+  );
 });
 
 test("actual repository Skill smoke returns aggregates and a synthetic locator only", async () => {

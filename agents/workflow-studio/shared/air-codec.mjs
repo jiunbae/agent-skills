@@ -858,7 +858,7 @@ export function hasRecognizedAirMarkdownCarrier(input) {
     }
 
     const marker = line.match(/^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u);
-    if (!marker || !hasNewline) {
+    if (!marker) {
       continue;
     }
     const isTerminal = offset === sourceText.length;

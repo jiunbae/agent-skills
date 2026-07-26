@@ -75,6 +75,22 @@ function diagnostic(code, message, severity = "warning") {
   return Object.freeze({ severity, code, message });
 }
 
+const PLUGIN_DISCOVERY_DIAGNOSTIC = diagnostic(
+  "AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL",
+  "Enabled plugin discovery was incomplete; uncertain plugin roots were omitted.",
+  "warning",
+);
+
+function pluginResolution(roots, status = "ready") {
+  return Object.freeze({
+    roots: Object.freeze(roots),
+    status,
+    diagnostics: status === "partial"
+      ? Object.freeze([PLUGIN_DISCOVERY_DIAGNOSTIC])
+      : Object.freeze([]),
+  });
+}
+
 function importDiagnosticCode(value) {
   const suffix = String(value ?? "FAILED")
     .toUpperCase()
@@ -241,17 +257,21 @@ async function readBoundedRegularFile(path, maxBytes) {
 }
 
 function parseEnabledPluginConfiguration(bytes, limits) {
-  if (bytes === undefined) return { states: new Map(), exceeded: false };
-  if (bytes === null) return { states: new Map(), exceeded: true };
+  if (bytes === undefined) {
+    return { states: new Map(), exceeded: false, partial: false };
+  }
+  if (bytes === null) {
+    return { states: new Map(), exceeded: true, partial: true };
+  }
   let text;
   try {
     text = UTF8_FATAL.decode(bytes);
   } catch {
-    return { states: new Map(), exceeded: true };
+    return { states: new Map(), exceeded: true, partial: true };
   }
   const lines = text.split(/\r?\n/u);
   if (lines.length > limits.maxConfigLines) {
-    return { states: new Map(), exceeded: true };
+    return { states: new Map(), exceeded: true, partial: true };
   }
 
   const states = new Map();
@@ -295,6 +315,7 @@ function parseEnabledPluginConfiguration(bytes, limits) {
   return {
     states,
     exceeded: sections > limits.maxAuthorities,
+    partial: [...states.values()].includes("malformed"),
   };
 }
 
@@ -344,7 +365,7 @@ async function authoritativePluginRoots({
   try {
     cacheEntries = await readdir(cacheRoot, { withFileTypes: true });
   } catch {
-    return { roots: [], exceeded: false };
+    return { roots: [], exceeded: true };
   }
   if (cacheEntries.length > limits.maxCacheEntries) {
     return { roots: [], exceeded: true };
@@ -486,7 +507,11 @@ async function authoritativePluginRoots({
       label: `enabled-plugin:${authority.marketplace}:${authority.plugin}`,
     });
   }
-  return { roots, exceeded: false };
+  return {
+    roots,
+    exceeded: false,
+    partial: roots.length < authorities.size,
+  };
 }
 
 /**
@@ -502,7 +527,7 @@ export async function resolveEnabledPluginSkillRoots({
   limits: limitOverrides,
 } = {}) {
   const limits = mergedEnabledPluginLimits(limitOverrides);
-  if (limits === null) return [];
+  if (limits === null) return pluginResolution([], "partial");
   const resolvedHome = resolve(userHome);
   const resolvedCodexHome = codexHome
     ? resolve(codexHome)
@@ -519,16 +544,23 @@ export async function resolveEnabledPluginSkillRoots({
     limits.maxConfigBytes,
   );
   const configuration = parseEnabledPluginConfiguration(configBytes, limits);
-  if (configuration.exceeded) return [];
+  if (configuration.exceeded) return pluginResolution([], "partial");
 
   let cacheInfo;
   let physicalCacheRoot;
   try {
     cacheInfo = await lstat(resolvedCache);
-    if (cacheInfo.isSymbolicLink() || !cacheInfo.isDirectory()) return [];
+    if (cacheInfo.isSymbolicLink() || !cacheInfo.isDirectory()) {
+      return pluginResolution([], "partial");
+    }
     physicalCacheRoot = await realpath(resolvedCache);
-  } catch {
-    return [];
+  } catch (error) {
+    const configuredOrUncertain =
+      configuration.partial ||
+      [...configuration.states.values()].includes("enabled");
+    return error?.code === "ENOENT"
+      ? pluginResolution([], configuredOrUncertain ? "partial" : "ready")
+      : pluginResolution([], "partial");
   }
   const result = await authoritativePluginRoots({
     cacheRoot: resolvedCache,
@@ -536,8 +568,11 @@ export async function resolveEnabledPluginSkillRoots({
     states: configuration.states,
     limits,
   });
-  if (result.exceeded) return [];
-  return result.roots.map((root, index) => normalizeRoot(root, index));
+  if (result.exceeded) return pluginResolution([], "partial");
+  return pluginResolution(
+    result.roots.map((root, index) => normalizeRoot(root, index)),
+    configuration.partial || result.partial ? "partial" : "ready",
+  );
 }
 
 /**
@@ -1268,7 +1303,9 @@ async function scanCatalog({
   priorIds,
   randomIdBytes,
   generation,
+  pluginStatus = "ready",
 }) {
+  const pluginPartial = pluginStatus === "partial";
   const state = {
     limits,
     deadline: Date.now() + limits.maxDurationMs,
@@ -1276,9 +1313,20 @@ async function scanCatalog({
     candidates: 0,
     totalBytes: 0,
     records: [],
-    rootStates: [],
-    truncated: false,
-    limitCodes: new Set(),
+    rootStates: pluginPartial
+      ? [{
+          source_label: "enabled-plugins",
+          source_kind: "enabled-plugin",
+          status: "partial",
+          diagnostics: [PLUGIN_DISCOVERY_DIAGNOSTIC],
+          omittedDiagnostics: 0,
+          records: 0,
+        }]
+      : [],
+    truncated: pluginPartial,
+    limitCodes: new Set(
+      pluginPartial ? [PLUGIN_DISCOVERY_DIAGNOSTIC.code] : [],
+    ),
   };
   const normalized = roots.map(normalizeRoot);
   const availableRoots = await canonicalRoots(normalized, state);
@@ -1354,6 +1402,7 @@ async function rereadSource(source, expectedHash, limits) {
 
 class SkillCatalog {
   #roots;
+  #rootResolver;
   #limits;
   #randomIdBytes;
   #snapshot = null;
@@ -1362,8 +1411,9 @@ class SkillCatalog {
   #tombstones = new Set();
   #refreshPromise = null;
 
-  constructor({ roots, limits, randomIdBytes }) {
+  constructor({ roots, rootResolver, limits, randomIdBytes }) {
     this.#roots = roots;
+    this.#rootResolver = rootResolver;
     this.#limits = limits;
     this.#randomIdBytes = randomIdBytes;
   }
@@ -1387,13 +1437,32 @@ class SkillCatalog {
     const generation = (this.#snapshot?.generation ?? 0) + 1;
     const priorItems = this.#items;
     const priorIds = new Map(this.#idsByHash);
-    this.#refreshPromise = scanCatalog({
-      roots: this.#roots,
-      limits: this.#limits,
-      priorIds,
-      randomIdBytes: this.#randomIdBytes,
-      generation,
-    }).then(({ snapshot, internals }) => {
+    this.#refreshPromise = Promise.resolve()
+      .then(() => this.#rootResolver?.())
+      .then((resolution) => {
+        if (resolution === undefined) {
+          return { roots: this.#roots, status: "ready" };
+        }
+        if (
+          resolution === null ||
+          !Array.isArray(resolution.roots) ||
+          !new Set(["ready", "partial"]).has(resolution.status)
+        ) {
+          throw catalogError(
+            "AIR_CATALOG_INVALID_ROOT",
+            "Skill root resolver returned an invalid result.",
+          );
+        }
+        return resolution;
+      })
+      .then((resolution) => scanCatalog({
+        roots: resolution.roots,
+        limits: this.#limits,
+        priorIds,
+        randomIdBytes: this.#randomIdBytes,
+        generation,
+        pluginStatus: resolution.status,
+      })).then(({ snapshot, internals }) => {
       const nextIdsByHash = new Map();
       for (const [id, item] of internals) nextIdsByHash.set(item.hash, id);
       this.#tombstones = new Set(
@@ -1468,6 +1537,7 @@ class SkillCatalog {
 
 export function createSkillCatalog({
   roots = [],
+  rootResolver,
   limits,
   randomIdBytes = secureRandomBytes,
 } = {}) {
@@ -1480,8 +1550,15 @@ export function createSkillCatalog({
       "Opaque ID generator must be a function.",
     );
   }
+  if (rootResolver !== undefined && typeof rootResolver !== "function") {
+    throw catalogError(
+      "AIR_CATALOG_INVALID_ROOT",
+      "Skill root resolver must be a function.",
+    );
+  }
   return new SkillCatalog({
     roots: roots.map(normalizeRoot),
+    rootResolver,
     limits: mergedLimits(limits),
     randomIdBytes,
   });

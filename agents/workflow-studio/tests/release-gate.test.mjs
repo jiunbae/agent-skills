@@ -137,13 +137,60 @@ test("live privacy scanner requires and scans every repository installer", () =>
   const repository = mkdtempSync(join(tmpdir(), "air-privacy-release-"));
   const component = join(repository, "agents/workflow-studio");
   const installers = ["install.sh", "install.ps1", "install.cmd", "setup.sh"];
+  const safePlaceholders = [
+    ["", "Users", "<name>", "project"].join("/"),
+    ["", "home", "$USER", "project"].join("/"),
+    ["C:", "Users", "<name>", "project"].join("\\"),
+    ["C:", "Users", "<name>", "project"].join("/"),
+    ["-----BEGIN", "<TYPE>", "PRIVATE", "KEY-----"].join(" "),
+    "AKIA" + ".".repeat(16),
+    "ASIA" + ".".repeat(16),
+    "ghp_EXAMPLE",
+    "github_pat_EXAMPLE",
+    "sk-EXAMPLE",
+    "https://example.invalid/?token=TOKEN",
+  ];
+  const canaries = [
+    ["private macOS path", ["", "Users", "Alice", "private.txt"].join("/")],
+    ["private Unix path", ["", "home", "alice", "private.txt"].join("/")],
+    [
+      "private Windows path",
+      ["C:", "Users", "Alice", "private.txt"].join("\\"),
+    ],
+    [
+      "private Windows path",
+      ["C:", "Users", "Alice", "private.txt"].join("/"),
+    ],
+    ...["", "RSA", "EC", "OPENSSH"].map((kind) => [
+      "private key",
+      ["-----BEGIN", kind, "PRIVATE", "KEY-----"].filter(Boolean).join(" "),
+    ]),
+    ["AWS key", "AKIA" + "A".repeat(16)],
+    ["AWS key", "ASIA" + "A".repeat(16)],
+    ...["p", "o", "u", "s", "r"].map((kind) => [
+      "GitHub token",
+      `gh${kind}_` + "a".repeat(36),
+    ]),
+    [
+      "GitHub token",
+      "github_pat_" + "A".repeat(22) + "_" + "b".repeat(59),
+    ],
+    ["OpenAI key", "sk-" + "A".repeat(32)],
+    [
+      "literal bearer URL",
+      "https://example.invalid/?token=" + "A".repeat(20),
+    ],
+  ];
   try {
     mkdirSync(component, { recursive: true });
     for (const name of ["package.json", "package-lock.json", ".gitignore"]) {
       writeFileSync(join(component, name), "{}\n");
     }
     for (const name of installers) {
-      writeFileSync(join(repository, name), `synthetic ${name}\n`);
+      writeFileSync(
+        join(repository, name),
+        `synthetic ${name}\n${safePlaceholders.join("\n")}\n`,
+      );
     }
     execFileSync("git", ["init", "--quiet"], { cwd: repository });
     execFileSync("git", ["add", "--", "."], { cwd: repository });
@@ -163,20 +210,24 @@ test("live privacy scanner requires and scans every repository installer", () =>
         () => verifyPrivacySurfaces({ repository, component }),
         /missing a required package or installer surface/,
       );
-      writeFileSync(path, `synthetic ${name}\n`);
+      writeFileSync(
+        path,
+        `synthetic ${name}\n${safePlaceholders.join("\n")}\n`,
+      );
       execFileSync("git", ["add", "--", name], { cwd: repository });
     }
 
-    for (const name of installers) {
-      const path = join(repository, name);
-      const original = readFileSync(path, "utf8");
-      const forbiddenAwsKey = "AKIA" + "A".repeat(16);
-      writeFileSync(path, `${original}${forbiddenAwsKey}\n`);
-      assert.throws(
-        () => verifyPrivacySurfaces({ repository, component }),
-        new RegExp(`${name.replace(".", "\\.")}: AWS key`),
-      );
-      writeFileSync(path, original);
+    for (const [label, canary] of canaries) {
+      for (const name of installers) {
+        const path = join(repository, name);
+        const original = readFileSync(path, "utf8");
+        writeFileSync(path, `${original}${canary}\n`);
+        assert.throws(
+          () => verifyPrivacySurfaces({ repository, component }),
+          new RegExp(`${name.replace(".", "\\.")}: ${label}`),
+        );
+        writeFileSync(path, original);
+      }
     }
   } finally {
     rmSync(repository, { force: true, recursive: true });

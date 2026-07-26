@@ -1040,12 +1040,23 @@ function resourceSourceKind(item) {
     : "installed";
 }
 
+function conflictSourceLabel(item) {
+  if (!item.name_conflict) return "";
+  return (Array.isArray(item.source_labels) ? item.source_labels : [])
+    .map((source) => source?.label)
+    .filter((label) => typeof label === "string" && label.length > 0)
+    .sort((left, right) => left.localeCompare(right, "en"))
+    .join(", ");
+}
+
 function visibleResources() {
   const query = element("resourceSearch").value.trim().toLocaleLowerCase();
   if (!query) return resourceItems;
   return resourceItems.filter((resource) => {
     const searchable = resource.type === "skill"
-      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""}`
+      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""} ${
+          conflictSourceLabel(resource.item)
+        }`
       : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""} ${
         resource.localAlias ?? ""
       }`;
@@ -1075,6 +1086,12 @@ function resourceButton(resource) {
     const badges = create("span", "resource-badges");
     if (item.name_conflict) {
       badges.append(create("span", "resource-badge", "name conflict"));
+      const sourceLabel = conflictSourceLabel(item);
+      if (sourceLabel) {
+        badges.append(
+          create("span", "resource-badge", `source: ${sourceLabel}`),
+        );
+      }
     }
     if (item.exact_copy) {
       badges.append(
@@ -1818,7 +1835,9 @@ function renderQuickOpen() {
   const query = element("quickOpenSearch").value.trim().toLocaleLowerCase();
   const matches = resourceItems.filter((resource) => {
     const label = resource.type === "skill"
-      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""}`
+      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""} ${
+          conflictSourceLabel(resource.item)
+        }`
       : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""} ${
         resource.localAlias ?? ""
       }`;

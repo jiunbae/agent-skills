@@ -52,7 +52,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
   "air-cli-server.test.mjs": 9,
   "air-spec.test.mjs": 2,
-  "air.test.mjs": 15,
+  "air.test.mjs": 16,
   "catalog.test.mjs": 10,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
@@ -420,10 +420,16 @@ export function verifyPrivacySurfaces({
   const forbidden = [
     ["private macOS path", /\/Users\/[A-Za-z0-9._-]+\//],
     ["private Unix path", /\/home\/[A-Za-z0-9._-]+\//],
-    ["private Windows path", /[A-Za-z]:\\Users\\[A-Za-z0-9._-]+\\/],
+    [
+      "private Windows path",
+      /[A-Za-z]:[\\/]Users[\\/][A-Za-z0-9._-]+[\\/]/,
+    ],
     ["private key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
-    ["AWS key", /AKIA[0-9A-Z]{16}/],
-    ["GitHub token", /gh[pousr]_[A-Za-z0-9]{36,}/],
+    ["AWS key", /(?:AKIA|ASIA)[0-9A-Z]{16}/],
+    [
+      "GitHub token",
+      /(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{36,})/,
+    ],
     ["OpenAI key", /sk-[A-Za-z0-9_-]{32,}/],
     ["literal bearer URL", /[?&]token=[A-Za-z0-9_-]{20,}/],
   ];

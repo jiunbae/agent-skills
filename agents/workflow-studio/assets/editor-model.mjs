@@ -2502,7 +2502,7 @@ function hasRecognizedAirMarkdownCarrier(sourceText) {
     }
 
     const marker = line.match(/^<!-- air:v1 ([A-Za-z0-9_-]+) -->$/u);
-    if (!marker || !hasNewline) continue;
+    if (!marker) continue;
     try {
       const tokenBytes = decodeAirCarrierTokenBytes(marker[1]);
       if (tokenBytes.byteLength > MAX_AIR_CARRIER_TOKEN_BYTES) continue;

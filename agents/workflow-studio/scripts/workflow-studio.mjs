@@ -739,7 +739,7 @@ async function airWorkbenchCommand(parsed) {
   const host = studioHost(option(parsed, "host"));
   const port = studioPort(option(parsed, "port"));
   const catalog = createSkillCatalog({
-    roots: await resolveWorkbenchSkillRoots(),
+    rootResolver: resolveWorkbenchSkillRoots,
   });
   const sessionRegistry = createSessionRegistry({
     roots: resolveSessionRoots({
@@ -784,15 +784,25 @@ export async function resolveWorkbenchSkillRoots({
     componentRoot,
   });
   const available = CATALOG_LIMITS.maxRoots - roots.length;
-  if (available < 1) return roots.slice(0, CATALOG_LIMITS.maxRoots);
-  const pluginRoots = await resolveEnabledPluginSkillRoots({
+  if (available < 1) {
+    return Object.freeze({
+      roots: Object.freeze(roots.slice(0, CATALOG_LIMITS.maxRoots)),
+      status: "partial",
+      diagnostics: Object.freeze([]),
+    });
+  }
+  const pluginResolution = await resolveEnabledPluginSkillRoots({
     userHome,
     codexHome,
     configPath,
     cacheRoot: pluginCacheRoot,
     limits: { maxRoots: available },
   });
-  return [...roots, ...pluginRoots];
+  return Object.freeze({
+    roots: Object.freeze([...roots, ...pluginResolution.roots]),
+    status: pluginResolution.status,
+    diagnostics: pluginResolution.diagnostics,
+  });
 }
 
 async function promptValue(parsed) {

@@ -546,6 +546,37 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
   );
 });
 
+test("terminal AIR carrier claims missing their final newline fail closed", async () => {
+  const lfCarrier = await readFile(
+    resolve(ROOT, "agents/workflow-studio/examples/hello-agent/workflow.air.md"),
+  );
+  const crlfSource = Buffer.from(
+    "---\r\nname: missing-crlf\r\ndescription: Missing CRLF carrier newline\r\n---\r\n\r\n## Workflow\r\n### Step 1: Inspect\r\nInspect safely.\r\n",
+    "utf8",
+  );
+  const crlfCarrier = encodeAirMarkdownArtifact(
+    migrateLegacyToAir(importSkillBytes(crlfSource, {
+      sourcePath: "missing-crlf/SKILL.md",
+    })),
+  );
+
+  for (const [name, carrier, newlineBytes] of [
+    ["lf", lfCarrier, 1],
+    ["crlf", crlfCarrier, 2],
+  ]) {
+    const malformed = carrier.subarray(0, carrier.byteLength - newlineBytes);
+    expectCode(() => recognizeAirSkillCarrier(malformed), "AIR_CARRIER_INVALID");
+    expectCode(() => importSkillBytesAsAir(malformed), "AIR_CARRIER_INVALID");
+    const outer = migrateLegacyToAir(importSkillBytes(malformed, {
+      sourcePath: `missing-${name}/SKILL.md`,
+    }));
+    expectCode(
+      () => encodeAirMarkdownArtifact(outer),
+      "AIR_CARRIER_DUPLICATE",
+    );
+  }
+});
+
 test("recognized terminal AIR carriers propagate integrity failures", async () => {
   const carrier = await readFile(
     resolve(

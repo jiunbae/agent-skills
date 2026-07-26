@@ -32,6 +32,7 @@ const BACKGROUND_IMPLEMENTER = resolve(
 );
 const SKILL_A = "skill_AAAAAAAAAAAAAAAAAAAAAA";
 const SKILL_B = "skill_BBBBBBBBBBBBBBBBBBBBBB";
+const SKILL_C = "skill_EEEEEEEEEEEEEEEEEEEEEE";
 const SESSION = "session_CCCCCCCCCCCCCCCCCCCCCC";
 const SNAPSHOT = "snapshot_DDDDDDDDDDDDDDDDDDDDDD";
 const AIR_CLI = resolve(STUDIO_ROOT, "scripts/air.mjs");
@@ -329,6 +330,7 @@ async function fixtures({ bounded = false } = {}) {
   const skillArtifacts = new Map([
     [SKILL_A, first],
     [SKILL_B, second],
+    [SKILL_C, second],
   ]);
   const items = bounded
     ? Array.from({ length: 1_000 }, (_, index) => ({
@@ -344,6 +346,7 @@ async function fixtures({ bounded = false } = {}) {
     : [
         skillItem(SKILL_A, "a".repeat(64), "repository"),
         skillItem(SKILL_B, "b".repeat(64), "user"),
+        skillItem(SKILL_C, "c".repeat(64), "enabled-plugin"),
       ];
   let catalogSnapshot = {
     format: "air-skill-catalog",
@@ -494,10 +497,32 @@ async function runPass(browser, executablePath, pass) {
     assert.equal(await page.locator(".react-flow__edge").count(), 4);
     assert.equal(await page.locator(".resource-row", {
       hasText: "background-implementer",
-    }).count(), 2);
+    }).count(), 3);
     assert.equal(await page.locator("img").count(), 0);
     const explorerRows = page.locator(".resource-tree .resource-row");
-    assert.equal(await explorerRows.count(), 3);
+    assert.equal(await explorerRows.count(), 4);
+    const installedVariants = page.locator("#installedSkillList .resource-row");
+    assert.equal(await installedVariants.count(), 2);
+    assert.match(
+      (await installedVariants.nth(0).textContent()) ?? "",
+      /source: user-source/u,
+    );
+    assert.match(
+      (await installedVariants.nth(1).textContent()) ?? "",
+      /source: enabled-plugin-source/u,
+    );
+    assert.notEqual(
+      await installedVariants.nth(0).textContent(),
+      await installedVariants.nth(1).textContent(),
+    );
+    await page.locator("#resourceSearch").fill("enabled-plugin-source");
+    assert.equal(await page.locator("#installedSkillList .resource-row").count(), 1);
+    assert.equal(
+      await page.locator("#installedSkillList .resource-row")
+        .first().getAttribute("data-resource-key"),
+      `skill:${SKILL_C}`,
+    );
+    await page.locator("#resourceSearch").fill("");
     assert.equal(
       await explorerRows.evaluateAll(
         (rows) => rows.filter((row) => row.tabIndex === 0).length,
@@ -530,10 +555,20 @@ async function runPass(browser, executablePath, pass) {
         ?.getAttribute("aria-current") === "true",
     );
     await page.locator("#quickOpen").click();
+    await page.locator("#quickOpenSearch").fill("enabled-plugin-source");
+    assert.equal(
+      await page.locator("#quickOpenList .resource-row").count(),
+      1,
+    );
+    assert.equal(
+      await page.locator("#quickOpenList .resource-row")
+        .first().getAttribute("data-resource-key"),
+      `skill:${SKILL_C}`,
+    );
     await page.locator("#quickOpenSearch").fill("background");
     assert.equal(
       await page.locator("#quickOpenList .resource-row").count(),
-      2,
+      3,
     );
     const quickRows = page.locator("#quickOpenList .resource-row");
     assert.equal(
@@ -554,14 +589,14 @@ async function runPass(browser, executablePath, pass) {
     await page.keyboard.press("End");
     assert.equal(
       await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
-      `skill:${SKILL_B}`,
+      `skill:${SKILL_C}`,
     );
     await page.keyboard.press("Home");
     assert.equal(
       await page.evaluate(() => document.activeElement?.dataset?.resourceKey),
       `skill:${SKILL_A}`,
     );
-    await page.keyboard.press("End");
+    await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     await page.waitForFunction(
       () =>
@@ -1174,8 +1209,14 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     await capabilitiesPage.unroute(capabilitiesPattern);
     await capabilitiesPage.locator("#refreshResources").click();
     await capabilitiesPage.waitForFunction(
-      () => document.querySelector("#resourceStatus")?.textContent ===
-        "4 resources",
+      () =>
+        document.querySelector("#refreshResources")?.disabled === false &&
+        !document.querySelector("#resourceStatus")?.textContent
+          ?.includes("capabilities request failed"),
+    );
+    assert.equal(
+      await capabilitiesPage.locator("#resourceStatus").textContent(),
+      "5 resources",
     );
     assert.equal(
       await capabilitiesPage.locator("#refreshResources").isDisabled(),
@@ -1195,8 +1236,14 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     await partialPage.unroute(skillsPattern);
     await partialPage.locator("#refreshResources").click();
     await partialPage.waitForFunction(
-      () => document.querySelector("#resourceStatus")?.textContent ===
-        "3 resources",
+      () =>
+        document.querySelector("#refreshResources")?.disabled === false &&
+        !document.querySelector("#resourceStatus")?.textContent
+          ?.includes("Skills catalog failed"),
+    );
+    assert.equal(
+      await partialPage.locator("#resourceStatus").textContent(),
+      "4 resources",
     );
     await partialPage.close();
 
@@ -1224,8 +1271,14 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     await unavailablePage.unroute(sessionsPattern);
     await unavailablePage.locator("#refreshResources").click();
     await unavailablePage.waitForFunction(
-      () => document.querySelector("#resourceStatus")?.textContent ===
-        "4 resources",
+      () =>
+        document.querySelector("#refreshResources")?.disabled === false &&
+        !document.querySelector("#resourceStatus")?.textContent
+          ?.includes("catalogs failed"),
+    );
+    assert.equal(
+      await unavailablePage.locator("#resourceStatus").textContent(),
+      "5 resources",
     );
     await unavailablePage.close();
 
@@ -1332,9 +1385,9 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       await explicitPage.unroute(sessionsPattern);
       await explicitPage.locator("#refreshResources").click();
       await explicitPage.waitForFunction(
-        () => document.querySelectorAll(".resource-tree .resource-row").length === 4,
+        () => document.querySelectorAll(".resource-tree .resource-row").length === 5,
       );
-      assert.equal(await explicitPage.locator(".resource-tree .resource-row").count(), 4);
+      assert.equal(await explicitPage.locator(".resource-tree .resource-row").count(), 5);
       assert.equal(
         await explicitPage.locator('.resource-row[aria-current="true"]')
           .getAttribute("data-resource-key"),

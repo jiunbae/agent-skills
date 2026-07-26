@@ -10,6 +10,8 @@ import { promisify } from "node:util";
 
 import {
   decodeAirMarkdownArtifact,
+  encodeAirMarkdownArtifact,
+  migrateLegacyToAir,
   validateAirArtifact,
 } from "../src/air.mjs";
 import {
@@ -346,14 +348,24 @@ test("mixed-newline carriers round-trip through CLI and integrity failures reach
   );
 });
 
-test("claimed AIR carrier discriminator failures reach CLI, catalog, and HTTP", async (t) => {
+test("malformed AIR carrier claims reach CLI, catalog, and HTTP", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-claimed-carrier-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const carrier = await readFile(join(
     ROOT,
     "agents/workflow-studio/examples/hello-agent/workflow.air.md",
   ));
+  const crlfCarrier = encodeAirMarkdownArtifact(
+    migrateLegacyToAir(importSkillBytes(Buffer.from(
+      "---\r\nname: cli-missing-crlf\r\ndescription: Missing CRLF carrier newline\r\n---\r\n\r\n## Workflow\r\n### Step 1: Inspect\r\nInspect safely.\r\n",
+      "utf8",
+    ), {
+      sourcePath: "cli-missing-crlf/SKILL.md",
+    })),
+  );
   const claimed = [
+    carrier.subarray(0, carrier.byteLength - 1),
+    crlfCarrier.subarray(0, crlfCarrier.byteLength - 2),
     rewriteCarrierJsonText(carrier, '{"carrier":"air.md"'),
     rewriteCarrierManifest(carrier, (manifest) => {
       manifest.carrier_version = "2";
@@ -367,6 +379,7 @@ test("claimed AIR carrier discriminator failures reach CLI, catalog, and HTTP", 
   ];
   for (const [index, source] of claimed.entries()) {
     const path = join(directory, `claimed-${index}`, "SKILL.md");
+    const output = join(directory, `claimed-${index}.air.json`);
     await put(path, source);
     await assert.rejects(
       run(process.execPath, [
@@ -374,10 +387,11 @@ test("claimed AIR carrier discriminator failures reach CLI, catalog, and HTTP", 
         "import",
         path,
         "--out",
-        join(directory, `claimed-${index}.air.json`),
+        output,
       ], { cwd: ROOT }),
       (error) => error.stderr.includes('"code":"AIR_CARRIER_INVALID"'),
     );
+    await assert.rejects(readFile(output), (error) => error?.code === "ENOENT");
   }
 
   const catalog = createSkillCatalog({
