@@ -160,11 +160,11 @@ A session snapshot MUST use `trace-session-snapshot`. It MUST NOT fabricate a
 plan digest, cwd authorization, command, process exit, or terminal completion.
 Its adapter ID is `codex-rollout-jsonl` or `claude-project-jsonl`, with an
 adapter version, source-schema fingerprint, append-safe byte cursor, bounded
-source-prefix digest, completeness, and explicit lifecycle evidence.
+source-prefix commitment, completeness, and explicit lifecycle evidence.
 
 Privacy is always `metadata-only`. Event evidence may contain only an
 adapter-owned generic record type, the fixed `content-omitted` marker, byte
-range and length, digest, and `omitted:true`.
+range and length, commitment, and `omitted:true`.
 Prompt, message, reasoning, command, arguments, results, stdout/stderr,
 attachments, file contents, environment, credentials, full paths, branches,
 and raw provider IDs MUST NOT appear. Recent mtime alone is neither active nor
@@ -206,6 +206,30 @@ Public opaque snapshot handles, not caller-supplied cursors or paths, select
 continuation state. A public snapshot ID MUST NOT be reissued during that
 registry lifetime, including after its private handle is evicted.
 
+Each registry lifetime owns a fresh secret key that never appears in AIR or an
+API response. Public session source-prefix and event-evidence values use the
+field name `commitment`, contain exactly 64 lowercase hexadecimal characters,
+and are calculated as follows:
+
+```text
+raw_digest = SHA-256(exact omitted provider bytes)
+commitment =
+  hexlower(HMAC-SHA-256(
+    registry_secret,
+    UTF8(domain) || UINT64BE(start_byte) || raw_digest))
+
+source-prefix domain = "AIR-SESSION-SOURCE-PREFIX-COMMITMENT-V1\n"
+event-evidence domain = "AIR-SESSION-EVIDENCE-COMMITMENT-V1\n"
+```
+
+For a source prefix, `start_byte` is zero and the exact bytes are
+`[0, source_prefix.byte_length)`. For event evidence, `start_byte` is
+`byte_range.start_byte` and the exact bytes are the complete half-open
+`byte_range`, including its terminating newline. The intermediate
+`raw_digest`, the registry secret, and append-continuity fingerprints remain
+server-private. A commitment is not an ordinary SHA-256 digest and
+MUST differ across registry lifetimes with independent keys.
+
 Every published session catalog row MUST have a unique opaque ID that resolves
 to exactly one server-private source authority. The registry MUST fail closed
 rather than publish an ID collision or a last-write-wins alias. It retains only
@@ -246,10 +270,12 @@ envelope_digest =
 ```
 
 `$schema`, provenance, integrity, required extensions, and extensions are
-envelope-bound but do not change core content identity. Raw source, opaque,
-session-prefix, and event-evidence digests are ordinary SHA-256 and are
-labelled by scope. Workflow IR 1.0 hashes remain
-`workflow-studio-legacy-v1`; they are never reinterpreted as AIR/JCS hashes.
+envelope-bound but do not change core content identity. Raw workflow source
+and opaque-range digests are ordinary SHA-256 and are labelled by scope.
+Session-prefix and event-evidence values are the secret-keyed commitments
+defined in Section 4.4, not ordinary SHA-256 digests. Workflow IR 1.0 hashes
+remain `workflow-studio-legacy-v1`; they are never reinterpreted as AIR/JCS
+hashes.
 
 Canonicalization golden vector:
 

@@ -33,7 +33,9 @@ import {
 } from "../src/air.mjs";
 import { parseIJson } from "../shared/air-codec.mjs";
 import {
+  CATALOG_LIMITS,
   createSkillCatalog,
+  resolveEnabledPluginSkillRoots,
   resolveSkillRoots,
 } from "../src/catalog.mjs";
 import {
@@ -737,10 +739,7 @@ async function airWorkbenchCommand(parsed) {
   const host = studioHost(option(parsed, "host"));
   const port = studioPort(option(parsed, "port"));
   const catalog = createSkillCatalog({
-    roots: resolveSkillRoots({
-      cwd: process.cwd(),
-      componentRoot: COMPONENT_SKILLS_ROOT,
-    }),
+    roots: await resolveWorkbenchSkillRoots(),
   });
   const sessionRegistry = createSessionRegistry({
     roots: resolveSessionRoots({
@@ -766,6 +765,34 @@ async function airWorkbenchCommand(parsed) {
     lanWarning: true,
     initialArtifactExplicit: parsed.positionals.length === 1,
   });
+}
+
+export async function resolveWorkbenchSkillRoots({
+  cwd = process.cwd(),
+  userHome = process.env.HOME,
+  codexHome,
+  claudeHome,
+  configPath,
+  pluginCacheRoot,
+  componentRoot = COMPONENT_SKILLS_ROOT,
+} = {}) {
+  const roots = resolveSkillRoots({
+    cwd,
+    userHome,
+    codexHome,
+    claudeHome,
+    componentRoot,
+  });
+  const available = CATALOG_LIMITS.maxRoots - roots.length;
+  if (available < 1) return roots.slice(0, CATALOG_LIMITS.maxRoots);
+  const pluginRoots = await resolveEnabledPluginSkillRoots({
+    userHome,
+    codexHome,
+    configPath,
+    cacheRoot: pluginCacheRoot,
+    limits: { maxRoots: available },
+  });
+  return [...roots, ...pluginRoots];
 }
 
 async function promptValue(parsed) {

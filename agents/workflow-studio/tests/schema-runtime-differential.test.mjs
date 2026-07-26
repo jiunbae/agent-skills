@@ -407,14 +407,13 @@ function runtimeDisposition(artifact) {
 }
 
 function emptySessionBody() {
-  const emptyDigest = createHash("sha256").update(Buffer.alloc(0)).digest("hex");
   return {
     capture: {
       adapter: { id: "codex-rollout-jsonl", version: "1.0.0" },
       source_schema_fingerprint: "3".repeat(64),
       snapshot_cursor: { epoch: 0, byte_offset: 0 },
       completeness: "complete-prefix",
-      source_prefix: { byte_length: 0, sha256: emptyDigest },
+      source_prefix: { byte_length: 0, commitment: "4".repeat(64) },
     },
     privacy: {
       profile: "metadata-only",
@@ -474,7 +473,7 @@ function sessionEventFixture({
       top_level_keys: ["content-omitted"],
       byte_range: { start_byte: start, end_byte: end },
       byte_length: end - start,
-      sha256: "4".repeat(64),
+      commitment: "5".repeat(64),
       omitted: true,
     }],
   };
@@ -669,6 +668,46 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
       },
       createBody(body) {
         body.privacy.profile = "raw-content";
+      },
+    },
+    {
+      label: "session source-prefix commitment rejects legacy raw digest field",
+      source: session,
+      mutate(artifact) {
+        artifact.body.capture.source_prefix.sha256 =
+          artifact.body.capture.source_prefix.commitment;
+        delete artifact.body.capture.source_prefix.commitment;
+      },
+      createBody(body) {
+        body.capture.source_prefix.sha256 =
+          body.capture.source_prefix.commitment;
+        delete body.capture.source_prefix.commitment;
+      },
+    },
+    {
+      label: "session evidence commitment rejects legacy raw digest field",
+      source: session,
+      mutate(artifact) {
+        const event = sessionEventFixture();
+        event.evidence[0].sha256 = event.evidence[0].commitment;
+        delete event.evidence[0].commitment;
+        setSessionEvents(artifact.body, [event], 3);
+      },
+      createBody(body) {
+        const event = sessionEventFixture();
+        event.evidence[0].sha256 = event.evidence[0].commitment;
+        delete event.evidence[0].commitment;
+        setSessionEvents(body, [event], 3);
+      },
+    },
+    {
+      label: "session commitment lowercase hexadecimal pattern",
+      source: session,
+      mutate(artifact) {
+        artifact.body.capture.source_prefix.commitment = "A".repeat(64);
+      },
+      createBody(body) {
+        body.capture.source_prefix.commitment = "A".repeat(64);
       },
     },
     {

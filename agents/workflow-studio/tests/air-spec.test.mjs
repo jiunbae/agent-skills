@@ -85,6 +85,16 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
     sessionItems.description,
     /unique opaque id.*exactly one server-private source authority/,
   );
+  const snapshotOperation =
+    openapi.paths["/air/v1/sessions/{opaque-id}/snapshots"].post;
+  assert.match(
+    snapshotOperation.responses["200"].description,
+    /per-registry domain-separated HMAC-SHA256 commitments/,
+  );
+  assert.match(
+    openapi.components.schemas.SessionSnapshot.properties.artifact.description,
+    /no ordinary SHA-256 digest of omitted provider bytes is exposed/,
+  );
 });
 
 test("AIR normative text freezes domains, carriers, sessions, and legacy boundary", async () => {
@@ -103,6 +113,11 @@ test("AIR normative text freezes domains, carriers, sessions, and legacy boundar
     "last-published continuity high-water",
     "A public snapshot ID MUST NOT be reissued",
     "structurally claims the AIR-v1 carrier namespace",
+    "AIR-SESSION-SOURCE-PREFIX-COMMITMENT-V1\\n",
+    "AIR-SESSION-EVIDENCE-COMMITMENT-V1\\n",
+    "UINT64BE(start_byte)",
+    "A commitment is not an ordinary SHA-256 digest",
+    "MUST differ across registry lifetimes",
   ]) {
     assert.ok(spec.includes(required), `missing normative phrase: ${required}`);
   }

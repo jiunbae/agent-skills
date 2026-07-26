@@ -34,6 +34,16 @@ export const CATALOG_LIMITS = Object.freeze({
   maxCatalogBytes: 4 * 1024 * 1024,
 });
 
+export const ENABLED_PLUGIN_LIMITS = Object.freeze({
+  maxConfigBytes: 256 * 1024,
+  maxConfigLines: 8_192,
+  maxAuthorities: 128,
+  maxCacheEntries: 2_048,
+  maxDirectoryEntries: 256,
+  maxMarkerBytes: 4 * 1024,
+  maxRoots: CATALOG_LIMITS.maxRoots,
+});
+
 const SKIP_DIRECTORIES = new Set([
   ".context",
   ".git",
@@ -48,6 +58,8 @@ const SKIP_DIRECTORIES = new Set([
   "tmp",
 ]);
 const VALID_SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const VALID_PLUGIN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const REMOTE_PLUGIN_MARKER = ".codex-remote-plugin-install.json";
 const UTF8_FATAL = new TextDecoder("utf-8", { fatal: true });
 const O_NOFOLLOW = FS_CONSTANTS.O_NOFOLLOW ?? 0;
 
@@ -154,6 +166,378 @@ function pushUniqueRoot(roots, seen, root) {
   if (seen.has(key)) return;
   seen.add(key);
   roots.push(root);
+}
+
+function mergedEnabledPluginLimits(overrides = {}) {
+  const limits = { ...ENABLED_PLUGIN_LIMITS };
+  for (const [key, defaultValue] of Object.entries(ENABLED_PLUGIN_LIMITS)) {
+    if (overrides[key] === undefined) continue;
+    const value = overrides[key];
+    if (!Number.isSafeInteger(value) || value < 1 || value > defaultValue) {
+      return null;
+    }
+    limits[key] = value;
+  }
+  return Object.freeze(limits);
+}
+
+function parsePluginAuthorityName(value) {
+  const separator = value.indexOf("@");
+  if (
+    separator <= 0 ||
+    separator !== value.lastIndexOf("@")
+  ) {
+    return null;
+  }
+  const plugin = value.slice(0, separator);
+  const marketplace = value.slice(separator + 1);
+  if (
+    !VALID_PLUGIN_SEGMENT.test(plugin) ||
+    !VALID_PLUGIN_SEGMENT.test(marketplace)
+  ) {
+    return null;
+  }
+  return Object.freeze({ key: value, plugin, marketplace });
+}
+
+async function readBoundedRegularFile(path, maxBytes) {
+  let discovered;
+  try {
+    discovered = await lstat(path);
+  } catch (error) {
+    return error?.code === "ENOENT" ? undefined : null;
+  }
+  let handle;
+  try {
+    if (
+      discovered.isSymbolicLink() ||
+      !discovered.isFile() ||
+      discovered.size > maxBytes
+    ) {
+      return null;
+    }
+    handle = await open(path, FS_CONSTANTS.O_RDONLY | O_NOFOLLOW);
+    const before = await handle.stat();
+    if (!before.isFile() || !sameIdentity(discovered, before)) return null;
+    const buffer = Buffer.alloc(maxBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const bytes = buffer.subarray(0, bytesRead);
+    const after = await handle.stat();
+    const pathAfter = await lstat(path);
+    if (
+      bytes.length > maxBytes ||
+      bytes.length !== before.size ||
+      !sameIdentity(before, after) ||
+      !sameIdentity(after, pathAfter)
+    ) {
+      return null;
+    }
+    return bytes;
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+function parseEnabledPluginConfiguration(bytes, limits) {
+  if (bytes === undefined) return { states: new Map(), exceeded: false };
+  if (bytes === null) return { states: new Map(), exceeded: true };
+  let text;
+  try {
+    text = UTF8_FATAL.decode(bytes);
+  } catch {
+    return { states: new Map(), exceeded: true };
+  }
+  const lines = text.split(/\r?\n/u);
+  if (lines.length > limits.maxConfigLines) {
+    return { states: new Map(), exceeded: true };
+  }
+
+  const states = new Map();
+  let sections = 0;
+  let current = null;
+  let enabledValues = [];
+  const finishSection = () => {
+    if (current === null) return;
+    sections += 1;
+    const next = enabledValues.length === 1
+      ? enabledValues[0]
+      : "malformed";
+    states.set(
+      current.key,
+      states.has(current.key) ? "malformed" : next,
+    );
+    current = null;
+    enabledValues = [];
+  };
+
+  for (const line of lines) {
+    if (/^\s*\[/u.test(line)) {
+      finishSection();
+      const match = line.match(
+        /^\s*\[plugins\."([^"]*)"\]\s*(?:#.*)?$/u,
+      );
+      current = match ? parsePluginAuthorityName(match[1]) : null;
+      continue;
+    }
+    if (current === null) continue;
+    const enabled = line.match(
+      /^\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$/u,
+    );
+    if (enabled) {
+      enabledValues.push(enabled[1] === "true" ? "enabled" : "disabled");
+    } else if (/^\s*enabled\s*=/u.test(line)) {
+      enabledValues.push("malformed");
+    }
+  }
+  finishSection();
+  return {
+    states,
+    exceeded: sections > limits.maxAuthorities,
+  };
+}
+
+function validRemotePluginMarker(bytes) {
+  if (!Buffer.isBuffer(bytes)) return false;
+  let marker;
+  try {
+    marker = JSON.parse(UTF8_FATAL.decode(bytes));
+  } catch {
+    return false;
+  }
+  if (
+    marker === null ||
+    typeof marker !== "object" ||
+    Array.isArray(marker) ||
+    marker.schema_version !== 1 ||
+    typeof marker.remote_plugin_id !== "string" ||
+    !/^plugin_[A-Za-z0-9_:-]{1,255}$/u.test(marker.remote_plugin_id)
+  ) {
+    return false;
+  }
+  return (
+    Object.keys(marker).length === 2 &&
+    Object.hasOwn(marker, "schema_version") &&
+    Object.hasOwn(marker, "remote_plugin_id")
+  );
+}
+
+async function containedRegularDirectory(path, physicalCacheRoot) {
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isDirectory()) return null;
+    const physical = await realpath(path);
+    return isContained(physicalCacheRoot, physical) ? physical : null;
+  } catch {
+    return null;
+  }
+}
+
+async function authoritativePluginRoots({
+  cacheRoot,
+  physicalCacheRoot,
+  states,
+  limits,
+}) {
+  let cacheEntries;
+  try {
+    cacheEntries = await readdir(cacheRoot, { withFileTypes: true });
+  } catch {
+    return { roots: [], exceeded: false };
+  }
+  if (cacheEntries.length > limits.maxCacheEntries) {
+    return { roots: [], exceeded: true };
+  }
+
+  let scannedEntries = cacheEntries.length;
+  const authorities = new Map();
+  for (const [key, state] of states) {
+    if (state !== "enabled") continue;
+    const authority = parsePluginAuthorityName(key);
+    if (authority) authorities.set(key, authority);
+  }
+
+  for (const marketplaceEntry of cacheEntries) {
+    if (
+      !marketplaceEntry.isDirectory() ||
+      !VALID_PLUGIN_SEGMENT.test(marketplaceEntry.name)
+    ) {
+      continue;
+    }
+    const marketplaceRoot = join(cacheRoot, marketplaceEntry.name);
+    if (
+      await containedRegularDirectory(marketplaceRoot, physicalCacheRoot) === null
+    ) {
+      continue;
+    }
+    let pluginEntries;
+    try {
+      pluginEntries = await readdir(marketplaceRoot, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    scannedEntries += pluginEntries.length;
+    if (
+      pluginEntries.length > limits.maxDirectoryEntries ||
+      scannedEntries > limits.maxCacheEntries
+    ) {
+      return { roots: [], exceeded: true };
+    }
+    for (const pluginEntry of pluginEntries) {
+      if (
+        !pluginEntry.isDirectory() ||
+        !VALID_PLUGIN_SEGMENT.test(pluginEntry.name)
+      ) {
+        continue;
+      }
+      const key = `${pluginEntry.name}@${marketplaceEntry.name}`;
+      const configured = states.get(key);
+      if (configured === "disabled" || configured === "malformed") continue;
+      const pluginRoot = join(marketplaceRoot, pluginEntry.name);
+      if (
+        await containedRegularDirectory(pluginRoot, physicalCacheRoot) === null
+      ) {
+        continue;
+      }
+      const marker = await readBoundedRegularFile(
+        join(pluginRoot, REMOTE_PLUGIN_MARKER),
+        limits.maxMarkerBytes,
+      );
+      if (validRemotePluginMarker(marker)) {
+        authorities.set(key, Object.freeze({
+          key,
+          plugin: pluginEntry.name,
+          marketplace: marketplaceEntry.name,
+        }));
+      }
+      if (authorities.size > limits.maxAuthorities) {
+        return { roots: [], exceeded: true };
+      }
+    }
+  }
+
+  if (
+    authorities.size > limits.maxAuthorities ||
+    authorities.size > limits.maxRoots
+  ) {
+    return { roots: [], exceeded: true };
+  }
+
+  const roots = [];
+  for (const authority of [...authorities.values()]
+    .sort((left, right) => left.key.localeCompare(right.key))) {
+    const marketplaceRoot = join(cacheRoot, authority.marketplace);
+    const pluginRoot = join(marketplaceRoot, authority.plugin);
+    const physicalMarketplace = await containedRegularDirectory(
+      marketplaceRoot,
+      physicalCacheRoot,
+    );
+    const physicalPlugin = await containedRegularDirectory(
+      pluginRoot,
+      physicalCacheRoot,
+    );
+    if (
+      physicalMarketplace === null ||
+      physicalPlugin === null ||
+      !isContained(physicalMarketplace, physicalPlugin)
+    ) {
+      continue;
+    }
+
+    let entries;
+    try {
+      entries = await readdir(pluginRoot, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    if (entries.length > limits.maxDirectoryEntries) {
+      return { roots: [], exceeded: true };
+    }
+    const versions = entries.filter((entry) => entry.name !== REMOTE_PLUGIN_MARKER);
+    if (
+      versions.length !== 1 ||
+      !versions[0].isDirectory() ||
+      !VALID_PLUGIN_SEGMENT.test(versions[0].name)
+    ) {
+      continue;
+    }
+    const versionRoot = join(pluginRoot, versions[0].name);
+    const skillsRoot = join(versionRoot, "skills");
+    const physicalVersion = await containedRegularDirectory(
+      versionRoot,
+      physicalCacheRoot,
+    );
+    const physicalSkills = await containedRegularDirectory(
+      skillsRoot,
+      physicalCacheRoot,
+    );
+    if (
+      physicalVersion === null ||
+      physicalSkills === null ||
+      !isContained(physicalPlugin, physicalVersion) ||
+      !isContained(physicalVersion, physicalSkills)
+    ) {
+      continue;
+    }
+    roots.push({
+      path: skillsRoot,
+      kind: "enabled-plugin",
+      label: `enabled-plugin:${authority.marketplace}:${authority.plugin}`,
+    });
+  }
+  return { roots, exceeded: false };
+}
+
+/**
+ * Resolve only Codex plugin Skills backed by explicit enabled configuration or
+ * a valid server-owned remote-install marker. Cache presence alone is never
+ * installation authority.
+ */
+export async function resolveEnabledPluginSkillRoots({
+  userHome = homedir(),
+  codexHome,
+  configPath,
+  cacheRoot,
+  limits: limitOverrides,
+} = {}) {
+  const limits = mergedEnabledPluginLimits(limitOverrides);
+  if (limits === null) return [];
+  const resolvedHome = resolve(userHome);
+  const resolvedCodexHome = codexHome
+    ? resolve(codexHome)
+    : join(resolvedHome, ".codex");
+  const resolvedConfig = configPath
+    ? resolve(configPath)
+    : join(resolvedCodexHome, "config.toml");
+  const resolvedCache = cacheRoot
+    ? resolve(cacheRoot)
+    : join(resolvedCodexHome, "plugins", "cache");
+
+  const configBytes = await readBoundedRegularFile(
+    resolvedConfig,
+    limits.maxConfigBytes,
+  );
+  const configuration = parseEnabledPluginConfiguration(configBytes, limits);
+  if (configuration.exceeded) return [];
+
+  let cacheInfo;
+  let physicalCacheRoot;
+  try {
+    cacheInfo = await lstat(resolvedCache);
+    if (cacheInfo.isSymbolicLink() || !cacheInfo.isDirectory()) return [];
+    physicalCacheRoot = await realpath(resolvedCache);
+  } catch {
+    return [];
+  }
+  const result = await authoritativePluginRoots({
+    cacheRoot: resolvedCache,
+    physicalCacheRoot,
+    states: configuration.states,
+    limits,
+  });
+  if (result.exceeded) return [];
+  return result.roots.map((root, index) => normalizeRoot(root, index));
 }
 
 /**

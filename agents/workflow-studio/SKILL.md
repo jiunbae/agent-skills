@@ -33,9 +33,11 @@ Skills automatically:
 node scripts/air.mjs workbench
 ```
 
-The catalog scans standard project, user, system, and repository Skill roots
-with finite read-only bounds and exposes only opaque item IDs through the local
-API. It opens the first discovered Skill, or an empty document when none is
+The catalog scans standard project, user, system, repository, and authoritative
+enabled Codex plugin Skill roots with finite read-only bounds and exposes only
+opaque item IDs through the local API. Explicit enabled configuration and
+valid remote-install markers are authority; cache presence alone is ignored.
+It opens the first discovered Skill, or an empty document when none is
 available. The four-region shell keeps Resources, the React Flow canvas,
 Properties / Run setup, and Problems / Evidence / Source / Diff in one
 workspace. Use the Resources filter, **Quick Open** (`Command/Ctrl+P`), and

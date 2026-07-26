@@ -93,6 +93,10 @@ const DIAGNOSTIC_CODES = new Set([
   "AIR_SESSION_TIME_LIMIT",
 ]);
 const JSONL = /\.jsonl$/iu;
+const SESSION_PREFIX_COMMITMENT_DOMAIN =
+  "AIR-SESSION-SOURCE-PREFIX-COMMITMENT-V1\n";
+const SESSION_EVIDENCE_COMMITMENT_DOMAIN =
+  "AIR-SESSION-EVIDENCE-COMMITMENT-V1\n";
 
 function sessionError(code) {
   const error = new Error(code);
@@ -108,6 +112,21 @@ function privateDigest(secret, ...parts) {
   const hmac = createHmac("sha256", secret);
   for (const part of parts) hmac.update(part);
   return hmac.digest("hex");
+}
+
+function publicCommitment(secret, domain, startByte, rawDigest) {
+  const rangeStart = Buffer.alloc(8);
+  rangeStart.writeBigUInt64BE(BigInt(startByte));
+  return privateDigest(secret, domain, rangeStart, rawDigest);
+}
+
+function bytesCommitment(secret, domain, startByte, bytes) {
+  return publicCommitment(
+    secret,
+    domain,
+    startByte,
+    createHash("sha256").update(bytes).digest(),
+  );
 }
 
 function opaqueToken(random, prefix) {
@@ -979,7 +998,7 @@ export function createSessionRegistry({
           completedOversized = {
             startByte: oversizedStart,
             endByte: offset + firstNewline + 1,
-            sha256: oversizedHasher?.digest("hex"),
+            rawDigest: oversizedHasher?.digest(),
           };
           position = firstNewline + 1;
           discardingOversized = false;
@@ -1022,7 +1041,7 @@ export function createSessionRegistry({
       if (
         completedOversized &&
         Number.isSafeInteger(completedOversized.startByte) &&
-        typeof completedOversized.sha256 === "string" &&
+        Buffer.isBuffer(completedOversized.rawDigest) &&
         events.length < maxRetainedEvents
       ) {
         const eventId = `event_${createHmac("sha256", secret)
@@ -1052,7 +1071,12 @@ export function createSessionRegistry({
               },
               byte_length:
                 completedOversized.endByte - completedOversized.startByte,
-              sha256: completedOversized.sha256,
+              commitment: publicCommitment(
+                secret,
+                SESSION_EVIDENCE_COMMITMENT_DOMAIN,
+                completedOversized.startByte,
+                completedOversized.rawDigest,
+              ),
               omitted: true,
             }],
           });
@@ -1097,7 +1121,12 @@ export function createSessionRegistry({
               top_level_keys: ["content-omitted"],
               byte_range: { start_byte: startByte, end_byte: endByte },
               byte_length: lineWithNewline.byteLength,
-              sha256: sha256(lineWithNewline),
+              commitment: bytesCommitment(
+                secret,
+                SESSION_EVIDENCE_COMMITMENT_DOMAIN,
+                startByte,
+                lineWithNewline,
+              ),
               omitted: true,
             }],
           });
@@ -1288,7 +1317,12 @@ export function createSessionRegistry({
           completeness,
           source_prefix: {
             byte_length: prefix.byteLength,
-            sha256: sha256(prefix),
+            commitment: bytesCommitment(
+              secret,
+              SESSION_PREFIX_COMMITMENT_DOMAIN,
+              0,
+              prefix,
+            ),
           },
         },
         privacy: {

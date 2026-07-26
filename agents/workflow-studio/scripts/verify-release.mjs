@@ -38,8 +38,13 @@ import {
 
 const COMPONENT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY = resolve(COMPONENT, "../..");
-const COMPONENT_PATHSPEC = relative(REPOSITORY, COMPONENT);
 const INSTALLER = join(REPOSITORY, "install.sh");
+const REQUIRED_PRIVACY_INSTALLERS = Object.freeze([
+  "install.sh",
+  "install.ps1",
+  "install.cmd",
+  "setup.sh",
+]);
 const PRIVACY_FILE_BYTES = 2 * 1024 * 1024;
 const PRIVACY_TOTAL_BYTES = 64 * 1024 * 1024;
 const PRIVACY_TIME_MS = 5_000;
@@ -48,7 +53,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "air-cli-server.test.mjs": 9,
   "air-spec.test.mjs": 2,
   "air.test.mjs": 15,
-  "catalog.test.mjs": 6,
+  "catalog.test.mjs": 10,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
   "editor.test.mjs": 44,
@@ -59,7 +64,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
   "session-api.test.mjs": 11,
-  "sessions.test.mjs": 24,
+  "sessions.test.mjs": 25,
 });
 const NON_TEXT_EXTENSIONS = new Set([
   ".7z",
@@ -107,38 +112,44 @@ WORKFLOW_STUDIO_PLAYWRIGHT_MODULE and WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE;
 skipped, cancelled, todo, failed, or missing browser tests fail the release.
 `;
 
-const argument = process.argv[2];
-if (process.argv.length > 3 || (argument && !["--precommit", "--source", "--help", "-h"].includes(argument))) {
-  process.stderr.write(usage);
-  process.exit(2);
+if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+  await main();
 }
-if (argument === "--help" || argument === "-h") {
-  process.stdout.write(usage);
-  process.exit(0);
-}
-const delivery = !argument;
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.once(signal, () => {
-    activeChild?.kill(signal);
+async function main() {
+  const argument = process.argv[2];
+  if (process.argv.length > 3 || (argument && !["--precommit", "--source", "--help", "-h"].includes(argument))) {
+    process.stderr.write(usage);
+    process.exit(2);
+  }
+  if (argument === "--help" || argument === "-h") {
+    process.stdout.write(usage);
+    process.exit(0);
+  }
+  const delivery = !argument;
+
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      activeChild?.kill(signal);
+      cleanup();
+      process.exit(128 + (signal === "SIGINT" ? 2 : 15));
+    });
+  }
+
+  try {
+    await verifyPackageAndSource();
+    await verifyCopiedInstall();
+    verifyPrivacySurfaces();
+    run("Check patch whitespace", "git", ["diff", "--check"], REPOSITORY);
+    if (delivery) verifyDelivery();
+    else announce("Delivery assertions omitted in source/precommit mode");
+    process.stdout.write("\nAIR release verification passed.\n");
+  } catch (error) {
+    process.stderr.write(`\nAIR release verification failed: ${error.message}\n`);
+    process.exitCode = 1;
+  } finally {
     cleanup();
-    process.exit(128 + (signal === "SIGINT" ? 2 : 15));
-  });
-}
-
-try {
-  await verifyPackageAndSource();
-  await verifyCopiedInstall();
-  verifyPrivacySurfaces();
-  run("Check patch whitespace", "git", ["diff", "--check"], REPOSITORY);
-  if (delivery) verifyDelivery();
-  else announce("Delivery assertions omitted in source/precommit mode");
-  process.stdout.write("\nAIR release verification passed.\n");
-} catch (error) {
-  process.stderr.write(`\nAIR release verification failed: ${error.message}\n`);
-  process.exitCode = 1;
-} finally {
-  cleanup();
+  }
 }
 
 async function verifyPackageAndSource() {
@@ -363,8 +374,12 @@ async function workbenchLifecycle(installed, environment) {
   assert.equal(result.signal, null);
 }
 
-function verifyPrivacySurfaces() {
+export function verifyPrivacySurfaces({
+  repository = REPOSITORY,
+  component = COMPONENT,
+} = {}) {
   const startedAt = Date.now();
+  const componentPathspec = relative(repository, component);
   const inventory = execFileSync(
     "git",
     [
@@ -374,13 +389,11 @@ function verifyPrivacySurfaces() {
       "--others",
       "--exclude-standard",
       "--",
-      COMPONENT_PATHSPEC,
-      "install.sh",
-      "install.ps1",
-      "setup.sh",
+      componentPathspec,
+      ...REQUIRED_PRIVACY_INSTALLERS,
     ],
     {
-      cwd: REPOSITORY,
+      cwd: repository,
       encoding: "utf8",
       maxBuffer: 2 * 1024 * 1024,
       timeout: PRIVACY_TIME_MS,
@@ -392,15 +405,16 @@ function verifyPrivacySurfaces() {
     .filter(
       (path) => !NON_TEXT_EXTENSIONS.has(extname(path).toLowerCase()),
     )
-    .map((path) => resolve(REPOSITORY, path));
+    .map((path) => resolve(repository, path));
   assert(paths.length > 0, "Privacy scan tracked-file inventory is empty.");
+  const requiredInstallers = REQUIRED_PRIVACY_INSTALLERS.map((name) =>
+    join(repository, name),
+  );
   assert(
-    paths.includes(join(COMPONENT, "package.json")) &&
-      paths.includes(join(COMPONENT, "package-lock.json")) &&
-      paths.includes(join(COMPONENT, ".gitignore")) &&
-      paths.includes(join(REPOSITORY, "install.sh")) &&
-      paths.includes(join(REPOSITORY, "install.ps1")) &&
-      paths.includes(join(REPOSITORY, "setup.sh")),
+    paths.includes(join(component, "package.json")) &&
+      paths.includes(join(component, "package-lock.json")) &&
+      paths.includes(join(component, ".gitignore")) &&
+      requiredInstallers.every((path) => paths.includes(path)),
     "Privacy scan is missing a required package or installer surface.",
   );
   const forbidden = [
@@ -424,18 +438,19 @@ function verifyPrivacySurfaces() {
     const size = statSync(path).size;
     assert(
       size <= PRIVACY_FILE_BYTES,
-      `Privacy scan file too large: ${relative(REPOSITORY, path)}`,
+      `Privacy scan file too large: ${relative(repository, path)}`,
     );
     total += size;
     assert(total <= PRIVACY_TOTAL_BYTES, "Privacy scan exceeded 64 MiB.");
     const contents = readFileSync(path, "utf8");
     for (const [label, pattern] of forbidden) {
       if (pattern.test(contents)) {
-        findings.push(`${relative(REPOSITORY, path)}: ${label}`);
+        findings.push(`${relative(repository, path)}: ${label}`);
       }
     }
   }
   assert.deepEqual(findings, [], `Privacy scan failed:\n${findings.join("\n")}`);
+  return paths;
 }
 
 function verifyDelivery() {

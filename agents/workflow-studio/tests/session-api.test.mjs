@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   closeSync,
   openSync,
@@ -873,20 +874,23 @@ test("snapshot POST enforces the published global request concurrency bound", as
   });
 });
 
-test("actual session registry composes with capabilities, catalog, and snapshot routes", async (t) => {
+test("actual session API exposes keyed commitments without raw byte hash oracles", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-session-integration-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const sourceRoot = join(directory, "codex");
   const sentinel = "AIR_PRIVATE_PROMPT_SENTINEL";
   await mkdir(sourceRoot, { recursive: true });
-  await writeFile(
-    join(sourceRoot, "rollout-private-provider-id.jsonl"),
+  const sourceBytes = Buffer.from(
     `${JSON.stringify({
       type: "message",
       id: "raw-provider-id",
       content: sentinel,
       path: "/private/source",
     })}\n`,
+  );
+  await writeFile(
+    join(sourceRoot, "rollout-private-provider-id.jsonl"),
+    sourceBytes,
   );
   let randomByte = 1;
   const registry = createSessionRegistry({
@@ -977,8 +981,30 @@ test("actual session registry composes with capabilities, catalog, and snapshot 
   assert.equal(captured.body.includes(sentinel), false);
   assert.equal(captured.body.includes("raw-provider-id"), false);
   assert.equal(captured.body.includes(Buffer.from(sourceRoot)), false);
+  assert.equal(
+    captured.body.includes(
+      createHash("sha256").update(sourceBytes).digest("hex"),
+    ),
+    false,
+  );
   const snapshot = JSON.parse(captured.body);
   assert.match(snapshot.snapshot_id, /^snapshot_[A-Za-z0-9_-]{22}$/u);
   assert.equal(validateAirArtifact(snapshot.artifact), true);
   assert.equal(snapshot.artifact.body.hidden_reasoning_recovered, false);
+  assert.match(
+    snapshot.artifact.body.capture.source_prefix.commitment,
+    /^[a-f0-9]{64}$/u,
+  );
+  assert.match(
+    snapshot.artifact.body.events[0].evidence[0].commitment,
+    /^[a-f0-9]{64}$/u,
+  );
+  assert.equal(
+    Object.hasOwn(snapshot.artifact.body.capture.source_prefix, "sha256"),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(snapshot.artifact.body.events[0].evidence[0], "sha256"),
+    false,
+  );
 });

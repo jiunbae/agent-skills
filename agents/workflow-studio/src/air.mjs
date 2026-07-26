@@ -337,6 +337,16 @@ function digest(value, label) {
   return value;
 }
 
+function commitment(value, label) {
+  if (typeof value !== "string" || !HEX.test(value)) {
+    throw airError(
+      "AIR_SEMANTIC_INVALID",
+      `${label} must be a 64-character lowercase hexadecimal commitment.`,
+    );
+  }
+  return value;
+}
+
 function array(value, label, maximum = Number.MAX_SAFE_INTEGER) {
   if (!Array.isArray(value)) {
     throw airError("AIR_SEMANTIC_INVALID", `${label} must be an array.`);
@@ -1291,7 +1301,12 @@ function validateSessionTraceBody(artifact) {
   if (!["complete-prefix", "partial-prefix", "truncated"].includes(capture.completeness)) {
     throw airError("AIR_SEMANTIC_INVALID", "Session completeness is invalid.");
   }
-  record(capture.source_prefix, ["byte_length", "sha256"], [], "session source prefix");
+  record(
+    capture.source_prefix,
+    ["byte_length", "commitment"],
+    [],
+    "session source prefix",
+  );
   integer(
     capture.source_prefix.byte_length,
     "session source prefix length",
@@ -1307,7 +1322,10 @@ function validateSessionTraceBody(artifact) {
       "Session source prefix exceeds its snapshot cursor.",
     );
   }
-  digest(capture.source_prefix.sha256, "session source prefix digest");
+  commitment(
+    capture.source_prefix.commitment,
+    "session source prefix commitment",
+  );
 
   const privacy = record(body.privacy, ["profile", "redaction_manifest"], [], "session privacy");
   if (privacy.profile !== "metadata-only") {
@@ -1419,7 +1437,14 @@ function validateSessionTraceBody(artifact) {
       const evidenceLabel = `session event ${index} evidence ${evidenceIndex}`;
       record(
         item,
-        ["raw_type", "top_level_keys", "byte_range", "byte_length", "sha256", "omitted"],
+        [
+          "raw_type",
+          "top_level_keys",
+          "byte_range",
+          "byte_length",
+          "commitment",
+          "omitted",
+        ],
         [],
         evidenceLabel,
       );
@@ -1437,7 +1462,7 @@ function validateSessionTraceBody(artifact) {
         0,
         MAX_SAFE_INTEGER,
       );
-      digest(item.sha256, `${evidenceLabel}.sha256`);
+      commitment(item.commitment, `${evidenceLabel}.commitment`);
       if (
         item.omitted !== true ||
         item.byte_length !==

@@ -46,13 +46,16 @@ snapshots.
 node scripts/air.mjs workbench
 ```
 
-AIR Workbench scans the standard project, user, system, and repository Skill
-roots at startup within finite read-only budgets. It opens the first discovered
-Skill, or an empty document when none is available. The **Resources** region
-groups workspace and installed Skills alongside recent Codex and Claude
-sessions. Filter it in place, use **Quick Open** (`Command/Ctrl+P`), or choose
-**Refresh resources** to take another bounded snapshot. Discovery is on by
-default; there is no watcher or live-follow process.
+AIR Workbench scans the standard project, user, system, repository, and
+authoritative enabled Codex plugin Skill roots at startup within finite
+read-only budgets. Explicit enabled configuration and valid remote-install
+markers are authority; cache presence alone is ignored. It opens the first
+discovered Skill, or an empty document when none is available. The
+**Resources** region groups workspace and installed Skills alongside recent
+Codex and Claude sessions. Filter it in place, use **Quick Open**
+(`Command/Ctrl+P`), or choose **Refresh resources** to take another bounded
+snapshot. Discovery is on by default; there is no watcher or live-follow
+process.
 
 To open one specific Skill or AIR artifact instead:
 

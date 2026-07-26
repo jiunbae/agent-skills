@@ -509,7 +509,7 @@
         "top_level_keys",
         "byte_range",
         "byte_length",
-        "sha256",
+        "commitment",
         "omitted"
       ],
       "properties": {
@@ -547,14 +547,19 @@
           "minimum": 0,
           "maximum": 9007199254740991
         },
-        "sha256": {
-          "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+        "commitment": {
+          "$ref": "#/$defs/sessionCommitment"
         },
         "omitted": {
           "const": true
         }
       },
       "unevaluatedProperties": false
+    },
+    "sessionCommitment": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Per-registry, domain-separated HMAC-SHA256 commitment; it is not an ordinary SHA-256 digest of omitted provider bytes."
     },
     "sessionEvent": {
       "type": "object",
@@ -700,7 +705,7 @@
           "type": "object",
           "required": [
             "byte_length",
-            "sha256"
+            "commitment"
           ],
           "properties": {
             "byte_length": {
@@ -708,8 +713,8 @@
               "minimum": 0,
               "maximum": 33554432
             },
-            "sha256": {
-              "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/sha256"
+            "commitment": {
+              "$ref": "#/$defs/sessionCommitment"
             }
           },
           "unevaluatedProperties": false

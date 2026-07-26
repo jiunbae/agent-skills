@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +19,7 @@ import {
   assertTapSummary,
   fixedNodeTestEnvironment,
 } from "../scripts/release-gate.mjs";
+import { verifyPrivacySurfaces } from "../scripts/verify-release.mjs";
 
 const COMPONENT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const VERIFY_RELEASE = resolve(COMPONENT, "scripts/verify-release.mjs");
@@ -125,16 +133,54 @@ test("release help and README disclose the untracked worktree boundary", () => {
   }
 });
 
-test("privacy inventory names and requires every repository installer", () => {
-  const source = readFileSync(VERIFY_RELEASE, "utf8");
-  assert.match(
-    source,
-    /COMPONENT_PATHSPEC,\s+"install\.sh",\s+"install\.ps1",\s+"setup\.sh"/,
-  );
-  assert.match(
-    source,
-    /paths\.includes\(join\(REPOSITORY, "install\.sh"\)\) &&\s+paths\.includes\(join\(REPOSITORY, "install\.ps1"\)\) &&\s+paths\.includes\(join\(REPOSITORY, "setup\.sh"\)\)/,
-  );
+test("live privacy scanner requires and scans every repository installer", () => {
+  const repository = mkdtempSync(join(tmpdir(), "air-privacy-release-"));
+  const component = join(repository, "agents/workflow-studio");
+  const installers = ["install.sh", "install.ps1", "install.cmd", "setup.sh"];
+  try {
+    mkdirSync(component, { recursive: true });
+    for (const name of ["package.json", "package-lock.json", ".gitignore"]) {
+      writeFileSync(join(component, name), "{}\n");
+    }
+    for (const name of installers) {
+      writeFileSync(join(repository, name), `synthetic ${name}\n`);
+    }
+    execFileSync("git", ["init", "--quiet"], { cwd: repository });
+    execFileSync("git", ["add", "--", "."], { cwd: repository });
+
+    const selected = verifyPrivacySurfaces({ repository, component });
+    for (const name of installers) {
+      assert(selected.includes(join(repository, name)), `${name} was not selected`);
+    }
+
+    for (const name of installers) {
+      const path = join(repository, name);
+      execFileSync("git", ["rm", "--cached", "--quiet", "--", name], {
+        cwd: repository,
+      });
+      rmSync(path);
+      assert.throws(
+        () => verifyPrivacySurfaces({ repository, component }),
+        /missing a required package or installer surface/,
+      );
+      writeFileSync(path, `synthetic ${name}\n`);
+      execFileSync("git", ["add", "--", name], { cwd: repository });
+    }
+
+    for (const name of installers) {
+      const path = join(repository, name);
+      const original = readFileSync(path, "utf8");
+      const forbiddenAwsKey = "AKIA" + "A".repeat(16);
+      writeFileSync(path, `${original}${forbiddenAwsKey}\n`);
+      assert.throws(
+        () => verifyPrivacySurfaces({ repository, component }),
+        new RegExp(`${name.replace(".", "\\.")}: AWS key`),
+      );
+      writeFileSync(path, original);
+    }
+  } finally {
+    rmSync(repository, { force: true, recursive: true });
+  }
 });
 
 test("omitted and compensated tests fail fixed per-file TAP accounting", () => {

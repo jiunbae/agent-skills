@@ -832,14 +832,13 @@ test("native AIR validates without the optional legacy bridge, including session
     "AIR_SEMANTIC_INVALID",
   );
 
-  const emptyDigest = createHash("sha256").update(Buffer.alloc(0)).digest("hex");
   const session = nativeEnvelope("trace", AIR_PROFILES.session, {
     capture: {
       adapter: { id: "codex-rollout-jsonl", version: "1.0.0" },
       source_schema_fingerprint: "3".repeat(64),
       snapshot_cursor: { epoch: 0, byte_offset: 0 },
       completeness: "complete-prefix",
-      source_prefix: { byte_length: 0, sha256: emptyDigest },
+      source_prefix: { byte_length: 0, commitment: "4".repeat(64) },
     },
     privacy: {
       profile: "metadata-only",
@@ -891,7 +890,7 @@ test("native AIR validates without the optional legacy bridge, including session
       top_level_keys: ["content-omitted"],
       byte_range: { start_byte: 0, end_byte: eventBytes.byteLength },
       byte_length: eventBytes.byteLength,
-      sha256: createHash("sha256").update(eventBytes).digest("hex"),
+      commitment: "5".repeat(64),
       omitted: true,
     }],
   });

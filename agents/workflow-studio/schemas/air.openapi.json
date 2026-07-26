@@ -211,7 +211,7 @@
         },
         "responses": {
           "200": {
-            "description": "AIR trace-session-snapshot artifact",
+            "description": "AIR trace-session-snapshot artifact with per-registry domain-separated HMAC-SHA256 commitments for omitted provider bytes",
             "content": {
               "application/json": {
                 "schema": {
@@ -1207,7 +1207,8 @@
             "const": false
           },
           "artifact": {
-            "$ref": "https://open330.github.io/air/schema/1.0.0/trace.schema.json"
+            "$ref": "https://open330.github.io/air/schema/1.0.0/trace.schema.json",
+            "description": "Canonical trace-session-snapshot whose source-prefix and event-evidence commitment fields are defined by the AIR trace schema; no ordinary SHA-256 digest of omitted provider bytes is exposed."
           }
         },
         "unevaluatedProperties": false

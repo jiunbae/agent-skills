@@ -15,10 +15,12 @@ import test from "node:test";
 import {
   CATALOG_LIMITS,
   createSkillCatalog,
+  resolveEnabledPluginSkillRoots,
   resolveSkillRoots,
 } from "../src/catalog.mjs";
 import { decodeAirMarkdownArtifact } from "../src/air.mjs";
 import { stableStringify } from "../src/core.mjs";
+import { resolveWorkbenchSkillRoots } from "../scripts/workflow-studio.mjs";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
 
@@ -32,6 +34,23 @@ function skill(name, description, body = "## Workflow\n\n### Step 1: Inspect\nDo
 async function put(path, bytes) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, bytes);
+}
+
+async function putPlugin(cache, marketplace, plugin, version, {
+  marker = false,
+} = {}) {
+  const root = join(cache, marketplace, plugin);
+  await mkdir(join(root, version, "skills"), { recursive: true });
+  if (marker) {
+    await writeFile(
+      join(root, ".codex-remote-plugin-install.json"),
+      JSON.stringify({
+        schema_version: 1,
+        remote_plugin_id: `plugin_connector_${plugin.replaceAll("-", "_")}`,
+      }),
+    );
+  }
+  return root;
 }
 
 function ids() {
@@ -58,6 +77,168 @@ test("standard roots are caller-owned, bounded, and exclude plugin caches", () =
   assert.ok(roots.some((root) => root.label === "user-codex"));
   assert.ok(roots.some((root) => root.label === "explicit-1"));
   assert.equal(roots.some((root) => root.path.includes("plugins/cache")), false);
+});
+
+test("enabled-plugin resolver admits only configured or marked unambiguous roots", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-authority-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "config.toml");
+  const cache = join(directory, "cache");
+  await putPlugin(cache, "market-one", "configured", "1.0.0");
+  await putPlugin(cache, "market-two", "remote", "2.0.0", { marker: true });
+  await putPlugin(cache, "market-two", "unmarked", "3.0.0");
+  await put(config, Buffer.from([
+    '[plugins."configured@market-one"]',
+    "enabled = true",
+    "",
+  ].join("\n")));
+
+  const roots = await resolveEnabledPluginSkillRoots({
+    userHome: directory,
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(
+    roots.map((root) => [root.kind, root.label, root.path]),
+    [
+      [
+        "enabled-plugin",
+        "enabled-plugin:market-one:configured",
+        join(cache, "market-one", "configured", "1.0.0", "skills"),
+      ],
+      [
+        "enabled-plugin",
+        "enabled-plugin:market-two:remote",
+        join(cache, "market-two", "remote", "2.0.0", "skills"),
+      ],
+    ],
+  );
+});
+
+test("enabled-plugin resolver rejects disabled, stale, malformed, and traversal authorities", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-reject-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "config.toml");
+  const cache = join(directory, "cache");
+  await putPlugin(cache, "market", "disabled", "1.0.0", { marker: true });
+  const stale = await putPlugin(cache, "market", "stale", "1.0.0");
+  await mkdir(join(stale, "0.9.0", "skills"), { recursive: true });
+  const malformed = await putPlugin(cache, "market", "malformed", "1.0.0");
+  await writeFile(
+    join(malformed, ".codex-remote-plugin-install.json"),
+    '{"schema_version":2,"remote_plugin_id":"plugin_bad"}',
+  );
+  await putPlugin(cache, "market", "bad-enabled", "1.0.0");
+  await putPlugin(cache, "market", "control", "1.0.0", { marker: true });
+  await put(config, Buffer.from([
+    '[plugins."disabled@market"]',
+    "enabled = false",
+    '[plugins."stale@market"]',
+    "enabled = true",
+    '[plugins."bad-enabled@market"]',
+    'enabled = "true"',
+    '[plugins."../escape@market"]',
+    "enabled = true",
+    "",
+  ].join("\n")));
+
+  const roots = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(roots.map((root) => root.label), [
+    "enabled-plugin:market:control",
+  ]);
+});
+
+test("enabled-plugin resolver rejects symlink escape and fails closed on budgets", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-bounds-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "config.toml");
+  const cache = join(directory, "cache");
+  const outside = join(directory, "outside");
+  await mkdir(join(outside, "skills"), { recursive: true });
+  const escaped = join(cache, "market", "escaped", "1.0.0");
+  await mkdir(escaped, { recursive: true });
+  await symlink(join(outside, "skills"), join(escaped, "skills"));
+  await putPlugin(cache, "market", "one", "1.0.0");
+  await putPlugin(cache, "market", "two", "1.0.0");
+  await putPlugin(cache, "market", "marker-disabled", "1.0.0", {
+    marker: true,
+  });
+  await put(config, Buffer.from([
+    '[plugins."escaped@market"]',
+    "enabled = true",
+    '[plugins."one@market"]',
+    "enabled = true",
+    '[plugins."two@market"]',
+    "enabled = true",
+    '[plugins."marker-disabled@market"]',
+    "enabled = false",
+    "",
+  ].join("\n")));
+
+  const roots = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(roots.map((root) => root.label), [
+    "enabled-plugin:market:one",
+    "enabled-plugin:market:two",
+  ]);
+  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+    limits: { maxRoots: 1 },
+  }), []);
+  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+    limits: { maxConfigBytes: 1 },
+  }), []);
+  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+    limits: { maxCacheEntries: 1 },
+  }), []);
+
+  const linkedCache = join(directory, "linked-cache");
+  await symlink(cache, linkedCache);
+  assert.deepEqual(await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: linkedCache,
+  }), []);
+});
+
+test("zero-input Workbench root composition includes authoritative plugins within the catalog cap", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-workbench-roots-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const codexHome = join(directory, ".codex");
+  const config = join(codexHome, "config.toml");
+  const cache = join(codexHome, "plugins", "cache");
+  await putPlugin(cache, "market", "workbench", "current");
+  await put(config, Buffer.from(
+    '[plugins."workbench@market"]\nenabled = true\n',
+  ));
+
+  const roots = await resolveWorkbenchSkillRoots({
+    cwd: join(directory, "project"),
+    userHome: directory,
+    codexHome,
+    claudeHome: join(directory, ".claude"),
+    configPath: config,
+    pluginCacheRoot: cache,
+    componentRoot: join(directory, "component"),
+  });
+  assert.ok(roots.length <= CATALOG_LIMITS.maxRoots);
+  assert.deepEqual(
+    roots.filter((root) => root.kind === "enabled-plugin"),
+    [{
+      path: join(cache, "market", "workbench", "current", "skills"),
+      kind: "enabled-plugin",
+      label: "enabled-plugin:market:workbench",
+    }],
+  );
 });
 
 test("catalog deduplicates physical and exact copies, discloses conflicts, and leaks no locator or body", async (t) => {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import {
   closeSync,
   openSync,
@@ -28,6 +28,10 @@ import {
 } from "../src/sessions.mjs";
 
 const SENTINEL = "AIR_PRIVATE_CANARY_63fcf4";
+const PREFIX_COMMITMENT_DOMAIN =
+  "AIR-SESSION-SOURCE-PREFIX-COMMITMENT-V1\n";
+const EVIDENCE_COMMITMENT_DOMAIN =
+  "AIR-SESSION-EVIDENCE-COMMITMENT-V1\n";
 
 function fixedRecord(type, slot, byteLength = 128) {
   const prefix = `{"type":"${type}","slot":${slot},"pad":"`;
@@ -52,6 +56,25 @@ function deterministicRandom() {
     }
     return output;
   };
+}
+
+function expectedCommitment(secret, domain, startByte, bytes) {
+  const rangeStart = Buffer.alloc(8);
+  rangeStart.writeBigUInt64BE(BigInt(startByte));
+  const rawDigest = createHash("sha256").update(bytes).digest();
+  return createHmac("sha256", secret)
+    .update(domain, "utf8")
+    .update(rangeStart)
+    .update(rawDigest)
+    .digest("hex");
+}
+
+function assertNoRawHashOracles(value, rawValues) {
+  const response = JSON.stringify(value);
+  for (const rawValue of rawValues) {
+    const oracle = createHash("sha256").update(rawValue).digest("hex");
+    assert.equal(response.includes(oracle), false, `raw SHA-256 oracle ${oracle}`);
+  }
 }
 
 async function fixture(t) {
@@ -183,6 +206,104 @@ test("snapshot commits complete lines, retries a torn suffix, and leaks no conte
     duplicate.artifact.body.events.map(({ id }) => id),
     second.artifact.body.events.map(({ id }) => id),
   );
+});
+
+test("public byte commitments are keyed per registry and stable only within one lifetime", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "guessable.jsonl");
+  const firstRecord = Buffer.from('{"type":"session_meta","slot":0}\n');
+  const secondRecord = Buffer.from('{"type":"event_msg","slot":1}\n');
+  await writeFile(source, firstRecord);
+
+  const createRegistry = (secretByte) => createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: (length) => Buffer.alloc(length, secretByte),
+  });
+  const firstRegistry = createRegistry(0x11);
+  const secondRegistry = createRegistry(0x22);
+  const [firstCatalog, secondCatalog] = await Promise.all([
+    firstRegistry.catalog({ refresh: true }),
+    secondRegistry.catalog({ refresh: true }),
+  ]);
+  const [first, otherLifetime] = await Promise.all([
+    firstRegistry.snapshot({
+      sessionId: firstCatalog.items[0].id,
+      generation: firstCatalog.generation,
+    }),
+    secondRegistry.snapshot({
+      sessionId: secondCatalog.items[0].id,
+      generation: secondCatalog.generation,
+    }),
+  ]);
+  const firstPrefix = first.artifact.body.capture.source_prefix.commitment;
+  const firstEvidence = first.artifact.body.events[0].evidence[0].commitment;
+  assert.equal(
+    firstPrefix,
+    expectedCommitment(
+      Buffer.alloc(32, 0x11),
+      PREFIX_COMMITMENT_DOMAIN,
+      0,
+      firstRecord,
+    ),
+  );
+  assert.equal(
+    firstEvidence,
+    expectedCommitment(
+      Buffer.alloc(32, 0x11),
+      EVIDENCE_COMMITMENT_DOMAIN,
+      0,
+      firstRecord,
+    ),
+  );
+  assert.notEqual(
+    firstPrefix,
+    otherLifetime.artifact.body.capture.source_prefix.commitment,
+  );
+  assert.notEqual(
+    firstEvidence,
+    otherLifetime.artifact.body.events[0].evidence[0].commitment,
+  );
+  assertNoRawHashOracles(first, [firstRecord]);
+  assertNoRawHashOracles(otherLifetime, [firstRecord]);
+
+  await appendFile(source, secondRecord);
+  const appended = await firstRegistry.snapshot({
+    sessionId: firstCatalog.items[0].id,
+    generation: firstCatalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  const duplicate = await firstRegistry.snapshot({
+    sessionId: firstCatalog.items[0].id,
+    generation: firstCatalog.generation,
+    priorSnapshotId: appended.snapshot_id,
+  });
+  const completePrefix = Buffer.concat([firstRecord, secondRecord]);
+  assert.equal(
+    appended.artifact.body.events[0].evidence[0].commitment,
+    firstEvidence,
+  );
+  assert.deepEqual(
+    duplicate.artifact.body.events.map((event) =>
+      event.evidence[0].commitment),
+    appended.artifact.body.events.map((event) =>
+      event.evidence[0].commitment),
+  );
+  assert.equal(
+    duplicate.artifact.body.capture.source_prefix.commitment,
+    appended.artifact.body.capture.source_prefix.commitment,
+  );
+  assertNoRawHashOracles(appended, [
+    firstRecord,
+    secondRecord,
+    completePrefix,
+  ]);
+  assertNoRawHashOracles(duplicate, [
+    firstRecord,
+    secondRecord,
+    completePrefix,
+  ]);
+  assert.equal(validateAirArtifact(appended.artifact), true);
+  assert.equal(validateAirArtifact(duplicate.artifact), true);
 });
 
 test("unchanged catalog refresh rebases a private continuation handle", async (t) => {
@@ -1125,8 +1246,13 @@ test("oversized newline records advance in bounded chunks and emit one omission"
     ["record.oversized-omitted", "turn.progress-observed"],
   );
   assert.equal(
-    second.artifact.body.events[0].evidence[0].sha256,
-    createHash("sha256").update(oversized).digest("hex"),
+    second.artifact.body.events[0].evidence[0].commitment,
+    expectedCommitment(
+      createHash("sha256").update("session-test-0").digest(),
+      EVIDENCE_COMMITMENT_DOMAIN,
+      0,
+      oversized,
+    ),
   );
   assert.equal(validateAirArtifact(second.artifact), true);
 });
@@ -1181,10 +1307,13 @@ test("known provider records and declared parents become closed graph evidence",
   );
   assert.equal(JSON.stringify(snapshots).includes(SENTINEL), false);
   assert.equal(
-    codex.artifact.body.events[0].evidence[0].sha256,
-    createHash("sha256")
-      .update(Buffer.from(codexLines.split("\n")[0] + "\n"))
-      .digest("hex"),
+    codex.artifact.body.events[0].evidence[0].commitment,
+    expectedCommitment(
+      createHash("sha256").update("session-test-0").digest(),
+      EVIDENCE_COMMITMENT_DOMAIN,
+      0,
+      Buffer.from(codexLines.split("\n")[0] + "\n"),
+    ),
   );
 });
 
