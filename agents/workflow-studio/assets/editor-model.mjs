@@ -37,6 +37,10 @@ const AIR_SCHEMA =
   "https://open330.github.io/air/schema/1.0.0/air.schema.json";
 const AIR_WORKFLOW_PROFILE =
   "https://open330.github.io/air/profiles/1.0.0/workflow-skill";
+const AIR_PLAN_PROFILE =
+  "https://open330.github.io/air/profiles/1.0.0/plan-native-cli";
+const AIR_NATIVE_TRACE_PROFILE =
+  "https://open330.github.io/air/profiles/1.0.0/trace-native-run";
 const AIR_SESSION_PROFILE =
   "https://open330.github.io/air/profiles/1.0.0/trace-session-snapshot";
 const AIR_CONTENT_DOMAIN = "AIR-CONTENT-V1\n";
@@ -415,6 +419,15 @@ function traceEventNode(event, index) {
 }
 
 function traceGraph(artifact) {
+  if (
+    [AIR_NATIVE_TRACE_PROFILE, AIR_SESSION_PROFILE].includes(
+      artifact?.air?.profile,
+    ) &&
+    artifact.graph &&
+    typeof artifact.graph === "object"
+  ) {
+    return clone(artifact.graph);
+  }
   const events = asArray(artifact.events);
   const nodes = events.map(traceEventNode);
   const bySequence = new Map(
@@ -668,6 +681,128 @@ function airSessionProjection(artifact) {
   };
 }
 
+function airPlanProjection(artifact) {
+  if (
+    artifact.air_version !== AIR_VERSION ||
+    artifact.kind !== "plan" ||
+    artifact.profile !== AIR_PLAN_PROFILE
+  ) {
+    throw new TypeError(
+      "Unsupported AIR plan version or profile; the plan was not opened.",
+    );
+  }
+  const body = asObject(artifact.body);
+  const workflow = airWorkflowProjection(body.workflow);
+  return {
+    kind: "plan",
+    ir_version: "1.0",
+    artifact_id: artifact.artifact_id,
+    workflow,
+    prompt: clone(asObject(body.prompt)),
+    agent: String(firstDefined(body.agent, "codex")),
+    cwd: String(firstDefined(body.cwd?.display, ".")),
+    safety: clone(asObject(body.safety)),
+    command: clone(asObject(body.command)),
+    execution_mode: String(
+      firstDefined(body.execution_mode, "native-cli-prompt-context"),
+    ),
+    graph_enforcement: String(
+      firstDefined(body.graph_enforcement, "prompt-context-only"),
+    ),
+    warnings: clone(asArray(body.warnings)),
+    diagnostics: clone(asArray(body.workflow?.body?.diagnostics)),
+    air: {
+      artifact_id: artifact.artifact_id,
+      profile: artifact.profile,
+      version: artifact.air_version,
+    },
+  };
+}
+
+function airNativeTraceProjection(artifact) {
+  if (
+    artifact.air_version !== AIR_VERSION ||
+    artifact.kind !== "trace" ||
+    artifact.profile !== AIR_NATIVE_TRACE_PROFILE
+  ) {
+    throw new TypeError(
+      "Unsupported AIR trace version or profile; the trace was not opened.",
+    );
+  }
+  const body = asObject(artifact.body);
+  const events = asArray(body.events);
+  const eventIds = new Set(events.map((event) => String(event?.id ?? "")));
+  const nodes = events.map((event, index) => {
+    const id = String(firstDefined(event?.id, `event-${index}`));
+    const source = clone(asObject(event?.source));
+    return {
+      id,
+      type: String(firstDefined(event?.type, "provider.unknown")),
+      title: String(firstDefined(event?.type, `Event ${index + 1}`)),
+      body: `Status: ${String(firstDefined(event?.status, "unknown"))}.`,
+      order: Number.isInteger(event?.order) ? event.order : index,
+      provenance: String(firstDefined(event?.assertion, "observed")),
+      confidence: clone(asObject(event?.confidence)),
+      evidence_refs: clone(asArray(event?.evidence_refs)),
+      event_ref: source,
+      raw_event_ref: source,
+      read_only: true,
+      read_only_reason: "Observed native-run events are read-only evidence.",
+      editable: {
+        fields: [],
+        structural: false,
+        reason: "Observed native-run events are read-only evidence.",
+      },
+    };
+  });
+  const edges = asArray(body.event_graph?.edges)
+    .filter(
+      (edge) =>
+        eventIds.has(String(edge?.from)) && eventIds.has(String(edge?.to)),
+    )
+    .map((edge, index) => ({
+      id: String(firstDefined(edge?.id, `event-edge-${index + 1}`)),
+      from: String(edge.from),
+      to: String(edge.to),
+      kind: String(firstDefined(edge.kind, "temporal")),
+      air_kind: String(firstDefined(edge.kind, "temporal")),
+      provenance: String(firstDefined(edge.assertion, "inferred")),
+      assertion: String(firstDefined(edge.assertion, "inferred")),
+      confidence: clone(asObject(edge.confidence)),
+      evidence_refs: clone(asArray(edge.evidence_refs)),
+      read_only: true,
+    }));
+  if (events.length > 0 && nodes.length === 0) {
+    throw new TypeError(
+      "AIR trace projection refused to replace non-empty events with an empty graph.",
+    );
+  }
+  return {
+    kind: "trace",
+    ir_version: "1.0",
+    artifact_id: artifact.artifact_id,
+    graph: { nodes, edges },
+    events: nodes,
+    inferred_edges: edges.filter((edge) => edge.assertion === "inferred"),
+    status: String(firstDefined(body.terminal?.status, "unknown")),
+    diagnostics: clone(asArray(body.diagnostics)),
+    hidden_reasoning_recovered: false,
+    trace: {
+      agent: String(firstDefined(body.agent, "unknown")),
+      cwd: clone(asObject(body.cwd)),
+      safety: clone(asObject(body.safety)),
+      adapter: clone(asObject(body.adapter)),
+      process: clone(asObject(body.process)),
+      terminal: clone(asObject(body.terminal)),
+    },
+    air: {
+      artifact_id: artifact.artifact_id,
+      profile: artifact.profile,
+      version: artifact.air_version,
+    },
+  };
+}
+
 export function projectAirArtifact(payload) {
   const artifact =
     payload && payload.artifact && typeof payload.artifact === "object"
@@ -676,6 +811,12 @@ export function projectAirArtifact(payload) {
   if (!isAirArtifact(artifact)) return payload;
   if (artifact.profile === AIR_WORKFLOW_PROFILE) {
     return airWorkflowProjection(artifact);
+  }
+  if (artifact.profile === AIR_PLAN_PROFILE) {
+    return airPlanProjection(artifact);
+  }
+  if (artifact.profile === AIR_NATIVE_TRACE_PROFILE) {
+    return airNativeTraceProjection(artifact);
   }
   if (artifact.profile === AIR_SESSION_PROFILE) {
     return airSessionProjection(artifact);

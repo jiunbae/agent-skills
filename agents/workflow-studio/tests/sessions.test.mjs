@@ -1509,7 +1509,7 @@ test("session catalog byte ceiling is exact and failed refreshes retain authorit
     roots: [],
     randomBytes: deterministicRandom(),
   });
-  const empty = await emptyProbe.catalog({ refresh: true });
+  const empty = await emptyProbe.catalog();
   const emptyBytes = Buffer.byteLength(JSON.stringify(empty), "utf8");
 
   const exact = createSessionRegistry({
@@ -1517,6 +1517,11 @@ test("session catalog byte ceiling is exact and failed refreshes retain authorit
     limits: { ...SESSION_LIMITS, maxCatalogBytes: emptyBytes },
     randomBytes: deterministicRandom(),
   });
+  const exactInitial = await exact.catalog();
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(exactInitial), "utf8"),
+    emptyBytes,
+  );
   const exactCatalog = await exact.catalog({ refresh: true });
   assert.equal(
     Buffer.byteLength(JSON.stringify(exactCatalog), "utf8"),
@@ -1528,12 +1533,18 @@ test("session catalog byte ceiling is exact and failed refreshes retain authorit
     limits: { ...SESSION_LIMITS, maxCatalogBytes: emptyBytes - 1 },
     randomBytes: deterministicRandom(),
   });
-  const noInitialPublication = await oneOver.catalog();
+  await assert.rejects(
+    oneOver.catalog(),
+    { code: "AIR_SESSION_LIMIT" },
+  );
   await assert.rejects(
     oneOver.catalog({ refresh: true }),
     { code: "AIR_SESSION_LIMIT" },
   );
-  assert.deepEqual(await oneOver.catalog(), noInitialPublication);
+  await assert.rejects(
+    oneOver.catalog(),
+    { code: "AIR_SESSION_LIMIT" },
+  );
 
   const source = join(dirs.codex, "retained.jsonl");
   const auxiliary = join(dirs.root, "auxiliary");

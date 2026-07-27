@@ -132,6 +132,138 @@ test("enabled-plugin resolver admits only configured or marked unambiguous roots
   assert.equal(resolution.status, "ready");
 });
 
+test("enabled-plugin marketplace unreadability is partial while true absence is ready", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-market-state-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cache = join(directory, "cache");
+  const marketplace = join(cache, "market");
+  await putPlugin(cache, "market", "remote", "1.0.0", { marker: true });
+
+  const originalReaddir = fs.promises.readdir;
+  fs.promises.readdir = async (path, ...args) => {
+    if (path === marketplace) {
+      const error = new Error("synthetic marketplace permission denial");
+      error.code = "EACCES";
+      throw error;
+    }
+    return originalReaddir(path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    const unreadable = await resolveEnabledPluginSkillRoots({
+      configPath: join(directory, "missing-config.toml"),
+      cacheRoot: cache,
+    });
+    assert.deepEqual(unreadable.roots, []);
+    assert.equal(unreadable.status, "partial");
+    assert.equal(JSON.stringify(unreadable).includes(directory), false);
+  } finally {
+    fs.promises.readdir = originalReaddir;
+    syncBuiltinESMExports();
+  }
+
+  await rm(marketplace, { recursive: true });
+  const absent = await resolveEnabledPluginSkillRoots({
+    configPath: join(directory, "missing-config.toml"),
+    cacheRoot: cache,
+  });
+  assert.deepEqual(absent.roots, []);
+  assert.equal(absent.status, "ready");
+});
+
+test("enabled-plugin roots retain cache ancestry into catalog publication", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-ancestry-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "config.toml");
+  const cache = join(directory, "cache");
+  const versionRoot = join(cache, "market", "plugin", "1.0.0");
+  const skillPath = join(versionRoot, "skills", "inside", "SKILL.md");
+  await putPlugin(cache, "market", "plugin", "1.0.0");
+  await put(skillPath, skill("inside-plugin", "Inside"));
+  await put(config, Buffer.from(
+    '[plugins."plugin@market"]\nenabled = true\n',
+  ));
+
+  const resolution = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  const unchanged = createSkillCatalog({
+    roots: resolution.roots,
+    randomIdBytes: ids(),
+  });
+  assert.equal((await unchanged.initialize()).items[0].name, "inside-plugin");
+
+  const movedVersion = join(directory, "moved-version");
+  const outsideVersion = join(directory, "outside-version");
+  await rename(versionRoot, movedVersion);
+  await put(
+    join(outsideVersion, "skills", "outside", "SKILL.md"),
+    skill("outside-plugin", "Outside"),
+  );
+  await symlink(outsideVersion, versionRoot);
+
+  const replaced = createSkillCatalog({
+    roots: resolution.roots,
+    randomIdBytes: ids(),
+  });
+  const snapshot = await replaced.initialize();
+  assert.equal(snapshot.item_count, 0);
+  assert.equal(snapshot.roots[0].status, "partial");
+  assert.deepEqual(
+    snapshot.roots[0].diagnostics.map((item) => item.code),
+    ["AIR_CATALOG_ROOT_UNREADABLE"],
+  );
+  assert.equal(JSON.stringify(snapshot).includes(directory), false);
+});
+
+test("long enabled-plugin source labels keep a stable bounded disambiguator", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-labels-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "config.toml");
+  const cache = join(directory, "cache");
+  const prefix = "x".repeat(70);
+  const plugins = [`${prefix}a`, `${prefix}b`];
+  for (const [index, plugin] of plugins.entries()) {
+    await putPlugin(cache, "market", plugin, "1.0.0");
+    await put(
+      join(cache, "market", plugin, "1.0.0", "skills", "same", "SKILL.md"),
+      skill("same-plugin-skill", `Variant ${index + 1}`),
+    );
+  }
+  await put(config, Buffer.from(plugins.map((plugin) => (
+    `[plugins."${plugin}@market"]\nenabled = true\n`
+  )).join("")));
+
+  const resolveRoots = () => resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  const resolution = await resolveRoots();
+  const labels = resolution.roots.map((root) => root.label);
+  assert.equal(new Set(labels).size, 2);
+  assert.ok(labels.every((label) => Buffer.byteLength(label, "utf8") <= 64));
+  assert.deepEqual(
+    (await resolveRoots()).roots.map((root) => root.label),
+    labels,
+  );
+
+  const catalog = createSkillCatalog({
+    roots: resolution.roots,
+    randomIdBytes: ids(),
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, 2);
+  assert.ok(snapshot.items.every((item) => item.name_conflict));
+  assert.deepEqual(
+    new Set(snapshot.items.flatMap((item) => (
+      item.source_labels.map((source) => source.label)
+    ))),
+    new Set(labels),
+  );
+  assert.equal(JSON.stringify(snapshot).includes(directory), false);
+});
+
 test("enabled-plugin marker absence, invalidity, bounds, and recovery remain distinct", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-plugin-marker-state-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -757,17 +889,28 @@ test("replacement lineage requires covered authorities and stable queued directo
   const originalLstat = fs.promises.lstat;
   let deniedPath = null;
   let queuedSwap = null;
+  let rootSwap = null;
   fs.promises.lstat = async (path, ...args) => {
     if (path === deniedPath) {
       const error = new Error("synthetic permission denial");
       error.code = "EACCES";
       throw error;
     }
+    if (rootSwap !== null && path === rootSwap.path) {
+      const swap = rootSwap;
+      rootSwap = null;
+      const info = await originalLstat(path, ...args);
+      await rename(swap.path, swap.moved);
+      await rename(swap.replacement, swap.path);
+      return info;
+    }
     if (queuedSwap !== null && path === queuedSwap.path) {
       const swap = queuedSwap;
       queuedSwap = null;
+      const info = await originalLstat(path, ...args);
       await rename(swap.path, swap.moved);
-      await symlink(swap.moved, swap.path);
+      await rename(swap.replacement, swap.path);
+      return info;
     }
     return originalLstat(path, ...args);
   };
@@ -860,10 +1003,34 @@ test("replacement lineage requires covered authorities and stable queued directo
     );
     assert.equal(JSON.stringify(deniedAfter).includes(directory), false);
 
+    const rootDrift = await duplicateCatalog("root-drift");
+    const rootReplacement = join(directory, "root-drift-replacement");
+    const rootMoved = join(directory, "root-drift-moved");
+    await mkdir(rootReplacement, { recursive: true });
+    await writeFile(
+      rootDrift.pathTwo,
+      skill("root-drift", "After"),
+    );
+    rootSwap = {
+      path: rootDrift.rootOne,
+      moved: rootMoved,
+      replacement: rootReplacement,
+    };
+    const rootDriftAfter = await rootDrift.catalog.refresh();
+    assert.equal(rootSwap, null);
+    const rootDriftNew = rootDriftAfter.items.find(
+      (item) => item.name === "root-drift",
+    );
+    assert.notEqual(rootDriftNew.id, rootDrift.initial.items[0].id);
+    assert.equal("replaces_id" in rootDriftNew, false);
+    assert.equal(rootDriftAfter.roots[0].status, "partial");
+    assert.equal(JSON.stringify(rootDriftAfter).includes(directory), false);
+
     const swapRootOne = join(directory, "queued-swap", "one");
     const swapRootTwo = join(directory, "queued-swap", "two");
     const queuedPath = join(swapRootOne, "zzz");
     const movedPath = join(directory, "queued-swap-moved");
+    const replacementPath = join(directory, "queued-swap-replacement");
     const swapPathTwo = join(swapRootTwo, "copy", "SKILL.md");
     await put(
       join(swapRootOne, "aaa", "SKILL.md"),
@@ -877,6 +1044,7 @@ test("replacement lineage requires covered authorities and stable queued directo
       swapPathTwo,
       skill("queued-authority", "Before"),
     );
+    await mkdir(replacementPath, { recursive: true });
     const swapping = createSkillCatalog({
       roots: [
         { label: "queued-one", path: swapRootOne },
@@ -895,6 +1063,7 @@ test("replacement lineage requires covered authorities and stable queued directo
     queuedSwap = {
       path: await realpath(queuedPath),
       moved: movedPath,
+      replacement: replacementPath,
     };
     const swapAfter = await swapping.refresh();
     assert.equal(queuedSwap, null);
@@ -905,6 +1074,7 @@ test("replacement lineage requires covered authorities and stable queued directo
     );
     assert.notEqual(swapNew.id, swapOldId);
     assert.equal("replaces_id" in swapNew, false);
+    assert.equal(swapAfter.roots[0].status, "partial");
     assert.deepEqual(
       swapAfter.roots[0].diagnostics.map((item) => item.code),
       ["AIR_CATALOG_DIRECTORY_UNREADABLE"],

@@ -394,10 +394,12 @@ function renderHeader() {
 }
 
 function renderTabs() {
-  if (state.kind === "trace" && state.activeView === "plan") {
+  const traceDraft =
+    state.kind === "trace" && Boolean(state.promotedDraft);
+  if (state.kind === "trace" && state.activeView === "plan" && !traceDraft) {
     state.activeView = "graph";
   }
-  element("tabPlan").disabled = state.kind === "trace";
+  element("tabPlan").disabled = state.kind === "trace" && !traceDraft;
   const inspectorView = state.activeView === "plan" ? "plan" : "graph";
   for (const button of document.querySelectorAll(".view-tabs [data-view]")) {
     const selected = button.dataset.view === inspectorView;

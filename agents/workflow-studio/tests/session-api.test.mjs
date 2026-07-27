@@ -181,7 +181,7 @@ async function withServer(t, run, { host = "127.0.0.1" } = {}) {
   }
 }
 
-test("session routes compose Host, token, exact methods, refresh, and no-CORS authority", async (t) => {
+test("session routes compose authority and enforce the initial catalog byte ceiling", async (t) => {
   await withServer(t, async ({ address, bound, sessionRegistry, studio }) => {
     const token = encodeURIComponent(studio.token);
     const paths = [
@@ -269,6 +269,68 @@ test("session routes compose Host, token, exact methods, refresh, and no-CORS au
     });
     assert.equal(wrongHost.status, 421);
   });
+
+  const initialCatalog = await createSessionRegistry({
+    roots: [],
+    randomBytes: (length) => Buffer.alloc(length, 0x31),
+  }).catalog();
+  const initialBytes = Buffer.byteLength(
+    JSON.stringify(initialCatalog),
+    "utf8",
+  );
+  for (const [offset, expectedStatus] of [[0, 200], [-1, 413]]) {
+    const sessionRegistry = createSessionRegistry({
+      roots: [],
+      limits: {
+        ...SESSION_LIMITS,
+        maxCatalogBytes: initialBytes + offset,
+      },
+      randomBytes: (length) => Buffer.alloc(length, 0x32),
+    });
+    const studio = createStudioServer({
+      artifact: {},
+      assetsDir: await assets(t),
+      schemasDir: SCHEMAS,
+      catalog: fakeCatalog(),
+      sessionRegistry,
+    });
+    const address = await studio.listen();
+    assert.ok(address.port > 0);
+    const token = encodeURIComponent(studio.token);
+    try {
+      const listed = await http(address, {
+        path: `/air/v1/sessions?token=${token}`,
+      });
+      assert.equal(listed.status, expectedStatus);
+      if (expectedStatus === 200) {
+        assert.equal(listed.body.byteLength, initialBytes);
+        assert.deepEqual(JSON.parse(listed.body), initialCatalog);
+      } else {
+        assert.equal(
+          JSON.parse(listed.body).code,
+          "AIR_SESSION_LIMIT",
+        );
+        const refreshed = await http(address, {
+          path: `/air/v1/sessions?refresh=1&token=${token}`,
+        });
+        assert.equal(refreshed.status, 413);
+        assert.equal(
+          JSON.parse(refreshed.body).code,
+          "AIR_SESSION_LIMIT",
+        );
+        const capabilities = await http(address, {
+          path: `/air/v1/capabilities?token=${token}`,
+        });
+        assert.equal(capabilities.status, 413);
+        assert.equal(
+          JSON.parse(capabilities.body).code,
+          "AIR_SESSION_LIMIT",
+        );
+      }
+    } finally {
+      await studio.close();
+    }
+  }
 });
 
 test("session API omits a queued directory changed to an outside alias", async (t) => {

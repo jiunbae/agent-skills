@@ -668,12 +668,17 @@ export function createSessionRegistry({
   let generation = 1;
   let nextEpoch = 0;
   let nextSnapshotSequence = 0;
-  let publicCatalog = Object.freeze({
+  const initialCatalog = Object.freeze({
     generation: 1,
     items: Object.freeze([]),
     diagnostics: Object.freeze([]),
     truncated: false,
   });
+  let publicCatalog =
+    Buffer.byteLength(JSON.stringify(initialCatalog), "utf8") <=
+      boundedLimits.maxCatalogBytes
+      ? initialCatalog
+      : null;
 
   function allocateEpoch() {
     if (!Number.isSafeInteger(nextEpoch)) {
@@ -1116,7 +1121,10 @@ export function createSessionRegistry({
   }
 
   async function catalog({ refresh = false } = {}) {
-    if (!refresh) return clonePublic(publicCatalog);
+    if (!refresh) {
+      if (publicCatalog === null) throw sessionError("AIR_SESSION_LIMIT");
+      return clonePublic(publicCatalog);
+    }
     if (refreshPromise !== null) return refreshPromise;
     refreshPromise = scan().finally(() => {
       refreshPromise = null;

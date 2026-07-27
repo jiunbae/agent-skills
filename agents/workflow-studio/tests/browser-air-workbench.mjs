@@ -42,6 +42,19 @@ const SKILL_A7 = "skill_LLLLLLLLLLLLLLLLLLLLLL";
 const SESSION = "session_CCCCCCCCCCCCCCCCCCCCCC";
 const SNAPSHOT = "snapshot_DDDDDDDDDDDDDDDDDDDDDD";
 const AIR_CLI = resolve(STUDIO_ROOT, "scripts/air.mjs");
+const SYNTHETIC_PLAN = resolve(
+  STUDIO_ROOT,
+  "examples/synthetic-plan.air.json",
+);
+const SYNTHETIC_TRACE = resolve(
+  STUDIO_ROOT,
+  "examples/synthetic-trace.air.json",
+);
+const LONG_CONFLICT_LABEL_STEM = `plugin-cache-${"shared-".repeat(6)}`;
+const LONG_CONFLICT_LABELS = Object.freeze({
+  user: `${LONG_CONFLICT_LABEL_STEM}user-a`,
+  "enabled-plugin": `${LONG_CONFLICT_LABEL_STEM}enabled-b`,
+});
 
 function validateWithCli(path) {
   const result = spawnSync(process.execPath, [AIR_CLI, "validate", path], {
@@ -219,6 +232,8 @@ async function downloadAndValidate(page, selector, filename) {
 }
 
 function skillItem(id, hash, sourceKind) {
+  const sourceLabel =
+    LONG_CONFLICT_LABELS[sourceKind] ?? `${sourceKind}-source`;
   return {
     id,
     name: "background-implementer",
@@ -228,7 +243,7 @@ function skillItem(id, hash, sourceKind) {
     workflow_node_count: 5,
     workflow_edge_count: 4,
     source_labels: [
-      { label: `${sourceKind}-source`, kind: sourceKind, locations: 1, linked_locations: 0 },
+      { label: sourceLabel, kind: sourceKind, locations: 1, linked_locations: 0 },
     ],
     location_count: 1,
     exact_copy: false,
@@ -513,17 +528,20 @@ async function runPass(browser, executablePath, pass) {
     assert.equal(await installedVariants.count(), 2);
     assert.match(
       (await installedVariants.nth(0).textContent()) ?? "",
-      /source: user-source/u,
+      new RegExp(`source: ${LONG_CONFLICT_LABELS.user}`, "u"),
     );
     assert.match(
       (await installedVariants.nth(1).textContent()) ?? "",
-      /source: enabled-plugin-source/u,
+      new RegExp(
+        `source: ${LONG_CONFLICT_LABELS["enabled-plugin"]}`,
+        "u",
+      ),
     );
     assert.notEqual(
       await installedVariants.nth(0).textContent(),
       await installedVariants.nth(1).textContent(),
     );
-    await page.locator("#resourceSearch").fill("enabled-plugin-source");
+    await page.locator("#resourceSearch").fill("enabled-b");
     assert.equal(await page.locator("#installedSkillList .resource-row").count(), 1);
     assert.equal(
       await page.locator("#installedSkillList .resource-row")
@@ -563,7 +581,7 @@ async function runPass(browser, executablePath, pass) {
         ?.getAttribute("aria-current") === "true",
     );
     await page.locator("#quickOpen").click();
-    await page.locator("#quickOpenSearch").fill("enabled-plugin-source");
+    await page.locator("#quickOpenSearch").fill("enabled-b");
     assert.equal(
       await page.locator("#quickOpenList .resource-row").count(),
       1,
@@ -1052,6 +1070,152 @@ test("AIR Workbench resources, documents, sessions, and responsive shell", async
   }
   for (let pass = 1; pass <= 2; pass += 1) {
     await runPass(runtime.chromium, runtime.executablePath, pass);
+  }
+});
+
+test("AIR Workbench reviews checked native AIR plan and trace profiles", async (t) => {
+  const runtime = await browserRuntime();
+  if (runtime.skip) {
+    t.skip(runtime.skip);
+    return;
+  }
+  validateWithCli(SYNTHETIC_PLAN);
+  validateWithCli(SYNTHETIC_TRACE);
+  const nativePlan = JSON.parse(await readFile(SYNTHETIC_PLAN, "utf8"));
+  const nativeTrace = JSON.parse(await readFile(SYNTHETIC_TRACE, "utf8"));
+  const { catalog, sessionRegistry } = await fixtures();
+  const instance = await runtime.chromium.launch({
+    executablePath: runtime.executablePath,
+    headless: true,
+  });
+  const context = await instance.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const errors = [];
+
+  async function openExplicitArtifact(artifact) {
+    const studio = createStudioServer({
+      artifact,
+      assetsDir: ASSETS_DIR,
+      schemasDir: SCHEMAS_DIR,
+      catalog,
+      sessionRegistry,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const address = await studio.listen();
+    const page = await context.newPage();
+    page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+    page.on("console", (message) => {
+      if (message.type() === "error") errors.push(`console: ${message.text()}`);
+    });
+    await page.goto(
+      `http://127.0.0.1:${address.port}/?token=${
+        encodeURIComponent(studio.token)
+      }&initial=explicit`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page.locator(".react-flow.air-flow-ready")
+      .waitFor({ state: "visible" });
+    return { page, studio };
+  }
+
+  try {
+    const planSession = await openExplicitArtifact(nativePlan);
+    try {
+      const { page } = planSession;
+      assert.equal(await page.locator("#artifactKind").textContent(), "PLAN");
+      assert.equal(await page.locator(".react-flow__node").count(), 2);
+      assert.equal(await page.locator(".react-flow__edge").count(), 1);
+      assert.equal(await page.locator("#tabPlan").getAttribute("aria-selected"), "true");
+      assert.equal(await page.locator("#tabPlan").isEnabled(), true);
+      assert.equal(await page.locator("#planAgent").inputValue(), "codex");
+      assert.equal(await page.locator("#planCwd").inputValue(), "/tmp");
+      assert.equal(await page.locator("#planSafety").inputValue(), "read-only");
+      assert.equal(
+        await page.locator("#planPrompt").inputValue(),
+        Buffer.from(nativePlan.body.prompt.bytes_base64, "base64").toString("utf8"),
+      );
+      assert.equal(await page.locator("#downloadPlan").isDisabled(), true);
+      assert.match(
+        (await page.locator("#approvalBadge").textContent()) ?? "",
+        /^CLI approval required$/u,
+      );
+      assert.equal(await page.locator("#downloadIr").isDisabled(), true);
+      assert.equal(await page.locator("#downloadMarkdown").isDisabled(), true);
+
+      await page.locator("#tabGraph").click();
+      await page.locator("#nodeTitle").fill("Reviewed native AIR plan");
+      await page.locator("#tabPlan").click();
+      await page.locator("#planPrompt").fill("Review the edited native AIR plan.");
+      await page.locator("#approvePlan").click();
+      await page.waitForFunction(
+        () => !document.querySelector("#downloadPlan")?.disabled,
+      );
+      assert.match(
+        (await page.locator("#approvalBadge").textContent()) ?? "",
+        /Browser reviewed.*CLI approval required/u,
+      );
+      const pendingPlan = page.waitForEvent("download");
+      await page.locator("#downloadPlan").click();
+      const planDownload = await pendingPlan;
+      const reviewedPlan = JSON.parse(
+        await readFile(await planDownload.path(), "utf8"),
+      );
+      assert.equal(reviewedPlan.kind, "plan");
+      assert.equal(
+        reviewedPlan.workflow.graph.nodes[0].title,
+        "Reviewed native AIR plan",
+      );
+    } finally {
+      await planSession.page.close();
+      await planSession.studio.close();
+    }
+
+    const traceSession = await openExplicitArtifact(nativeTrace);
+    try {
+      const { page } = traceSession;
+      assert.equal(await page.locator("#artifactKind").textContent(), "TRACE");
+      assert.equal(await page.locator(".react-flow__node").count(), 1);
+      assert.equal(await page.locator(".react-flow__edge").count(), 0);
+      assert.equal(await page.locator(".evidence-row").count(), 1);
+      assert.match(
+        (await page.locator(".evidence-row").textContent()) ?? "",
+        /turn\.completed.*observed.*Status: completed/isu,
+      );
+      assert.equal(await page.locator("#nodeTitle").isDisabled(), true);
+      assert.equal(await page.locator("#tabPlan").isDisabled(), true);
+      assert.equal(await page.locator("#downloadIr").isDisabled(), true);
+      assert.equal(await page.locator("#downloadMarkdown").isDisabled(), true);
+      assert.equal(await page.locator("#promoteTrace").isEnabled(), true);
+
+      await page.locator("#promoteTrace").click();
+      await page.locator("#draftPanel").waitFor({ state: "visible" });
+      assert.equal(await page.locator("#tabPlan").isEnabled(), true);
+      assert.equal(
+        await page.locator("#tabPlan").getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(await page.locator("#planForm").isVisible(), false);
+      assert.match(
+        (await page.locator("#draftPreview").textContent()) ?? "",
+        /trace describes observed history/iu,
+      );
+      const pendingDraft = page.waitForEvent("download");
+      await page.locator("#downloadDraft").click();
+      const draftDownload = await pendingDraft;
+      assert.match(
+        await readFile(await draftDownload.path(), "utf8"),
+        /Derived from a trace artifact/iu,
+      );
+    } finally {
+      await traceSession.page.close();
+      await traceSession.studio.close();
+    }
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+    await instance.close();
   }
 });
 

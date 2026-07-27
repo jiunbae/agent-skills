@@ -1523,6 +1523,157 @@ test("native AIR workflow projection preserves graph and source instead of openi
   assert.equal(state.validation.valid, true);
 });
 
+test("checked native AIR plan opens in editable browser review with approval cleared", async () => {
+  const air = JSON.parse(
+    await readFile(
+      new URL("../examples/synthetic-plan.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  validateAirArtifact(air);
+  const projected = projectAirArtifact(air);
+  assert.equal(projected.kind, "plan");
+  assert.equal(projected.workflow.kind, "workflow");
+  assert.equal(
+    projected.graph_enforcement,
+    "prompt-context-only",
+  );
+
+  let state = createEditorState(air);
+  assert.equal(state.kind, "plan");
+  assert.equal(state.activeView, "plan");
+  assert.equal(state.nodes.length, air.body.workflow.body.graph.nodes.length);
+  assert.equal(state.edges.length, air.body.workflow.body.graph.edges.length);
+  assert.equal(state.plan.adapter, "codex");
+  assert.equal(state.plan.cwd, "/tmp");
+  assert.equal(state.plan.safety, "read-only");
+  assert.equal(
+    state.plan.prompt,
+    Buffer.from(air.body.prompt.bytes_base64, "base64").toString("utf8"),
+  );
+  assert.equal(state.plan.approval, null);
+  assert.deepEqual(state.airArtifact, air);
+  assert.deepEqual(
+    Buffer.from(buildCandidateBytes(state)),
+    Buffer.from(air.body.workflow.body.source.bytes_base64, "base64"),
+  );
+
+  state = editNode(
+    state,
+    state.nodes[0].id,
+    "title",
+    "Review the native AIR plan",
+  );
+  state = editPlan(state, "prompt", "Review this edited native AIR plan.");
+  assert.equal(state.plan.approval, null);
+  assert.deepEqual(state.airArtifact, air);
+  state = await approvePlan(state);
+  assert.match(state.plan.approval.digest, /^[a-f0-9]{64}$/u);
+  const reviewed = approvedPlanArtifact(state);
+  assert.equal(reviewed.kind, "plan");
+  assert.equal(reviewed.workflow.kind, "workflow");
+  assert.equal(reviewed.workflow.graph.nodes[0].title, "Review the native AIR plan");
+});
+
+test("checked native AIR trace opens read-only and preserves evidence for promotion", async () => {
+  const air = JSON.parse(
+    await readFile(
+      new URL("../examples/synthetic-trace.air.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  validateAirArtifact(air);
+  const checked = createEditorState(air);
+  assert.equal(checked.kind, "trace");
+  assert.equal(checked.nodes.length, 1);
+  assert.equal(checked.nodes[0].title, "turn.completed");
+  assert.equal(checked.nodes[0].provenance, "observed");
+  assert.equal(checked.nodes[0].readOnly, true);
+  assert.match(checked.nodes[0].body, /completed/u);
+  assert.deepEqual(checked.airArtifact, air);
+  assert.strictEqual(
+    editNode(checked, checked.nodes[0].id, "title", "Fabricated edit"),
+    checked,
+  );
+  const checkedDraft = promoteToSkillDraft(checked);
+  assert.equal(checkedDraft.derived_from, "trace");
+  assert.match(checkedDraft.markdown, /trace describes observed history/iu);
+
+  const linked = structuredClone(air);
+  const confidence = structuredClone(air.body.events[0].confidence);
+  linked.body.events = [
+    {
+      ...structuredClone(air.body.events[0]),
+      id: "event-start",
+      order: 0,
+      type: "turn.started",
+      status: "in-progress",
+    },
+    {
+      ...structuredClone(air.body.events[0]),
+      id: "event-item",
+      order: 1,
+      type: "item.completed",
+      status: "completed",
+    },
+    {
+      ...structuredClone(air.body.events[0]),
+      id: "event-complete",
+      order: 2,
+    },
+  ];
+  linked.body.event_graph = {
+    entry_event_ids: ["event-start"],
+    nodes: linked.body.events.map(({ id }) => id),
+    edges: [
+      {
+        id: "provider-edge",
+        from: "event-start",
+        to: "event-item",
+        kind: "provider-link",
+        assertion: "observed",
+        confidence,
+        evidence_refs: [],
+      },
+      {
+        id: "temporal-edge",
+        from: "event-item",
+        to: "event-complete",
+        kind: "temporal",
+        assertion: "inferred",
+        confidence,
+        evidence_refs: [],
+      },
+    ],
+  };
+  const state = createEditorState(linked);
+  assert.deepEqual(
+    state.edges.map((edge) => [
+      edge.air_kind,
+      edge.provenance,
+      edge.readOnly,
+    ]),
+    [
+      ["provider-link", "observed", true],
+      ["temporal", "inferred", true],
+    ],
+  );
+  assert.equal(traceEdgeSemantics(state.edges[0]).category, "observed-provider");
+  assert.equal(traceEdgeSemantics(state.edges[1]).category, "inferred-temporal");
+  assert.match(structuralEditBlockReason(state), /read-only evidence/iu);
+  const draft = promoteToSkillDraft(state);
+  assert.match(draft.markdown, /Inferred or unobserved trace content/iu);
+  const promoted = importSkillBytes(Buffer.from(draft.markdown), {
+    sourcePath: "/tmp/native-trace-promotion/SKILL.md",
+  });
+  assert.equal(promoted.graph.nodes.length, 3);
+  assert.equal(promoted.graph.edges.length, 2);
+  assert.equal(
+    promoted.graph.edges.filter((edge) => edge.provenance === "inferred").length,
+    1,
+  );
+});
+
 test("native AIR no-op and edited JSON/Markdown remain authoritative and valid", async () => {
   const air = JSON.parse(
     await readFile(

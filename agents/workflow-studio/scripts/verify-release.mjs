@@ -53,10 +53,10 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "air-cli-server.test.mjs": 12,
   "air-spec.test.mjs": 2,
   "air.test.mjs": 18,
-  "catalog.test.mjs": 16,
+  "catalog.test.mjs": 19,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
-  "editor.test.mjs": 46,
+  "editor.test.mjs": 48,
   "identity.test.mjs": 4,
   "package-notices.test.mjs": 1,
   "r3-integration.test.mjs": 7,
@@ -251,7 +251,7 @@ async function verifyPackageAndSource() {
   });
   accessSync(browserEnvironment.executable, fsConstants.X_OK);
   for (const [name, expectedTests] of [
-    ["browser-air-workbench.mjs", 3],
+    ["browser-air-workbench.mjs", 4],
     ["browser-r10.mjs", 1],
     ["browser-exact-bound.mjs", 1],
   ]) {

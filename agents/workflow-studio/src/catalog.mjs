@@ -79,6 +79,7 @@ const UTF8_FATAL = new TextDecoder("utf-8", { fatal: true });
 const O_NOFOLLOW = FS_CONSTANTS.O_NOFOLLOW ?? 0;
 const MAX_OPAQUE_ID_SEQUENCE = (1n << 128n) - 1n;
 const OPAQUE_ID_LOW_MASK = (1n << 64n) - 1n;
+const PLUGIN_ROOT_AUTHORITY = Symbol("airPluginRootAuthority");
 
 function catalogError(code, message, details) {
   const error = new Error(message);
@@ -164,6 +165,31 @@ function sanitizeLabel(value, fallback) {
   return byteTruncate(label.replace(/\s+/gu, " "), 64) || fallback;
 }
 
+function pluginSourceLabel(marketplace, plugin) {
+  const label = `enabled-plugin:${marketplace}:${plugin}`;
+  if (Buffer.byteLength(label, "utf8") <= 64) return label;
+  const suffix = `:${sha256(Buffer.from(
+    `${marketplace}\0${plugin}`,
+    "utf8",
+  )).slice(0, 16)}`;
+  return `${byteTruncate(label, 64 - Buffer.byteLength(suffix, "utf8"))}${suffix}`;
+}
+
+function attachRootAuthority(root, authority) {
+  if (authority !== undefined) {
+    Object.defineProperty(root, PLUGIN_ROOT_AUTHORITY, {
+      value: authority,
+      enumerable: false,
+    });
+  }
+  return root;
+}
+
+function freezeRoot(root, authority) {
+  attachRootAuthority(root, authority);
+  return Object.freeze(root);
+}
+
 function normalizeRoot(root, index) {
   if (!root || typeof root !== "object") {
     throw catalogError(
@@ -187,14 +213,14 @@ function normalizeRoot(root, index) {
   ]).has(root.kind)
     ? root.kind
     : "explicit";
-  return Object.freeze({
+  return freezeRoot({
     path: resolve(root.path),
     kind,
     label: sanitizeLabel(root.label, `${kind}-${index + 1}`),
     ...(kind === "repository" && root.grouped === true
       ? { grouped: true }
       : {}),
-  });
+  }, kind === "enabled-plugin" ? root[PLUGIN_ROOT_AUTHORITY] : undefined);
 }
 
 function pushUniqueRoot(roots, seen, root) {
@@ -443,12 +469,31 @@ function validRemotePluginMarker(bytes) {
   );
 }
 
-async function containedRegularDirectory(path, physicalCacheRoot) {
+async function regularDirectoryAuthority(path, containmentRoot) {
+  const before = await lstat(path);
+  if (before.isSymbolicLink() || !before.isDirectory()) return null;
+  const physical = await realpath(path);
+  const after = await lstat(path);
+  const physicalAfter = await realpath(path);
+  if (
+    after.isSymbolicLink() ||
+    !after.isDirectory() ||
+    statsIdentity(before) !== statsIdentity(after) ||
+    physical !== physicalAfter ||
+    (containmentRoot !== undefined && !isContained(containmentRoot, physical))
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    path: resolve(path),
+    physical,
+    identity: statsIdentity(after),
+  });
+}
+
+async function maybeRegularDirectoryAuthority(path, containmentRoot) {
   try {
-    const info = await lstat(path);
-    if (info.isSymbolicLink() || !info.isDirectory()) return null;
-    const physical = await realpath(path);
-    return isContained(physicalCacheRoot, physical) ? physical : null;
+    return await regularDirectoryAuthority(path, containmentRoot);
   } catch {
     return null;
   }
@@ -456,10 +501,11 @@ async function containedRegularDirectory(path, physicalCacheRoot) {
 
 async function authoritativePluginRoots({
   cacheRoot,
-  physicalCacheRoot,
+  cacheAuthority,
   states,
   limits,
 }) {
+  const physicalCacheRoot = cacheAuthority.physical;
   let cacheEntries;
   try {
     cacheEntries = await readdir(cacheRoot, { withFileTypes: true });
@@ -488,14 +534,19 @@ async function authoritativePluginRoots({
     }
     const marketplaceRoot = join(cacheRoot, marketplaceEntry.name);
     if (
-      await containedRegularDirectory(marketplaceRoot, physicalCacheRoot) === null
+      await maybeRegularDirectoryAuthority(
+        marketplaceRoot,
+        physicalCacheRoot,
+      ) === null
     ) {
+      markerPartial = true;
       continue;
     }
     let pluginEntries;
     try {
       pluginEntries = await readdir(marketplaceRoot, { withFileTypes: true });
     } catch {
+      markerPartial = true;
       continue;
     }
     scannedEntries += pluginEntries.length;
@@ -517,8 +568,12 @@ async function authoritativePluginRoots({
       if (configured === "disabled" || configured === "malformed") continue;
       const pluginRoot = join(marketplaceRoot, pluginEntry.name);
       if (
-        await containedRegularDirectory(pluginRoot, physicalCacheRoot) === null
+        await maybeRegularDirectoryAuthority(
+          pluginRoot,
+          physicalCacheRoot,
+        ) === null
       ) {
+        markerPartial = true;
         continue;
       }
       const marker = await readBoundedRegularFile(
@@ -552,18 +607,21 @@ async function authoritativePluginRoots({
     .sort((left, right) => left.key.localeCompare(right.key))) {
     const marketplaceRoot = join(cacheRoot, authority.marketplace);
     const pluginRoot = join(marketplaceRoot, authority.plugin);
-    const physicalMarketplace = await containedRegularDirectory(
+    const marketplaceAuthority = await maybeRegularDirectoryAuthority(
       marketplaceRoot,
       physicalCacheRoot,
     );
-    const physicalPlugin = await containedRegularDirectory(
+    const pluginAuthority = await maybeRegularDirectoryAuthority(
       pluginRoot,
       physicalCacheRoot,
     );
     if (
-      physicalMarketplace === null ||
-      physicalPlugin === null ||
-      !isContained(physicalMarketplace, physicalPlugin)
+      marketplaceAuthority === null ||
+      pluginAuthority === null ||
+      !isContained(
+        marketplaceAuthority.physical,
+        pluginAuthority.physical,
+      )
     ) {
       continue;
     }
@@ -572,6 +630,7 @@ async function authoritativePluginRoots({
     try {
       entries = await readdir(pluginRoot, { withFileTypes: true });
     } catch {
+      markerPartial = true;
       continue;
     }
     if (entries.length > limits.maxDirectoryEntries) {
@@ -587,27 +646,34 @@ async function authoritativePluginRoots({
     }
     const versionRoot = join(pluginRoot, versions[0].name);
     const skillsRoot = join(versionRoot, "skills");
-    const physicalVersion = await containedRegularDirectory(
+    const versionAuthority = await maybeRegularDirectoryAuthority(
       versionRoot,
       physicalCacheRoot,
     );
-    const physicalSkills = await containedRegularDirectory(
+    const skillsAuthority = await maybeRegularDirectoryAuthority(
       skillsRoot,
       physicalCacheRoot,
     );
     if (
-      physicalVersion === null ||
-      physicalSkills === null ||
-      !isContained(physicalPlugin, physicalVersion) ||
-      !isContained(physicalVersion, physicalSkills)
+      versionAuthority === null ||
+      skillsAuthority === null ||
+      !isContained(pluginAuthority.physical, versionAuthority.physical) ||
+      !isContained(versionAuthority.physical, skillsAuthority.physical)
     ) {
       continue;
     }
-    roots.push({
+    const root = {
       path: skillsRoot,
       kind: "enabled-plugin",
-      label: `enabled-plugin:${authority.marketplace}:${authority.plugin}`,
-    });
+      label: pluginSourceLabel(authority.marketplace, authority.plugin),
+    };
+    roots.push(freezeRoot(root, Object.freeze([
+      cacheAuthority,
+      marketplaceAuthority,
+      pluginAuthority,
+      versionAuthority,
+      skillsAuthority,
+    ])));
   }
   return {
     roots,
@@ -648,14 +714,10 @@ export async function resolveEnabledPluginSkillRoots({
   const configuration = parseEnabledPluginConfiguration(configBytes, limits);
   if (configuration.exceeded) return pluginResolution([], "partial");
 
-  let cacheInfo;
-  let physicalCacheRoot;
+  let cacheAuthority;
   try {
-    cacheInfo = await lstat(resolvedCache);
-    if (cacheInfo.isSymbolicLink() || !cacheInfo.isDirectory()) {
-      return pluginResolution([], "partial");
-    }
-    physicalCacheRoot = await realpath(resolvedCache);
+    cacheAuthority = await regularDirectoryAuthority(resolvedCache);
+    if (cacheAuthority === null) return pluginResolution([], "partial");
   } catch (error) {
     const configuredOrUncertain =
       configuration.partial ||
@@ -666,7 +728,7 @@ export async function resolveEnabledPluginSkillRoots({
   }
   const result = await authoritativePluginRoots({
     cacheRoot: resolvedCache,
-    physicalCacheRoot,
+    cacheAuthority,
     states: configuration.states,
     limits,
   });
@@ -914,6 +976,66 @@ function rootDiagnostic(rootState, code, message, severity = "warning") {
   }
 }
 
+function markRootAuthorityPartial(rootState, state) {
+  state.authorityComplete = false;
+  rootState.status = "partial";
+  rootDiagnostic(
+    rootState,
+    "AIR_CATALOG_ROOT_UNREADABLE",
+    "Configured Skill root authority changed or could not be revalidated.",
+    "error",
+  );
+}
+
+async function directoryAuthorityMatches(authority, state) {
+  const info = await beforeDeadline(lstat(authority.path), state);
+  if (
+    info.isSymbolicLink() ||
+    !info.isDirectory() ||
+    statsIdentity(info) !== authority.identity
+  ) {
+    return false;
+  }
+  return await beforeDeadline(realpath(authority.path), state) ===
+    authority.physical;
+}
+
+async function pluginRootAuthorityMatches(root, state) {
+  const chain = root[PLUGIN_ROOT_AUTHORITY];
+  if (chain === undefined) return true;
+  if (
+    !Array.isArray(chain) ||
+    chain.length < 2 ||
+    chain.at(-1).path !== root.path
+  ) {
+    return false;
+  }
+  for (let index = 0; index < chain.length; index += 1) {
+    if (!await directoryAuthorityMatches(chain[index], state)) return false;
+    if (
+      index > 0 &&
+      !isContained(chain[index - 1].physical, chain[index].physical)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function canonicalRootAuthorityMatches(root, state) {
+  const info = await beforeDeadline(lstat(root.path), state);
+  if (
+    info.isSymbolicLink() ||
+    !info.isDirectory() ||
+    statsIdentity(info) !== root.identity
+  ) {
+    return false;
+  }
+  const physical = await beforeDeadline(realpath(root.path), state);
+  return physical === root.physical &&
+    await pluginRootAuthorityMatches(root, state);
+}
+
 async function canonicalRoots(roots, state) {
   const canonical = [];
   for (const root of roots.slice(0, state.limits.maxRoots)) {
@@ -925,8 +1047,10 @@ async function canonicalRoots(roots, state) {
       omittedDiagnostics: 0,
       records: 0,
     };
+    let discovered = false;
     try {
       const info = await beforeDeadline(lstat(root.path), state);
+      discovered = true;
       if (info.isSymbolicLink()) {
         state.authorityComplete = false;
         rootState.status = "invalid";
@@ -947,20 +1071,27 @@ async function canonicalRoots(roots, state) {
         );
       } else {
         const physical = await beforeDeadline(realpath(root.path), state);
-        canonical.push({
+        const candidate = attachRootAuthority({
           ...root,
           physical,
           identity: statsIdentity(info),
           rootState,
-        });
+        }, root[PLUGIN_ROOT_AUTHORITY]);
+        if (await canonicalRootAuthorityMatches(candidate, state)) {
+          canonical.push(candidate);
+        } else {
+          markRootAuthorityPartial(rootState, state);
+        }
       }
     } catch (error) {
-      if (error?.code === "ENOENT") {
+      if (error?.code === "ENOENT" && !discovered) {
         rootState.status = "missing";
       } else if (error?.code === "AIR_CATALOG_TIME_LIMIT") {
         state.authorityComplete = false;
         rootState.status = "partial";
         markTruncated(state, error.code);
+      } else if (discovered) {
+        markRootAuthorityPartial(rootState, state);
       } else {
         state.authorityComplete = false;
         rootState.status = "unreadable";
@@ -1152,22 +1283,45 @@ async function maybeReadSkillDirectoryLink(
   }
 }
 
+function markDirectoryAuthorityPartial(root, state) {
+  state.authorityComplete = false;
+  root.rootState.status = "partial";
+  rootDiagnostic(
+    root.rootState,
+    "AIR_CATALOG_DIRECTORY_UNREADABLE",
+    "A Skill directory could not be inspected.",
+  );
+}
+
+function discardRecordsSince(state, root, start) {
+  const removed = state.records.splice(start);
+  state.totalBytes -= removed.reduce(
+    (total, record) => total + record.byteCount,
+    0,
+  );
+  root.rootState.records -= removed.length;
+}
+
 async function walkRoot(root, allRoots, state) {
-  const stack = [{ path: root.physical, depth: 0 }];
+  const stack = [{
+    path: root.physical,
+    depth: 0,
+    identity: root.identity,
+  }];
   const visited = new Set();
   while (stack.length > 0 && canContinue(state)) {
     const current = stack.pop();
+    const recordStart = state.records.length;
     let info;
     let entries;
     try {
       info = await beforeDeadline(lstat(current.path), state);
-      if (!info.isDirectory() || info.isSymbolicLink()) {
-        state.authorityComplete = false;
-        rootDiagnostic(
-          root.rootState,
-          "AIR_CATALOG_DIRECTORY_UNREADABLE",
-          "A Skill directory could not be inspected.",
-        );
+      if (
+        !info.isDirectory() ||
+        info.isSymbolicLink() ||
+        statsIdentity(info) !== current.identity
+      ) {
+        markDirectoryAuthorityPartial(root, state);
         continue;
       }
       const identity = statsIdentity(info);
@@ -1183,12 +1337,7 @@ async function walkRoot(root, allRoots, state) {
         root.rootState.status = "partial";
         break;
       }
-      rootDiagnostic(
-        root.rootState,
-        "AIR_CATALOG_DIRECTORY_UNREADABLE",
-        "A Skill directory could not be inspected.",
-      );
-      state.authorityComplete = false;
+      markDirectoryAuthorityPartial(root, state);
       continue;
     }
 
@@ -1248,7 +1397,28 @@ async function walkRoot(root, allRoots, state) {
         if (SKIP_DIRECTORIES.has(entry.name.toLowerCase())) continue;
         if (root.grouped === true && current.depth >= 2) continue;
         if (current.depth < state.limits.maxDepth) {
-          directories.push({ path, depth: current.depth + 1 });
+          try {
+            const queuedInfo = await beforeDeadline(lstat(path), state);
+            if (
+              queuedInfo.isSymbolicLink() ||
+              !queuedInfo.isDirectory()
+            ) {
+              markDirectoryAuthorityPartial(root, state);
+              continue;
+            }
+            directories.push({
+              path,
+              depth: current.depth + 1,
+              identity: statsIdentity(queuedInfo),
+            });
+          } catch (error) {
+            if (error?.code === "AIR_CATALOG_TIME_LIMIT") {
+              markTruncated(state, error.code);
+              root.rootState.status = "partial";
+              return;
+            }
+            markDirectoryAuthorityPartial(root, state);
+          }
         } else {
           markTruncated(state, "AIR_CATALOG_DEPTH_LIMIT");
           root.rootState.status = "partial";
@@ -1294,6 +1464,25 @@ async function walkRoot(root, allRoots, state) {
         }
         candidateError(root.rootState, error, state);
       }
+    }
+    try {
+      const currentAfter = await beforeDeadline(lstat(current.path), state);
+      if (
+        currentAfter.isSymbolicLink() ||
+        !currentAfter.isDirectory() ||
+        statsIdentity(currentAfter) !== current.identity
+      ) {
+        discardRecordsSince(state, root, recordStart);
+        markDirectoryAuthorityPartial(root, state);
+      }
+    } catch (error) {
+      discardRecordsSince(state, root, recordStart);
+      if (error?.code === "AIR_CATALOG_TIME_LIMIT") {
+        markTruncated(state, error.code);
+        root.rootState.status = "partial";
+        return;
+      }
+      markDirectoryAuthorityPartial(root, state);
     }
     for (let index = directories.length - 1; index >= 0; index -= 1) {
       stack.push(directories[index]);
@@ -1542,7 +1731,22 @@ async function scanCatalog({
   }
   for (const root of availableRoots) {
     if (!canContinue(state)) break;
+    const recordStart = state.records.length;
     await walkRoot(root, availableRoots, state);
+    try {
+      if (!await canonicalRootAuthorityMatches(root, state)) {
+        discardRecordsSince(state, root, recordStart);
+        markRootAuthorityPartial(root.rootState, state);
+      }
+    } catch (error) {
+      discardRecordsSince(state, root, recordStart);
+      if (error?.code === "AIR_CATALOG_TIME_LIMIT") {
+        markTruncated(state, error.code);
+        root.rootState.status = "partial";
+      } else {
+        markRootAuthorityPartial(root.rootState, state);
+      }
+    }
     if (state.records.length >= limits.maxRecords) break;
   }
   const { items, internals } = buildItems(
