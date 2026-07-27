@@ -396,6 +396,21 @@ tokens, private locators, absolute paths, or omitted session content.
 `GET /air/v1/capabilities` instead of assuming a planned operation exists.
 Unavailable operations MUST fail as a typed problem, not silently downgrade.
 
+The `air-skill-catalog` and OpenAPI document version is `1.1.0`; AIR
+artifacts remain `1.0.0` and the route major remains `/air/v1`.
+The catalog item MAY contain `replaces_id`. It is the opaque ID of an item in
+only the immediately preceding successfully published generation. The server
+MUST derive it solely from a complete bipartite relation over deduplicated
+server-private canonical source authorities. It MUST emit the field only when
+both items have degree one, their IDs differ, the old ID is absent from the
+current generation, and the new ID was absent from the prior generation. Self
+pairs participate in degree calculation. Unchanged, split, merge, swap,
+existing-content convergence, and incomplete, partial, unreadable, or
+truncated authority MUST omit the field. Public names, descriptions, hashes,
+source labels, and paths MUST NOT establish this relation. `replaces_id` is
+metadata, not a route alias or durable history; the old artifact ID remains
+stale.
+
 The browser never supplies filesystem paths, roots, globs, URLs, or output
 destinations. Transform operations are in-memory and do not install or write
 a Skill, mutate provider stores, or run an agent. Local servers use a

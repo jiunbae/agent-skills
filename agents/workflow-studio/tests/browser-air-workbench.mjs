@@ -33,6 +33,12 @@ const BACKGROUND_IMPLEMENTER = resolve(
 const SKILL_A = "skill_AAAAAAAAAAAAAAAAAAAAAA";
 const SKILL_B = "skill_BBBBBBBBBBBBBBBBBBBBBB";
 const SKILL_C = "skill_EEEEEEEEEEEEEEEEEEEEEE";
+const SKILL_A2 = "skill_GGGGGGGGGGGGGGGGGGGGGG";
+const SKILL_A3 = "skill_HHHHHHHHHHHHHHHHHHHHHH";
+const SKILL_A4 = "skill_IIIIIIIIIIIIIIIIIIIIII";
+const SKILL_A5 = "skill_JJJJJJJJJJJJJJJJJJJJJJ";
+const SKILL_A6 = "skill_KKKKKKKKKKKKKKKKKKKKKK";
+const SKILL_A7 = "skill_LLLLLLLLLLLLLLLLLLLLLL";
 const SESSION = "session_CCCCCCCCCCCCCCCCCCCCCC";
 const SNAPSHOT = "snapshot_DDDDDDDDDDDDDDDDDDDDDD";
 const AIR_CLI = resolve(STUDIO_ROOT, "scripts/air.mjs");
@@ -350,7 +356,7 @@ async function fixtures({ bounded = false } = {}) {
       ];
   let catalogSnapshot = {
     format: "air-skill-catalog",
-    version: "1.0.0",
+    version: "1.1.0",
     generation: 1,
     truncated: false,
     roots: [],
@@ -1554,17 +1560,21 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       ),
       { sourcePath },
     );
-    const catalogItems = (hash) => [
-      skillItem(SKILL_A, hash.repeat(64), "repository"),
+    const catalogItems = (id, hash, replacesId) => [
+      {
+        ...skillItem(id, hash.repeat(64), "repository"),
+        ...(replacesId ? { replaces_id: replacesId } : {}),
+      },
       skillItem(SKILL_B, "b".repeat(64), "user"),
+      skillItem(SKILL_C, "c".repeat(64), "enabled-plugin"),
     ];
     const stalePage = await context.newPage();
     try {
       await stalePage.goto(baseUrl, { waitUntil: "domcontentloaded" });
       await stalePage.locator(".react-flow.air-flow-ready")
         .waitFor({ state: "visible" });
-      const activeSkillRow = stalePage.locator(
-        `.resource-row[data-resource-key="skill:${SKILL_A}"]`,
+      const skillRow = (id) => stalePage.locator(
+        `.resource-row[data-resource-key="skill:${id}"]`,
       );
       assert.equal(
         await stalePage.locator("#nodeTitle").inputValue(),
@@ -1575,33 +1585,38 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
         "Decompose the refreshed task DAG",
         "synthetic-refresh-v2/SKILL.md",
       );
-      controls.setSkillArtifact(SKILL_A, changed);
-      controls.setSkillCatalog(catalogItems("c"), 2);
+      controls.setSkillArtifact(SKILL_A2, changed);
+      controls.setSkillCatalog(catalogItems(SKILL_A2, "c", SKILL_A), 2);
       await stalePage.locator("#refreshResources").click();
       await stalePage.waitForFunction(
         (key) => document.querySelector(
           `.resource-row[data-resource-key="${key}"]`,
         )?.textContent?.includes("changed"),
-        `skill:${SKILL_A}`,
+        `skill:${SKILL_A2}`,
+      );
+      assert.equal(await skillRow(SKILL_A).count(), 0);
+      assert.equal(
+        await skillRow(SKILL_A2).getAttribute("aria-current"),
+        "true",
       );
       assert.equal(
         await stalePage.locator("#nodeTitle").inputValue(),
         "Decompose into a task DAG",
       );
-      await activeSkillRow.click();
+      await skillRow(SKILL_A2).click();
       await stalePage.locator("#staleSkillDialog").waitFor({ state: "visible" });
       await stalePage.locator("#cancelStaleSkill").click();
       assert.equal(
         await stalePage.locator("#nodeTitle").inputValue(),
         "Decompose into a task DAG",
       );
-      await activeSkillRow.click();
+      await skillRow(SKILL_A2).click();
       await stalePage.locator("#keepStaleSkill").click();
       assert.equal(
         await stalePage.locator("#nodeTitle").inputValue(),
         "Decompose into a task DAG",
       );
-      await activeSkillRow.click();
+      await skillRow(SKILL_A2).click();
       await stalePage.locator("#reloadStaleSkill").click();
       await stalePage.waitForFunction(
         () => document.querySelector("#nodeTitle")?.value ===
@@ -1610,30 +1625,87 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       assert.equal(await stalePage.locator("#undoEdit").isDisabled(), true);
 
       await stalePage.locator("#nodeTitle").fill("Keep this dirty local title");
+      await stalePage.locator("#openDiff").click();
+      await stalePage.locator("#reviewDrawer").waitFor({ state: "visible" });
+      assert.equal(await stalePage.locator("#downloadIr").isEnabled(), true);
+      assert.equal(
+        await stalePage.locator(".react-flow__node.selected").count(),
+        1,
+      );
       const third = changedSkill(
         "Decompose the third task DAG",
         "synthetic-refresh-v3/SKILL.md",
       );
-      controls.setSkillArtifact(SKILL_A, third);
-      controls.setSkillCatalog(catalogItems("d"), 3);
+      controls.setSkillArtifact(SKILL_A3, third);
+      controls.setSkillCatalog(catalogItems(SKILL_A3, "d", SKILL_A2), 3);
       await stalePage.locator("#refreshResources").click();
       await stalePage.waitForFunction(
         (key) => document.querySelector(
           `.resource-row[data-resource-key="${key}"]`,
         )?.textContent?.includes("changed"),
-        `skill:${SKILL_A}`,
+        `skill:${SKILL_A3}`,
+      );
+      assert.equal(await skillRow(SKILL_A2).count(), 0);
+      assert.equal(
+        await skillRow(SKILL_A3).getAttribute("aria-current"),
+        "true",
       );
       assert.equal(
         await stalePage.locator("#nodeTitle").inputValue(),
         "Keep this dirty local title",
       );
-      await activeSkillRow.click();
+      assert.equal(await stalePage.locator("#undoEdit").isEnabled(), true);
+      assert.equal(
+        await stalePage.locator(".react-flow__node.selected").count(),
+        1,
+      );
+      assert.equal(
+        await stalePage.locator("#openDiff").getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(await stalePage.locator("#reviewDrawer").isVisible(), true);
+      assert.equal(await stalePage.locator("#downloadIr").isEnabled(), true);
+      await skillRow(SKILL_A3).click();
       await stalePage.locator("#cancelStaleSkill").click();
       assert.equal(
         await stalePage.locator("#nodeTitle").inputValue(),
         "Keep this dirty local title",
       );
-      await activeSkillRow.click();
+      await skillRow(SKILL_A3).click();
+      await stalePage.locator("#keepStaleSkill").click();
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Keep this dirty local title",
+      );
+      assert.equal(await stalePage.locator("#undoEdit").isEnabled(), true);
+
+      const thirdArtifactPattern =
+        `**/air/v1/skills/${SKILL_A3}/artifact*`;
+      await stalePage.route(thirdArtifactPattern, async (route) => {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/problem+json",
+          body: JSON.stringify({
+            type: "about:blank",
+            title: "Synthetic failure",
+            status: 500,
+          }),
+        });
+      });
+      await skillRow(SKILL_A3).click();
+      await stalePage.locator("#reloadStaleSkill").click();
+      await stalePage.waitForFunction(
+        () => document.querySelector("#resourceStatus")?.textContent
+          ?.includes("Could not open resource"),
+      );
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Keep this dirty local title",
+      );
+      assert.equal(await stalePage.locator("#undoEdit").isEnabled(), true);
+      await stalePage.unroute(thirdArtifactPattern);
+
+      await skillRow(SKILL_A3).click();
       await stalePage.locator("#reloadStaleSkill").click();
       await stalePage.waitForFunction(
         () => document.querySelector("#nodeTitle")?.value ===
@@ -1645,8 +1717,8 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
         "Decompose the fourth task DAG",
         "synthetic-refresh-v4/SKILL.md",
       );
-      controls.setSkillArtifact(SKILL_A, fourth);
-      controls.setSkillCatalog(catalogItems("e"), 4);
+      controls.setSkillArtifact(SKILL_A4, fourth);
+      controls.setSkillCatalog(catalogItems(SKILL_A4, "e", SKILL_A3), 4);
       await stalePage.locator("#refreshResources").click();
       await stalePage.locator("#refreshResources").click();
       assert.equal(
@@ -1667,17 +1739,22 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
         markArtifactFinished = resolveRequest;
       });
       const artifactPattern =
-        `**/air/v1/skills/${SKILL_A}/artifact*`;
+        `**/air/v1/skills/${SKILL_A4}/artifact*`;
       await stalePage.route(artifactPattern, async (route) => {
         markArtifactRequested();
         await artifactGate;
         await route.continue();
         markArtifactFinished();
       });
-      await activeSkillRow.click();
+      await skillRow(SKILL_A4).click();
       await stalePage.locator("#reloadStaleSkill").click();
       await artifactRequested;
-      controls.setSkillCatalog([], 5);
+      const fifth = changedSkill(
+        "Decompose the fifth task DAG",
+        "synthetic-refresh-v5/SKILL.md",
+      );
+      controls.setSkillArtifact(SKILL_A5, fifth);
+      controls.setSkillCatalog(catalogItems(SKILL_A5, "f", SKILL_A4), 5);
       await stalePage.locator("#refreshResources").click();
       releaseArtifact();
       await artifactFinished;
@@ -1690,29 +1767,116 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       await stalePage.waitForFunction(
         (key) => document.querySelector(
           `.resource-row[data-resource-key="${key}"]`,
-        )?.textContent?.includes("removed"),
-        `skill:${SKILL_A}`,
+        )?.textContent?.includes("changed"),
+        `skill:${SKILL_A5}`,
       );
-      await activeSkillRow.click();
+      assert.equal(await skillRow(SKILL_A4).count(), 0);
+      assert.equal(
+        await skillRow(SKILL_A5).getAttribute("aria-current"),
+        "true",
+      );
+      await skillRow(SKILL_A5).click();
+      await stalePage.locator("#reloadStaleSkill").click();
+      await stalePage.waitForFunction(
+        () => document.querySelector("#nodeTitle")?.value ===
+          "Decompose the fifth task DAG",
+      );
+
+      controls.setSkillCatalog([], 6);
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("removed"),
+        `skill:${SKILL_A5}`,
+      );
+      await skillRow(SKILL_A5).click();
       assert.equal(
         await stalePage.locator("#reloadStaleSkill").isDisabled(),
         true,
       );
       await stalePage.locator("#cancelStaleSkill").click();
-      await activeSkillRow.click();
+      await skillRow(SKILL_A5).click();
       await stalePage.locator("#keepStaleSkill").click();
       assert.equal(
         await stalePage.locator("#nodeTitle").inputValue(),
-        "Decompose the third task DAG",
+        "Decompose the fifth task DAG",
       );
 
-      controls.setSkillCatalog(catalogItems("e"), 6);
+      controls.setSkillCatalog([
+        {
+          ...skillItem(SKILL_A6, "1".repeat(64), "repository"),
+          replaces_id: SKILL_A5,
+        },
+        {
+          ...skillItem(SKILL_A7, "2".repeat(64), "repository"),
+          replaces_id: SKILL_A5,
+        },
+      ], 7);
       await stalePage.locator("#refreshResources").click();
-      await activeSkillRow.click();
-      await stalePage.locator("#reloadStaleSkill").click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("removed"),
+        `skill:${SKILL_A5}`,
+      );
+      assert.equal(
+        await skillRow(SKILL_A5).getAttribute("aria-current"),
+        "true",
+      );
+      await skillRow(SKILL_A5).click();
+      assert.equal(
+        await stalePage.locator("#reloadStaleSkill").isDisabled(),
+        true,
+      );
+      await stalePage.locator("#cancelStaleSkill").click();
+
+      const sixth = changedSkill(
+        "Decompose the sixth task DAG",
+        "synthetic-refresh-v6/SKILL.md",
+      );
+      controls.setSkillArtifact(SKILL_A6, sixth);
+      await skillRow(SKILL_A6).click();
       await stalePage.waitForFunction(
         () => document.querySelector("#nodeTitle")?.value ===
-          "Decompose the fourth task DAG",
+          "Decompose the sixth task DAG",
+      );
+      await skillRow(SKILL_A5).click();
+      await stalePage.locator("#keepStaleSkill").click();
+      controls.setSkillCatalog([
+        {
+          ...skillItem(SKILL_A6, "1".repeat(64), "repository"),
+          replaces_id: SKILL_A5,
+        },
+      ], 8);
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("removed"),
+        `skill:${SKILL_A5}`,
+      );
+      assert.equal(
+        await skillRow(SKILL_A5).getAttribute("aria-current"),
+        "true",
+      );
+
+      controls.setSkillCatalog([
+        {
+          ...skillItem(SKILL_A5, "f".repeat(64), "repository"),
+          replaces_id: SKILL_A5,
+        },
+      ], 9);
+      await stalePage.locator("#refreshResources").click();
+      await stalePage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("removed"),
+        `skill:${SKILL_A5}`,
+      );
+      assert.equal(
+        await stalePage.locator("#nodeTitle").inputValue(),
+        "Decompose the fifth task DAG",
       );
 
       const duplicateSessions = [

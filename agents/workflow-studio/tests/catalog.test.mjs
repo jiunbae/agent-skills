@@ -572,6 +572,7 @@ test("refresh coalesces, preserves stable IDs, uses duplicates after races, and 
     randomIdBytes: ids(),
   });
   const initial = await catalog.initialize();
+  assert.equal(initial.version, "1.1.0");
   const oldId = initial.items[0].id;
   const firstRefresh = catalog.refresh();
   const secondRefresh = catalog.refresh();
@@ -579,12 +580,14 @@ test("refresh coalesces, preserves stable IDs, uses duplicates after races, and 
   const unchanged = await firstRefresh;
   assert.equal(unchanged.generation, 2);
   assert.equal(unchanged.items[0].id, oldId);
+  assert.equal("replaces_id" in unchanged.items[0], false);
 
-  await writeFile(pathOne, skill("refreshable", "Changed first copy"));
+  const changedBytes = skill("refreshable", "Changed exact copies");
+  await writeFile(pathOne, changedBytes);
   const fallback = await catalog.readArtifactSource(oldId);
   assert.deepEqual(fallback.bytes, original);
 
-  await writeFile(pathTwo, skill("refreshable", "Changed second copy"));
+  await writeFile(pathTwo, changedBytes);
   await assert.rejects(
     catalog.readArtifactSource(oldId),
     { code: "AIR_CATALOG_ITEM_STALE" },
@@ -592,12 +595,82 @@ test("refresh coalesces, preserves stable IDs, uses duplicates after races, and 
   const changed = await catalog.refresh();
   assert.equal(changed.generation, 3);
   assert.notEqual(changed.items[0].id, oldId);
+  assert.equal(changed.items[0].replaces_id, oldId);
+  assert.deepEqual(
+    (await catalog.readArtifactSource(changed.items[0].id)).bytes,
+    changedBytes,
+  );
   assert.throws(() => catalog.getItem(oldId), {
     code: "AIR_CATALOG_ITEM_STALE",
   });
   assert.throws(() => catalog.getItem("skill_AAAAAAAAAAAAAAAAAAAAAA"), {
     code: "AIR_CATALOG_ITEM_NOT_FOUND",
   });
+  const adjacentOnly = await catalog.refresh();
+  assert.equal(adjacentOnly.items[0].id, changed.items[0].id);
+  assert.equal("replaces_id" in adjacentOnly.items[0], false);
+
+  const splitRoot = join(directory, "split");
+  const splitOne = join(splitRoot, "one", "SKILL.md");
+  const splitTwo = join(splitRoot, "two", "SKILL.md");
+  const splitOriginal = skill("split", "Exact copies");
+  await put(splitOne, splitOriginal);
+  await put(splitTwo, splitOriginal);
+  const splitCatalog = createSkillCatalog({
+    roots: [{ label: "split", path: splitRoot }],
+    randomIdBytes: ids(),
+  });
+  const beforeSplit = await splitCatalog.initialize();
+  await writeFile(splitTwo, skill("split", "Changed second copy"));
+  const afterSplit = await splitCatalog.refresh();
+  assert.equal(afterSplit.item_count, 2);
+  assert.ok(afterSplit.items.some((item) => item.id === beforeSplit.items[0].id));
+  assert.ok(afterSplit.items.every((item) => !("replaces_id" in item)));
+
+  const mergeRoot = join(directory, "merge");
+  const mergeOne = join(mergeRoot, "one", "SKILL.md");
+  const mergeTwo = join(mergeRoot, "two", "SKILL.md");
+  await put(mergeOne, skill("merge-one", "First"));
+  await put(mergeTwo, skill("merge-two", "Second"));
+  const mergeCatalog = createSkillCatalog({
+    roots: [{ label: "merge", path: mergeRoot }],
+    randomIdBytes: ids(),
+  });
+  await mergeCatalog.initialize();
+  const mergedBytes = skill("merged", "Merged");
+  await writeFile(mergeOne, mergedBytes);
+  await writeFile(mergeTwo, mergedBytes);
+  const merged = await mergeCatalog.refresh();
+  assert.equal(merged.item_count, 1);
+  assert.equal("replaces_id" in merged.items[0], false);
+  assert.doesNotMatch(JSON.stringify(merged), new RegExp(directory, "u"));
+
+  const swapRoot = join(directory, "swap");
+  const swapOne = join(swapRoot, "one", "SKILL.md");
+  const swapTwo = join(swapRoot, "two", "SKILL.md");
+  const swapFirst = skill("swap-first", "First");
+  const swapSecond = skill("swap-second", "Second");
+  await put(swapOne, swapFirst);
+  await put(swapTwo, swapSecond);
+  const swapCatalog = createSkillCatalog({
+    roots: [{ label: "swap", path: swapRoot }],
+    randomIdBytes: ids(),
+  });
+  const beforeSwap = await swapCatalog.initialize();
+  await writeFile(swapOne, swapSecond);
+  await writeFile(swapTwo, swapFirst);
+  const afterSwap = await swapCatalog.refresh();
+  assert.deepEqual(
+    new Set(afterSwap.items.map((item) => item.id)),
+    new Set(beforeSwap.items.map((item) => item.id)),
+  );
+  assert.ok(afterSwap.items.every((item) => !("replaces_id" in item)));
+
+  await writeFile(swapOne, swapFirst);
+  const converged = await swapCatalog.refresh();
+  assert.equal(converged.item_count, 1);
+  assert.ok(beforeSwap.items.some((item) => item.id === converged.items[0].id));
+  assert.equal("replaces_id" in converged.items[0], false);
 });
 
 test("bounded partial scans publish typed limits and failed refresh retains the atomic generation", async (t) => {
@@ -702,6 +775,132 @@ test("bounded partial scans publish typed limits and failed refresh retains the 
       state.source_label === "enabled-plugins"),
     false,
   );
+
+  let continuityStatus = "ready";
+  const continuityPath = join(root, "continuity", "SKILL.md");
+  await put(continuityPath, skill("continuity", "Before"));
+  const incomplete = createSkillCatalog({
+    rootResolver: async () => ({
+      roots: [{ label: "resolved", path: root }],
+      status: continuityStatus,
+    }),
+    randomIdBytes: ids(),
+  });
+  const completeBefore = await incomplete.initialize();
+  const continuityOld = completeBefore.items.find(
+    (item) => item.name === "continuity",
+  );
+  await writeFile(continuityPath, skill("continuity", "After"));
+  continuityStatus = "partial";
+  const incompleteAfter = await incomplete.refresh();
+  const continuityNew = incompleteAfter.items.find(
+    (item) => item.name === "continuity",
+  );
+  assert.notEqual(continuityNew.id, continuityOld.id);
+  assert.equal("replaces_id" in continuityNew, false);
+  assert.equal(JSON.stringify(incompleteAfter).includes(directory), false);
+
+  const responseRoot = join(directory, "response-limit");
+  const responsePath = join(responseRoot, "a", "SKILL.md");
+  await put(responsePath, skill("a", "Before"));
+  const responseBounded = createSkillCatalog({
+    roots: [{ label: "response", path: responseRoot }],
+    limits: { maxCatalogBytes: 1_500 },
+    randomIdBytes: ids(),
+  });
+  const responseBefore = await responseBounded.initialize();
+  assert.equal(responseBefore.truncated, false);
+  const responseOldId = responseBefore.items[0].id;
+  await writeFile(responsePath, skill("a", "After"));
+  await put(
+    join(responseRoot, "b", "SKILL.md"),
+    skill("b", "B".repeat(512)),
+  );
+  await put(
+    join(responseRoot, "c", "SKILL.md"),
+    skill("c", "C".repeat(512)),
+  );
+  const responseAfter = await responseBounded.refresh();
+  assert.equal(responseAfter.truncated, true);
+  assert.ok(
+    responseAfter.limit_codes.includes("AIR_CATALOG_RESPONSE_LIMIT"),
+  );
+  assert.ok(responseAfter.items.some((item) => item.name === "a"));
+  assert.ok(responseAfter.items.every((item) => !("replaces_id" in item)));
+  assert.equal(
+    "replaces_id" in responseBounded.getItem(
+      responseAfter.items.find((item) => item.name === "a").id,
+    ),
+    false,
+  );
+  assert.notEqual(
+    responseAfter.items.find((item) => item.name === "a").id,
+    responseOldId,
+  );
+
+  const exactRoot = join(directory, "response-exact");
+  const exactPath = join(exactRoot, "sized", "SKILL.md");
+  await put(exactPath, skill("sized", "First!"));
+  const exactProbe = createSkillCatalog({
+    roots: [{ label: "response-exact", path: exactRoot }],
+    randomIdBytes: ids(),
+  });
+  const exactProbeBefore = await exactProbe.initialize();
+  await writeFile(exactPath, skill("sized", "Second"));
+  const exactProbeAfter = await exactProbe.refresh();
+  assert.equal(typeof exactProbeAfter.items[0].replaces_id, "string");
+  const exactWithRelation = Buffer.byteLength(
+    JSON.stringify(exactProbeAfter),
+    "utf8",
+  );
+  const exactWithoutRelation = Buffer.byteLength(
+    JSON.stringify({
+      ...exactProbeAfter,
+      items: exactProbeAfter.items.map((item) => {
+        const copy = { ...item };
+        delete copy.replaces_id;
+        return copy;
+      }),
+    }),
+    "utf8",
+  );
+  const exactLimit = exactWithRelation - 1;
+  assert.ok(exactWithoutRelation < exactLimit);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(exactProbeBefore), "utf8") < exactLimit,
+  );
+
+  const exactFit = createSkillCatalog({
+    roots: [{ label: "response-exact", path: exactRoot }],
+    limits: { maxCatalogBytes: exactWithRelation },
+    randomIdBytes: ids(),
+  });
+  const fitBefore = await exactFit.initialize();
+  assert.equal(fitBefore.truncated, false);
+  await writeFile(exactPath, skill("sized", "Third!"));
+  const fitAfter = await exactFit.refresh();
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(fitAfter), "utf8"),
+    exactWithRelation,
+  );
+  assert.equal(fitAfter.truncated, false);
+  assert.equal(typeof fitAfter.items[0].replaces_id, "string");
+
+  const exactBounded = createSkillCatalog({
+    roots: [{ label: "response-exact", path: exactRoot }],
+    limits: { maxCatalogBytes: exactLimit },
+    randomIdBytes: ids(),
+  });
+  const exactBefore = await exactBounded.initialize();
+  assert.equal(exactBefore.truncated, false);
+  await writeFile(exactPath, skill("sized", "Fourth"));
+  const exactAfter = await exactBounded.refresh();
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(exactAfter), "utf8") <= exactLimit,
+  );
+  assert.equal(exactAfter.truncated, true);
+  assert.ok(exactAfter.limit_codes.includes("AIR_CATALOG_RESPONSE_LIMIT"));
+  assert.ok(exactAfter.items.every((item) => !("replaces_id" in item)));
 });
 
 test("actual repository Skill smoke returns aggregates and a synthetic locator only", async () => {

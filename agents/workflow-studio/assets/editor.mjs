@@ -1703,12 +1703,79 @@ function normalizeSessionResources(catalog) {
   }));
 }
 
-function markChangedDocuments(nextResources) {
-  const nextByKey = new Map(
-    nextResources.map((resource) => [resourceKey(resource), resource]),
+function reconcileReplacedDocuments(nextResources) {
+  persistActiveDocument();
+  const skillResources = nextResources.filter(
+    (resource) => resource.type === "skill",
   );
+  const idCounts = new Map();
+  const replacements = new Map();
+  for (const resource of skillResources) {
+    idCounts.set(resource.id, (idCounts.get(resource.id) ?? 0) + 1);
+    const replacedId = resource.item?.replaces_id;
+    if (typeof replacedId !== "string" || !replacedId) continue;
+    const candidates = replacements.get(replacedId) ?? [];
+    candidates.push(resource);
+    replacements.set(replacedId, candidates);
+  }
+
+  const moves = [];
+  for (const [oldKey, entry] of documents) {
+    if (entry.resource.type !== "skill") continue;
+    const oldId = entry.resource.id;
+    if (skillResources.some((resource) => resource.id === oldId)) continue;
+    const candidates = replacements.get(oldId) ?? [];
+    if (candidates.length !== 1) continue;
+    const replacement = candidates[0];
+    const newKey = resourceKey(replacement);
+    if (
+      replacement.id === oldId ||
+      idCounts.get(replacement.id) !== 1 ||
+      documents.has(newKey)
+    ) {
+      continue;
+    }
+    moves.push({ oldKey, newKey, entry, replacement });
+  }
+
+  for (const { oldKey, newKey, entry, replacement } of moves) {
+    documents.delete(oldKey);
+    entry.resource = replacement;
+    entry.stale = true;
+    entry.removed = false;
+    entry.reconciledReplacement = true;
+    documents.set(newKey, entry);
+    if (activeResourceKey === oldKey) activeResourceKey = newKey;
+    if (pendingSwitchReturnResourceKey === oldKey) {
+      pendingSwitchReturnResourceKey = newKey;
+    }
+    if (pendingResource && resourceKey(pendingResource) === oldKey) {
+      pendingResource = replacement;
+    }
+    if (
+      pendingStaleResource &&
+      resourceKey(pendingStaleResource) === oldKey
+    ) {
+      pendingStaleResource = replacement;
+    }
+  }
+}
+
+function markChangedDocuments(nextResources) {
+  const resourcesByKey = new Map();
+  for (const resource of nextResources) {
+    const key = resourceKey(resource);
+    const matches = resourcesByKey.get(key) ?? [];
+    matches.push(resource);
+    resourcesByKey.set(key, matches);
+  }
   for (const [key, entry] of documents) {
-    const next = nextByKey.get(key);
+    const matches = resourcesByKey.get(key) ?? [];
+    const next =
+      matches.length === 1 &&
+        matches[0].item?.replaces_id !== matches[0].id
+        ? matches[0]
+        : null;
     if (!next) {
       if (entry.resource.type === "skill") {
         entry.stale = true;
@@ -1718,6 +1785,7 @@ function markChangedDocuments(nextResources) {
     }
     if (entry.resource.type === "skill") {
       entry.stale =
+        Boolean(entry.reconciledReplacement) ||
         entry.loadedContentHash !== null &&
         entry.loadedContentHash !== next.item.content_hash;
       entry.removed = false;
@@ -1780,6 +1848,7 @@ async function loadCatalogs({ refresh = false } = {}) {
     const catalogResources = commandLineResource
       ? [commandLineResource, ...discoveredResources]
       : discoveredResources;
+    reconcileReplacedDocuments(catalogResources);
     markChangedDocuments(catalogResources);
     const nextResources = retainOpenSkills(catalogResources);
     resourceItems = nextResources;

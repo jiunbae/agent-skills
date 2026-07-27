@@ -3,7 +3,7 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "AIR Workbench local API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Project-defined local API for Agent Intermediate Representation artifacts. This document makes no IANA or standards-body claim."
   },
   "servers": [
@@ -635,7 +635,7 @@
             "const": "air-skill-catalog"
           },
           "version": {
-            "const": "1.0.0"
+            "const": "1.1.0"
           },
           "generation": {
             "type": "integer",
@@ -823,6 +823,11 @@
           "id": {
             "type": "string",
             "pattern": "^skill_[A-Za-z0-9_-]{22}$"
+          },
+          "replaces_id": {
+            "type": "string",
+            "pattern": "^skill_[A-Za-z0-9_-]{22}$",
+            "description": "Opaque ID of the uniquely replaced item from the immediately preceding complete catalog generation. It is derived only from a mutually unique server-private source-authority relation, is omitted for ambiguity or incomplete authority, and is not a route alias."
           },
           "name": {
             "type": [

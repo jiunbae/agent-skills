@@ -919,6 +919,7 @@ async function canonicalRoots(roots, state) {
     try {
       const info = await beforeDeadline(lstat(root.path), state);
       if (info.isSymbolicLink()) {
+        state.authorityComplete = false;
         rootState.status = "invalid";
         rootDiagnostic(
           rootState,
@@ -927,6 +928,7 @@ async function canonicalRoots(roots, state) {
           "error",
         );
       } else if (!info.isDirectory()) {
+        state.authorityComplete = false;
         rootState.status = "invalid";
         rootDiagnostic(
           rootState,
@@ -947,9 +949,11 @@ async function canonicalRoots(roots, state) {
       if (error?.code === "ENOENT") {
         rootState.status = "missing";
       } else if (error?.code === "AIR_CATALOG_TIME_LIMIT") {
+        state.authorityComplete = false;
         rootState.status = "partial";
         markTruncated(state, error.code);
       } else {
+        state.authorityComplete = false;
         rootState.status = "unreadable";
         rootDiagnostic(
           rootState,
@@ -1047,7 +1051,8 @@ async function safeReadCandidate(path, allowedRoot, state) {
   }
 }
 
-function candidateError(rootState, error) {
+function candidateError(rootState, error, state) {
+  state.authorityComplete = false;
   const known = new Set([
     "AIR_CATALOG_FILE_SYMLINK",
     "AIR_CATALOG_SPECIAL_FILE",
@@ -1088,6 +1093,7 @@ async function maybeReadSkillDirectoryLink(
       return null;
     }
   } catch {
+    state.authorityComplete = false;
     rootDiagnostic(
       root.rootState,
       "AIR_CATALOG_SYMLINK_REFUSED",
@@ -1120,6 +1126,7 @@ async function maybeReadSkillDirectoryLink(
             "AIR_CATALOG_SPECIAL_FILE",
             "Linked Skill entry is not a regular file.",
           ),
+          state,
         );
       }
       return null;
@@ -1131,7 +1138,7 @@ async function maybeReadSkillDirectoryLink(
     }
     return await safeReadCandidate(skillPath, targetRoot.physical, state);
   } catch (error) {
-    if (error?.code !== "ENOENT") candidateError(root.rootState, error);
+    if (error?.code !== "ENOENT") candidateError(root.rootState, error, state);
     return null;
   }
 }
@@ -1164,6 +1171,7 @@ async function walkRoot(root, allRoots, state) {
         "AIR_CATALOG_DIRECTORY_UNREADABLE",
         "A Skill directory could not be inspected.",
       );
+      state.authorityComplete = false;
       continue;
     }
 
@@ -1216,6 +1224,7 @@ async function walkRoot(root, allRoots, state) {
               "AIR_CATALOG_SPECIAL_FILE",
               "Only regular SKILL.md files are read.",
             ),
+            state,
           );
           continue;
         }
@@ -1244,6 +1253,7 @@ async function walkRoot(root, allRoots, state) {
             "AIR_CATALOG_SPECIAL_FILE",
             "Only regular SKILL.md files are read.",
           ),
+          state,
         );
         continue;
       }
@@ -1265,7 +1275,7 @@ async function walkRoot(root, allRoots, state) {
           root.rootState.status = "partial";
           return;
         }
-        candidateError(root.rootState, error);
+        candidateError(root.rootState, error, state);
       }
     }
     for (let index = directories.length - 1; index >= 0; index -= 1) {
@@ -1314,6 +1324,68 @@ function groupRecords(records) {
     }
   }
   return hashGroups;
+}
+
+function privateSourceAuthorities(records) {
+  return new Set(records.map((record) => record.path));
+}
+
+function applyAdjacentReplacements({
+  items,
+  internals,
+  priorItems,
+  completeAuthority,
+}) {
+  if (!completeAuthority || priorItems.size === 0) return;
+  const priorByAuthority = new Map();
+  for (const [id, item] of priorItems) {
+    for (const authority of item.authorities) {
+      const ids = priorByAuthority.get(authority) ?? new Set();
+      ids.add(id);
+      priorByAuthority.set(authority, ids);
+    }
+  }
+  const currentByAuthority = new Map();
+  for (const [id, item] of internals) {
+    for (const authority of item.authorities) {
+      const ids = currentByAuthority.get(authority) ?? new Set();
+      ids.add(id);
+      currentByAuthority.set(authority, ids);
+    }
+  }
+
+  const priorSuccessors = new Map();
+  const currentPredecessors = new Map();
+  for (const [authority, priorIds] of priorByAuthority) {
+    const currentIds = currentByAuthority.get(authority);
+    if (!currentIds) continue;
+    for (const priorId of priorIds) {
+      const successors = priorSuccessors.get(priorId) ?? new Set();
+      for (const currentId of currentIds) successors.add(currentId);
+      priorSuccessors.set(priorId, successors);
+    }
+    for (const currentId of currentIds) {
+      const predecessors = currentPredecessors.get(currentId) ?? new Set();
+      for (const priorId of priorIds) predecessors.add(priorId);
+      currentPredecessors.set(currentId, predecessors);
+    }
+  }
+
+  const priorIds = new Set(priorItems.keys());
+  const currentIds = new Set(internals.keys());
+  for (const item of items) {
+    const predecessors = currentPredecessors.get(item.id);
+    if (predecessors?.size !== 1 || priorIds.has(item.id)) continue;
+    const [priorId] = predecessors;
+    if (
+      priorId === item.id ||
+      currentIds.has(priorId) ||
+      priorSuccessors.get(priorId)?.size !== 1
+    ) {
+      continue;
+    }
+    item.replaces_id = priorId;
+  }
 }
 
 function randomOpaqueId(randomIdBytes, used) {
@@ -1380,7 +1452,12 @@ function buildItems(state, priorIds, randomIdBytes) {
       omitted_diagnostic_count: Math.max(0, allDiagnostics.length - diagnostics.length),
     };
     preliminary.push(item);
-    internals.set(id, { hash, records, publicItem: item });
+    internals.set(id, {
+      hash,
+      records,
+      authorities: privateSourceAuthorities(records),
+      publicItem: item,
+    });
   }
 
   const byName = new Map();
@@ -1399,7 +1476,6 @@ function buildItems(state, priorIds, randomIdBytes) {
     (left.name ?? "\uffff").localeCompare(right.name ?? "\uffff", "en") ||
     left.content_hash.localeCompare(right.content_hash)
   ));
-  for (const item of preliminary) Object.freeze(item);
   return { items: preliminary, internals };
 }
 
@@ -1407,6 +1483,8 @@ async function scanCatalog({
   roots,
   limits,
   priorIds,
+  priorItems,
+  priorAuthorityComplete,
   randomIdBytes,
   generation,
   pluginStatus = "ready",
@@ -1430,6 +1508,7 @@ async function scanCatalog({
         }]
       : [],
     truncated: pluginPartial,
+    authorityComplete: !pluginPartial,
     limitCodes: new Set(
       pluginPartial ? [PLUGIN_DISCOVERY_DIAGNOSTIC.code] : [],
     ),
@@ -1448,7 +1527,7 @@ async function scanCatalog({
   let responseTruncated = state.truncated;
   const base = {
     format: "air-skill-catalog",
-    version: "1.0.0",
+    version: "1.1.0",
     generation,
     truncated: responseTruncated,
     limit_codes: limitCodes,
@@ -1458,18 +1537,40 @@ async function scanCatalog({
     total_byte_count: state.totalBytes,
     roots: rootStates,
   };
-  while (
-    publicItems.length > 0 &&
-    Buffer.byteLength(JSON.stringify({ ...base, items: publicItems }), "utf8")
-      > limits.maxCatalogBytes
-  ) {
-    publicItems = publicItems.slice(0, -1);
+  applyAdjacentReplacements({
+    items: publicItems,
+    internals,
+    priorItems,
+    completeAuthority:
+      priorAuthorityComplete &&
+      state.authorityComplete &&
+      !responseTruncated,
+  });
+  const responseByteLength = () => Buffer.byteLength(
+    JSON.stringify({
+      ...base,
+      truncated: responseTruncated,
+      limit_codes: limitCodes,
+      item_count: publicItems.length,
+      items: publicItems,
+    }),
+    "utf8",
+  );
+  if (responseByteLength() > limits.maxCatalogBytes) {
     responseTruncated = true;
     if (!limitCodes.includes("AIR_CATALOG_RESPONSE_LIMIT")) {
       limitCodes.push("AIR_CATALOG_RESPONSE_LIMIT");
       limitCodes.sort();
     }
+    for (const item of publicItems) delete item.replaces_id;
   }
+  while (
+    publicItems.length > 0 &&
+    responseByteLength() > limits.maxCatalogBytes
+  ) {
+    publicItems = publicItems.slice(0, -1);
+  }
+  for (const item of publicItems) Object.freeze(item);
   const publicIds = new Set(publicItems.map((item) => item.id));
   for (const id of internals.keys()) {
     if (!publicIds.has(id)) internals.delete(id);
@@ -1481,7 +1582,11 @@ async function scanCatalog({
     item_count: publicItems.length,
     items: Object.freeze(publicItems),
   });
-  return { snapshot, internals };
+  return {
+    snapshot,
+    internals,
+    authorityComplete: state.authorityComplete,
+  };
 }
 
 async function rereadSource(source, expectedHash, limits) {
@@ -1515,6 +1620,7 @@ class SkillCatalog {
   #items = new Map();
   #idsByHash = new Map();
   #tombstones = new Set();
+  #authorityComplete = false;
   #refreshPromise = null;
 
   constructor({ roots, rootResolver, limits, randomIdBytes }) {
@@ -1543,6 +1649,7 @@ class SkillCatalog {
     const generation = (this.#snapshot?.generation ?? 0) + 1;
     const priorItems = this.#items;
     const priorIds = new Map(this.#idsByHash);
+    const priorAuthorityComplete = this.#authorityComplete;
     this.#refreshPromise = Promise.resolve()
       .then(() => this.#rootResolver?.())
       .then((resolution) => {
@@ -1565,10 +1672,12 @@ class SkillCatalog {
         roots: resolution.roots,
         limits: this.#limits,
         priorIds,
+        priorItems,
+        priorAuthorityComplete,
         randomIdBytes: this.#randomIdBytes,
         generation,
         pluginStatus: resolution.status,
-      })).then(({ snapshot, internals }) => {
+      })).then(({ snapshot, internals, authorityComplete }) => {
       const nextIdsByHash = new Map();
       for (const [id, item] of internals) nextIdsByHash.set(item.hash, id);
       this.#tombstones = new Set(
@@ -1576,6 +1685,7 @@ class SkillCatalog {
       );
       this.#items = internals;
       this.#idsByHash = nextIdsByHash;
+      this.#authorityComplete = authorityComplete && !snapshot.truncated;
       this.#snapshot = snapshot;
       return snapshot;
     }).catch((error) => {

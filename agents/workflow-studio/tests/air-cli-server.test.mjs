@@ -512,7 +512,8 @@ test("malformed AIR carrier claims reach CLI, catalog, and HTTP", async (t) => {
 test("AIR read-only routes require exact token, expose bounded catalog/schema data, and return validated artifacts", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-server-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  await put(join(directory, "installed", "SKILL.md"), SKILL);
+  const installedPath = join(directory, "installed", "SKILL.md");
+  await put(installedPath, SKILL);
   const catalog = createSkillCatalog({
     roots: [{ path: directory, label: "synthetic", kind: "explicit" }],
   });
@@ -570,9 +571,29 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
 
   const listed = await http(address, `/air/v1/skills?token=${token}`);
   assert.equal(listed.status, 200);
+  assert.equal(JSON.parse(listed.body).version, "1.1.0");
   assert.equal(JSON.parse(listed.body).item_count, 1);
   assert.equal(listed.body.includes(Buffer.from(directory)), false);
   assert.equal(listed.body.includes(SKILL), false);
+  const listedHead = await http(address, `/air/v1/skills?token=${token}`, {
+    method: "HEAD",
+  });
+  assert.equal(listedHead.status, listed.status);
+  assert.equal(listedHead.body.byteLength, 0);
+  assert.equal(
+    listedHead.headers["content-type"],
+    listed.headers["content-type"],
+  );
+  assert.equal(
+    listedHead.headers["content-length"],
+    listed.headers["content-length"],
+  );
+  const initialArtifact = await http(
+    address,
+    `/air/v1/skills/${snapshot.items[0].id}/artifact?token=${token}`,
+  );
+  assert.equal(initialArtifact.status, 200);
+  assert.equal(validateAirArtifact(JSON.parse(initialArtifact.body)), true);
   const headRefresh = await http(
     address,
     `/air/v1/skills?refresh=1&token=${token}`,
@@ -581,12 +602,38 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
   assert.equal(headRefresh.status, 400);
   assert.equal(headRefresh.body.byteLength, 0);
   assert.equal(catalog.getSnapshot().generation, 1);
+  const changedSkill = Buffer.concat([
+    SKILL,
+    Buffer.from("\n### Step 2: Report\nReport safely.\n", "utf8"),
+  ]);
+  await writeFile(installedPath, changedSkill);
   const refreshed = await http(
     address,
     `/air/v1/skills?refresh=1&token=${token}`,
   );
   assert.equal(refreshed.status, 200);
-  assert.equal(JSON.parse(refreshed.body).generation, 2);
+  const refreshedBody = JSON.parse(refreshed.body);
+  assert.equal(refreshedBody.version, "1.1.0");
+  assert.equal(refreshedBody.generation, 2);
+  assert.equal(refreshedBody.items[0].replaces_id, snapshot.items[0].id);
+  assert.notEqual(refreshedBody.items[0].id, snapshot.items[0].id);
+  assert.equal(refreshed.body.includes(Buffer.from(directory)), false);
+  assert.equal(refreshed.body.includes(changedSkill), false);
+  const refreshedHead = await http(
+    address,
+    `/air/v1/skills?token=${token}`,
+    { method: "HEAD" },
+  );
+  assert.equal(refreshedHead.status, refreshed.status);
+  assert.equal(refreshedHead.body.byteLength, 0);
+  assert.equal(
+    refreshedHead.headers["content-type"],
+    refreshed.headers["content-type"],
+  );
+  assert.equal(
+    refreshedHead.headers["content-length"],
+    refreshed.headers["content-length"],
+  );
   assert.equal(
     JSON.parse(
       (await http(address, `/air/v1/capabilities?token=${token}`)).body,
@@ -598,12 +645,26 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
     401,
   );
 
-  const artifactResponse = await http(
+  const oldArtifactResponse = await http(
     address,
     `/air/v1/skills/${snapshot.items[0].id}/artifact?token=${token}`,
   );
+  assert.equal(oldArtifactResponse.status, 409);
+  assert.equal(
+    JSON.parse(oldArtifactResponse.body).code,
+    "AIR_CATALOG_ITEM_CHANGED",
+  );
+  const artifactResponse = await http(
+    address,
+    `/air/v1/skills/${refreshedBody.items[0].id}/artifact?token=${token}`,
+  );
   assert.equal(artifactResponse.status, 200);
-  assert.equal(validateAirArtifact(JSON.parse(artifactResponse.body)), true);
+  const refreshedArtifact = JSON.parse(artifactResponse.body);
+  assert.equal(validateAirArtifact(refreshedArtifact), true);
+  assert.deepEqual(
+    Buffer.from(refreshedArtifact.body.source.bytes_base64, "base64"),
+    changedSkill,
+  );
 
   const unknown = await http(
     address,

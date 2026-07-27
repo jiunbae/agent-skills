@@ -57,6 +57,14 @@ Codex and Claude sessions. Filter it in place, use **Quick Open**
 snapshot. Discovery is on by default; there is no watcher or live-follow
 process.
 
+The local catalog/OpenAPI contract is version `1.1.0`; AIR artifacts and
+`/air/v1` remain unchanged. A content edit rotates its opaque Skill ID. Only a
+complete, mutually unique server-private same-source match may expose the
+immediately prior opaque ID as `replaces_id`, enabling an explicit
+Keep/Cancel/Reload decision. Split, merge, swap, incomplete, unreadable, or
+truncated scans omit the relation. It is not an old-ID route alias, and no
+public name, hash, source label, or path is used for matching.
+
 To open one specific Skill or AIR artifact instead:
 
 ```bash

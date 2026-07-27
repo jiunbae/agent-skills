@@ -60,6 +60,7 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
 
   const openapi = documents.get("air.openapi.json");
   assert.equal(openapi.openapi, "3.1.1");
+  assert.equal(openapi.info.version, "1.1.0");
   assert.deepEqual(Object.keys(openapi.paths).sort(), [
     "/air/v1/capabilities",
     "/air/v1/imports/skill",
@@ -78,6 +79,16 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
       assert.ok(["foundation", "planned"].includes(operation["x-air-availability"]));
     }
   }
+  const skillCatalog = openapi.components.schemas.SkillCatalog;
+  const skillCatalogItem = openapi.components.schemas.SkillCatalogItem;
+  assert.equal(skillCatalog.properties.version.const, "1.1.0");
+  assert.equal(skillCatalogItem.required.includes("replaces_id"), false);
+  assert.deepEqual(skillCatalogItem.properties.replaces_id, {
+    type: "string",
+    pattern: "^skill_[A-Za-z0-9_-]{22}$",
+    description:
+      "Opaque ID of the uniquely replaced item from the immediately preceding complete catalog generation. It is derived only from a mutually unique server-private source-authority relation, is omitted for ambiguity or incomplete authority, and is not a route alias.",
+  });
   const sessionItems =
     openapi.components.schemas.SessionCatalog.properties.items;
   assert.equal(sessionItems.uniqueItems, true);
@@ -118,6 +129,8 @@ test("AIR normative text freezes domains, carriers, sessions, and legacy boundar
     "UINT64BE(start_byte)",
     "A commitment is not an ordinary SHA-256 digest",
     "MUST differ across registry lifetimes",
+    "The catalog item MAY contain `replaces_id`",
+    "not a route alias",
   ]) {
     assert.ok(spec.includes(required), `missing normative phrase: ${required}`);
   }
