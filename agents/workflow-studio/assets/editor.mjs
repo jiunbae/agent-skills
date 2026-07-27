@@ -70,6 +70,7 @@ let loadRequestEpoch = 0;
 let mobileRegion = "graph";
 let commandLineResource = null;
 let inspectorReturnFocus = null;
+let focusEpoch = 0;
 const documents = new Map();
 const history = {
   undo: [],
@@ -2040,10 +2041,16 @@ function closeInspector() {
       ? inspectorReturnFocus
       : element("graphCanvas");
   inspectorReturnFocus = null;
-  requestAnimationFrame(() => target.focus({ preventScroll: true }));
+  const restoreEpoch = focusEpoch;
+  requestAnimationFrame(() => {
+    if (focusEpoch === restoreEpoch) {
+      target.focus({ preventScroll: true });
+    }
+  });
 }
 
 function focusRegion(region) {
+  focusEpoch += 1;
   if (region === "canvas") showMobileRegion("graph");
   if (region === "inspector") {
     showMobileRegion("inspector");

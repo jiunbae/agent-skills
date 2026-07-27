@@ -262,6 +262,140 @@ function parsePluginAuthorityName(value) {
   return Object.freeze({ key: value, plugin, marketplace });
 }
 
+const MAX_TOML_FIRST_KEY_CODE_UNITS = 256;
+
+function tomlFirstKeyResult(state, value = null, next = 0) {
+  return Object.freeze({ state, value, next });
+}
+
+function isUnescapedTomlControl(character) {
+  const code = character.codePointAt(0);
+  return (
+    code <= 0x08 ||
+    (code >= 0x0a && code <= 0x1f) ||
+    code === 0x7f
+  );
+}
+
+function decodeTomlFirstKey(line, start) {
+  let index = start;
+  while (line[index] === " " || line[index] === "\t") index += 1;
+  const quote = line[index];
+  if (quote !== '"' && quote !== "'") {
+    const first = index;
+    while (/[A-Za-z0-9_-]/u.test(line[index] ?? "")) index += 1;
+    if (index === first || index - first > MAX_TOML_FIRST_KEY_CODE_UNITS) {
+      return tomlFirstKeyResult("invalid");
+    }
+    return tomlFirstKeyResult("valid", line.slice(first, index), index);
+  }
+
+  index += 1;
+  let value = "";
+  const append = (piece) => {
+    if (value.length + piece.length > MAX_TOML_FIRST_KEY_CODE_UNITS) {
+      return false;
+    }
+    value += piece;
+    return true;
+  };
+  while (index < line.length) {
+    const character = line[index];
+    if (character === quote) {
+      return tomlFirstKeyResult("valid", value, index + 1);
+    }
+    if (isUnescapedTomlControl(character)) {
+      return tomlFirstKeyResult("invalid");
+    }
+    if (quote === "'" || character !== "\\") {
+      const codePoint = line.codePointAt(index);
+      const decoded = String.fromCodePoint(codePoint);
+      if (!append(decoded)) return tomlFirstKeyResult("invalid");
+      index += decoded.length;
+      continue;
+    }
+
+    index += 1;
+    const escape = line[index];
+    const simple = {
+      b: "\b",
+      e: "\u001b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      '"': '"',
+      "\\": "\\",
+    };
+    if (Object.hasOwn(simple, escape)) {
+      if (!append(simple[escape])) return tomlFirstKeyResult("invalid");
+      index += 1;
+      continue;
+    }
+    const digits = escape === "x" ? 2 : escape === "u" ? 4
+      : escape === "U" ? 8 : 0;
+    if (digits === 0) return tomlFirstKeyResult("invalid");
+    const encoded = line.slice(index + 1, index + 1 + digits);
+    if (
+      encoded.length !== digits ||
+      !/^[0-9A-Fa-f]+$/u.test(encoded)
+    ) {
+      return tomlFirstKeyResult("invalid");
+    }
+    const codePoint = Number.parseInt(encoded, 16);
+    if (
+      codePoint > 0x10ffff ||
+      (codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ) {
+      return tomlFirstKeyResult("invalid");
+    }
+    if (!append(String.fromCodePoint(codePoint))) {
+      return tomlFirstKeyResult("invalid");
+    }
+    index += digits + 1;
+  }
+  return tomlFirstKeyResult("invalid");
+}
+
+function firstTomlTableKey(line) {
+  let index = 0;
+  while (line[index] === " " || line[index] === "\t") index += 1;
+  if (line[index] !== "[") return tomlFirstKeyResult("none");
+  index += line[index + 1] === "[" ? 2 : 1;
+  const decoded = decodeTomlFirstKey(line, index);
+  if (decoded.state !== "valid") return decoded;
+  index = decoded.next;
+  while (line[index] === " " || line[index] === "\t") index += 1;
+  return line[index] === "." || line[index] === "]"
+    ? decoded
+    : tomlFirstKeyResult("invalid");
+}
+
+function firstTopLevelTomlAssignmentKey(line) {
+  let index = 0;
+  while (line[index] === " " || line[index] === "\t") index += 1;
+  if (
+    index >= line.length ||
+    line[index] === "#" ||
+    line[index] === "["
+  ) {
+    return tomlFirstKeyResult("none");
+  }
+  const decoded = decodeTomlFirstKey(line, index);
+  if (decoded.state !== "valid") return decoded;
+  index = decoded.next;
+  while (line[index] === " " || line[index] === "\t") index += 1;
+  return line[index] === "=" || line[index] === "."
+    ? decoded
+    : tomlFirstKeyResult("none");
+}
+
+function hasUnsupportedTomlLeadingWhitespace(line) {
+  let index = 0;
+  while (line[index] === " " || line[index] === "\t") index += 1;
+  return index < line.length && /\s/u.test(line[index]);
+}
+
 async function readBoundedRegularFile(path, maxBytes) {
   let discovered;
   try {
@@ -396,6 +530,7 @@ function parseEnabledPluginConfiguration(bytes, limits) {
   let enabledValues = [];
   let multilineState = "normal";
   let ambiguous = false;
+  let atTopLevel = true;
   const finishSection = () => {
     if (current === null) return;
     sections += 1;
@@ -415,21 +550,41 @@ function parseEnabledPluginConfiguration(bytes, limits) {
     const lexical = scanTomlLexicalLine(line, multilineState);
     multilineState = lexical.state;
     ambiguous ||= lexical.invalid;
-    if (structural && /^\s*\[/u.test(line)) {
+    if (structural && hasUnsupportedTomlLeadingWhitespace(line)) {
+      ambiguous = true;
+    }
+    if (structural && /^[ \t]*\[/u.test(line)) {
       finishSection();
+      atTopLevel = false;
+      const firstKey = firstTomlTableKey(line);
       const match = line.match(
-        /^\s*\[plugins\."([^"]*)"\]\s*(?:#.*)?$/u,
+        /^[ \t]*\[plugins\."([^"]*)"\][ \t]*(?:#.*)?$/u,
       );
       current = match ? parsePluginAuthorityName(match[1]) : null;
+      if (
+        firstKey.state === "invalid" ||
+        (firstKey.value === "plugins" && current === null)
+      ) {
+        ambiguous = true;
+      }
       continue;
+    }
+    if (structural && atTopLevel) {
+      const firstKey = firstTopLevelTomlAssignmentKey(line);
+      if (
+        firstKey.state === "invalid" ||
+        firstKey.value === "plugins"
+      ) {
+        ambiguous = true;
+      }
     }
     if (!structural || current === null) continue;
     const enabled = line.match(
-      /^\s*enabled\s*=\s*(true|false)\s*(?:#.*)?$/u,
+      /^[ \t]*enabled[ \t]*=[ \t]*(true|false)[ \t]*(?:#.*)?$/u,
     );
     if (enabled) {
       enabledValues.push(enabled[1] === "true" ? "enabled" : "disabled");
-    } else if (/^\s*enabled\s*=/u.test(line)) {
+    } else if (/^[ \t]*enabled[ \t]*=/u.test(line)) {
       enabledValues.push("malformed");
     }
   }
@@ -502,6 +657,8 @@ async function maybeRegularDirectoryAuthority(path, containmentRoot) {
 async function authoritativePluginRoots({
   cacheRoot,
   cacheAuthority,
+  configPath,
+  configBytes,
   states,
   limits,
 }) {
@@ -522,7 +679,20 @@ async function authoritativePluginRoots({
   for (const [key, state] of states) {
     if (state !== "enabled") continue;
     const authority = parsePluginAuthorityName(key);
-    if (authority) authorities.set(key, authority);
+    if (authority) {
+      authorities.set(key, Object.freeze({
+        ...authority,
+        grant: Object.freeze({
+          kind: "configuration",
+          path: configPath,
+          key,
+          hash: sha256(configBytes),
+          maxBytes: limits.maxConfigBytes,
+          maxLines: limits.maxConfigLines,
+          maxAuthorities: limits.maxAuthorities,
+        }),
+      }));
+    }
   }
 
   for (const marketplaceEntry of cacheEntries) {
@@ -576,16 +746,25 @@ async function authoritativePluginRoots({
         markerPartial = true;
         continue;
       }
+      const markerPath = join(pluginRoot, REMOTE_PLUGIN_MARKER);
       const marker = await readBoundedRegularFile(
-        join(pluginRoot, REMOTE_PLUGIN_MARKER),
+        markerPath,
         limits.maxMarkerBytes,
       );
       if (validRemotePluginMarker(marker)) {
-        authorities.set(key, Object.freeze({
-          key,
-          plugin: pluginEntry.name,
-          marketplace: marketplaceEntry.name,
-        }));
+        if (!authorities.has(key)) {
+          authorities.set(key, Object.freeze({
+            key,
+            plugin: pluginEntry.name,
+            marketplace: marketplaceEntry.name,
+            grant: Object.freeze({
+              kind: "marker",
+              path: markerPath,
+              hash: sha256(marker),
+              maxBytes: limits.maxMarkerBytes,
+            }),
+          }));
+        }
       } else if (marker !== undefined) {
         markerPartial = true;
       }
@@ -667,13 +846,16 @@ async function authoritativePluginRoots({
       kind: "enabled-plugin",
       label: pluginSourceLabel(authority.marketplace, authority.plugin),
     };
-    roots.push(freezeRoot(root, Object.freeze([
-      cacheAuthority,
-      marketplaceAuthority,
-      pluginAuthority,
-      versionAuthority,
-      skillsAuthority,
-    ])));
+    roots.push(freezeRoot(root, Object.freeze({
+      chain: Object.freeze([
+        cacheAuthority,
+        marketplaceAuthority,
+        pluginAuthority,
+        versionAuthority,
+        skillsAuthority,
+      ]),
+      grant: authority.grant,
+    })));
   }
   return {
     roots,
@@ -731,6 +913,8 @@ export async function resolveEnabledPluginSkillRoots({
   const result = await authoritativePluginRoots({
     cacheRoot: resolvedCache,
     cacheAuthority,
+    configPath: resolvedConfig,
+    configBytes,
     states: configuration.states,
     limits,
   });
@@ -1003,8 +1187,9 @@ async function directoryAuthorityMatches(authority, state) {
 }
 
 async function pluginRootAuthorityMatches(root, state) {
-  const chain = root[PLUGIN_ROOT_AUTHORITY];
-  if (chain === undefined) return true;
+  const authority = root[PLUGIN_ROOT_AUTHORITY];
+  if (authority === undefined) return true;
+  const chain = authority?.chain;
   if (
     !Array.isArray(chain) ||
     chain.length < 2 ||
@@ -1021,7 +1206,41 @@ async function pluginRootAuthorityMatches(root, state) {
       return false;
     }
   }
-  return true;
+  return await pluginGrantAuthorityMatches(authority.grant, state);
+}
+
+async function pluginGrantAuthorityMatches(grant, state) {
+  if (
+    grant === null ||
+    typeof grant !== "object" ||
+    typeof grant.path !== "string" ||
+    typeof grant.hash !== "string" ||
+    !Number.isSafeInteger(grant.maxBytes) ||
+    grant.maxBytes < 1
+  ) {
+    return false;
+  }
+  const bytes = await beforeDeadline(
+    readBoundedRegularFile(grant.path, grant.maxBytes),
+    state,
+  );
+  if (!Buffer.isBuffer(bytes) || sha256(bytes) !== grant.hash) return false;
+  if (grant.kind === "marker") return validRemotePluginMarker(bytes);
+  if (
+    grant.kind !== "configuration" ||
+    typeof grant.key !== "string" ||
+    !Number.isSafeInteger(grant.maxLines) ||
+    !Number.isSafeInteger(grant.maxAuthorities)
+  ) {
+    return false;
+  }
+  const configuration = parseEnabledPluginConfiguration(bytes, {
+    maxConfigLines: grant.maxLines,
+    maxAuthorities: grant.maxAuthorities,
+  });
+  return !configuration.exceeded &&
+    !configuration.partial &&
+    configuration.states.get(grant.key) === "enabled";
 }
 
 async function canonicalRootAuthorityMatches(root, state) {

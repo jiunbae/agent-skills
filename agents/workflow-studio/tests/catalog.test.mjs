@@ -465,6 +465,267 @@ test("enabled-plugin authority ignores multiline TOML content and recovers from 
   assert.equal(recoveredCatalog.items[0].name, "real-plugin-skill");
 });
 
+test("unsupported structural plugin TOML tables fail closed without affecting unrelated tables", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-toml-tables-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "config.toml");
+  const cache = join(directory, "cache");
+  await putPlugin(cache, "market", "remote", "1.0.0", { marker: true });
+
+  for (const table of [
+    "[plugins.'remote@market']",
+    '[ plugins . "remote@market" ]',
+    String.raw`["plu\u0067ins"."remote@market"]`,
+    String.raw`["plug\u0069ns"."remote@market"]`,
+  ]) {
+    await put(config, Buffer.from(`${table}\nenabled = false\n`));
+    const unsupported = await resolveEnabledPluginSkillRoots({
+      configPath: config,
+      cacheRoot: cache,
+    });
+    assert.deepEqual(unsupported.roots, []);
+    assert.equal(unsupported.status, "partial");
+    assert.equal(JSON.stringify(unsupported).includes(directory), false);
+  }
+
+  for (const invalid of [
+    String.raw`["plu\qgins"."remote@market"]`,
+    `["plu${String.fromCodePoint(1)}gins"."remote@market"]`,
+    '["plu\\\ngins"."remote@market"]',
+  ]) {
+    await put(config, Buffer.from(`${invalid}\nenabled = false\n`));
+    const unsupported = await resolveEnabledPluginSkillRoots({
+      configPath: config,
+      cacheRoot: cache,
+    });
+    assert.deepEqual(unsupported.roots, []);
+    assert.equal(unsupported.status, "partial");
+  }
+
+  for (const unsupportedPrefix of ["\u000b", "\u000c", "\u00a0"]) {
+    await put(config, Buffer.from(
+      `${unsupportedPrefix}${String.raw`["plug\u0069ns"."remote@market"]`}\n` +
+      "enabled = false\n",
+    ));
+    const unsupported = await resolveEnabledPluginSkillRoots({
+      configPath: config,
+      cacheRoot: cache,
+    });
+    assert.deepEqual(unsupported.roots, []);
+    assert.equal(unsupported.status, "partial");
+  }
+
+  for (const assignment of [
+    'plugins = { "remote@market" = { enabled = false } }',
+    String.raw`"plu\u0067ins" = { "remote@market" = { enabled = false } }`,
+  ]) {
+    await put(config, Buffer.from(`${assignment}\n`));
+    const unsupported = await resolveEnabledPluginSkillRoots({
+      configPath: config,
+      cacheRoot: cache,
+    });
+    assert.deepEqual(unsupported.roots, []);
+    assert.equal(unsupported.status, "partial");
+  }
+
+  await put(config, Buffer.from(
+    ' \t[plugins."remote@market"]\n\tenabled\t=\tfalse\t\n',
+  ));
+  const ordinaryWhitespace = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(ordinaryWhitespace.roots, []);
+  assert.equal(ordinaryWhitespace.status, "ready");
+
+  await put(config, Buffer.from(
+    [
+      String.raw`["to\u006fl".plugins]`,
+      "enabled = false",
+      "",
+    ].join("\n"),
+  ));
+  const unrelated = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(unrelated.roots.map((root) => root.label), [
+    "enabled-plugin:market:remote",
+  ]);
+  assert.equal(unrelated.status, "ready");
+
+  await put(config, Buffer.from(
+    String.raw`"to\u006fl" = { plugins = "ordinary" }` + "\n",
+  ));
+  const unrelatedAssignment = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(unrelatedAssignment.roots.map((root) => root.label), [
+    "enabled-plugin:market:remote",
+  ]);
+  assert.equal(unrelatedAssignment.status, "ready");
+
+  const missing = await resolveEnabledPluginSkillRoots({
+    configPath: join(directory, "missing-config.toml"),
+    cacheRoot: cache,
+  });
+  assert.deepEqual(missing.roots.map((root) => root.label), [
+    "enabled-plugin:market:remote",
+  ]);
+  assert.equal(missing.status, "ready");
+});
+
+test("enabled-plugin grants are revalidated after catalog reads", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-grant-race-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const originalLstat = fs.promises.lstat;
+  let mutation = null;
+  let mutationPath = null;
+  let nextMutationPath = null;
+  fs.promises.lstat = async (path, ...args) => {
+    if (path === mutationPath && mutation !== null) {
+      if (nextMutationPath !== null) {
+        mutationPath = nextMutationPath;
+        nextMutationPath = null;
+      } else {
+        const mutate = mutation;
+        mutation = null;
+        await mutate();
+      }
+    }
+    return originalLstat(path, ...args);
+  };
+  syncBuiltinESMExports();
+
+  async function exercise(name, grantKind, mutateGrant, racePoint = "skill") {
+    const fixture = join(directory, name);
+    const config = join(fixture, "config.toml");
+    const cache = join(fixture, "cache");
+    const pluginRoot = await putPlugin(
+      cache,
+      "market",
+      "plugin",
+      "1.0.0",
+      { marker: grantKind === "marker" },
+    );
+    const pluginSkill = join(
+      pluginRoot,
+      "1.0.0",
+      "skills",
+      "plugin",
+      "SKILL.md",
+    );
+    const controlSkill = join(fixture, "control", "SKILL.md");
+    await put(pluginSkill, skill("grant-plugin", "Plugin"));
+    await put(controlSkill, skill("grant-control", "Before"));
+    if (grantKind === "configuration") {
+      await put(config, Buffer.from(
+        '[plugins."plugin@market"]\nenabled = true\n',
+      ));
+    }
+    const resolveRoots = async () => {
+      const plugins = await resolveEnabledPluginSkillRoots({
+        configPath: config,
+        cacheRoot: cache,
+      });
+      return {
+        roots: [
+          ...plugins.roots,
+          { label: "control", path: dirname(controlSkill) },
+        ],
+        status: plugins.status,
+      };
+    };
+    const catalog = createSkillCatalog({
+      rootResolver: resolveRoots,
+      randomIdBytes: ids(),
+    });
+    const initial = await catalog.initialize();
+    assert.equal(initial.item_count, 2);
+    await writeFile(controlSkill, skill("grant-control", "After"));
+
+    const mutate = mutateGrant({ config, pluginRoot });
+    mutationPath = await realpath(pluginSkill);
+    mutation = mutate;
+    if (racePoint === "chain") {
+      nextMutationPath = resolve(join(cache, "market"));
+    }
+    const raced = await catalog.refresh();
+    mutationPath = null;
+    assert.equal(mutation, null);
+    assert.equal(nextMutationPath, null);
+    assert.equal(raced.item_count, 1);
+    assert.equal(raced.items[0].name, "grant-control");
+    assert.equal("replaces_id" in raced.items[0], false);
+    assert.equal(
+      raced.roots.find((root) => root.source_kind === "enabled-plugin").status,
+      "partial",
+    );
+    assert.deepEqual(
+      raced.roots.find((root) =>
+        root.source_kind === "enabled-plugin").diagnostics.map(
+        (item) => item.code,
+      ),
+      ["AIR_CATALOG_ROOT_UNREADABLE"],
+    );
+    assert.equal(JSON.stringify(raced).includes(directory), false);
+  }
+
+  try {
+    await exercise("configured-disabled", "configuration", ({ config }) => (
+      async () => writeFile(
+        config,
+        '[plugins."plugin@market"]\nenabled = false\n',
+      )
+    ));
+    await exercise("configured-partial", "configuration", ({ config }) => (
+      async () => writeFile(
+        config,
+        "[plugins.'plugin@market']\nenabled = true\n",
+      )
+    ));
+    await exercise("marker-removed", "marker", ({ pluginRoot }) => (
+      async () => rm(
+        join(pluginRoot, ".codex-remote-plugin-install.json"),
+      )
+    ));
+    await exercise("marker-changed", "marker", ({ pluginRoot }) => (
+      async () => writeFile(
+        join(pluginRoot, ".codex-remote-plugin-install.json"),
+        JSON.stringify({
+          schema_version: 1,
+          remote_plugin_id: "plugin_connector_changed",
+        }),
+      )
+    ));
+    await exercise(
+      "configured-chain-race",
+      "configuration",
+      ({ config }) => (
+        async () => writeFile(
+          config,
+          '[plugins."plugin@market"]\nenabled = false\n',
+        )
+      ),
+      "chain",
+    );
+    await exercise(
+      "marker-chain-race",
+      "marker",
+      ({ pluginRoot }) => (
+        async () => rm(
+          join(pluginRoot, ".codex-remote-plugin-install.json"),
+        )
+      ),
+      "chain",
+    );
+  } finally {
+    fs.promises.lstat = originalLstat;
+    syncBuiltinESMExports();
+  }
+});
+
 test("enabled-plugin resolver rejects disabled, stale, malformed, and traversal authorities", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-plugin-reject-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

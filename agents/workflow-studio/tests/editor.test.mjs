@@ -1944,6 +1944,65 @@ test("browser AIR Markdown export matches native context safety", () => {
   }
 });
 
+test("browser AIR Markdown applies CommonMark columns before carrier contexts", () => {
+  const prefix =
+    "---\nname: browser-indentation\ndescription: CommonMark indentation fixture\n---\n\n" +
+    "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n";
+  for (const [indentName, indent] of [
+    ["tab", "\t"],
+    ["space-tab", " \t"],
+    ["two-spaces-tab", "  \t"],
+    ["three-spaces-tab", "   \t"],
+    ["four-spaces", "    "],
+  ]) {
+    for (const [contextName, opener] of [
+      ["fence", "```text"],
+      ["raw-html", "<!--"],
+    ]) {
+      const source = Buffer.from(`${prefix}${indent}${opener}\n`, "utf8");
+      const artifact = migrateLegacyToAir(importSkillBytes(source, {
+        sourcePath: `${indentName}-${contextName}/SKILL.md`,
+      }));
+      const carrier = Buffer.from(
+        buildAirMarkdownBytes(createEditorState(artifact)),
+      );
+
+      assert.deepEqual(decodeAirMarkdownArtifact(carrier).logicalSource, source);
+      assert.equal(
+        importSkillBytesAsAir(carrier).artifact_id,
+        artifact.artifact_id,
+      );
+
+      const outer = createEditorState(
+        migrateLegacyToAir(importSkillBytes(carrier, {
+          sourcePath: `outer-${indentName}-${contextName}/SKILL.md`,
+        })),
+      );
+      assert.throws(
+        () => buildAirMarkdownBytes(outer),
+        (error) => error?.code === "AIR_CARRIER_DUPLICATE",
+      );
+      assert.equal(canDownloadAirMarkdown(outer), false);
+    }
+  }
+
+  for (const indent of ["", " ", "  ", "   "]) {
+    for (const opener of ["```text", "<!--"]) {
+      const source = Buffer.from(`${prefix}${indent}${opener}\n`, "utf8");
+      const state = createEditorState(
+        migrateLegacyToAir(importSkillBytes(source, {
+          sourcePath: "authoritative-browser-opener/SKILL.md",
+        })),
+      );
+      assert.throws(
+        () => buildAirMarkdownBytes(state),
+        (error) => error?.code === "AIR_MD_UNREPRESENTABLE_SOURCE",
+      );
+      assert.equal(canDownloadAirMarkdown(state), false);
+    }
+  }
+});
+
 test("browser AIR Markdown refuses recognized inner carriers and oversized publication", async () => {
   const checkedCarrier = await readFile(
     new URL("../examples/hello-agent/workflow.air.md", import.meta.url),

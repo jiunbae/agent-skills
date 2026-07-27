@@ -439,6 +439,57 @@ test("AIR Markdown rejects open raw HTML contexts and accepts closed or ordinary
   }
 });
 
+test("AIR Markdown applies CommonMark columns to fence and raw-HTML indentation", () => {
+  const prefix =
+    "---\nname: indentation\ndescription: CommonMark indentation fixture\n---\n\n" +
+    "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n";
+  for (const [indentName, indent] of [
+    ["tab", "\t"],
+    ["space-tab", " \t"],
+    ["two-spaces-tab", "  \t"],
+    ["three-spaces-tab", "   \t"],
+    ["four-spaces", "    "],
+  ]) {
+    for (const [contextName, opener] of [
+      ["fence", "```text"],
+      ["raw-html", "<!--"],
+    ]) {
+      const source = Buffer.from(`${prefix}${indent}${opener}\n`, "utf8");
+      const artifact = migrateLegacyToAir(importSkillBytes(source, {
+        sourcePath: `${indentName}-${contextName}/SKILL.md`,
+      }));
+      const carrier = encodeAirMarkdownArtifact(artifact);
+
+      assert.deepEqual(decodeAirMarkdownArtifact(carrier).logicalSource, source);
+      assert.equal(
+        recognizeAirSkillCarrier(carrier)?.artifact.artifact_id,
+        artifact.artifact_id,
+      );
+      assert.equal(
+        importSkillBytesAsAir(carrier).artifact_id,
+        artifact.artifact_id,
+      );
+      assert.deepEqual(
+        encodeAirMarkdownArtifact(importSkillBytesAsAir(carrier)),
+        carrier,
+      );
+    }
+  }
+
+  for (const indent of ["", " ", "  ", "   "]) {
+    for (const opener of ["```text", "<!--"]) {
+      const source = Buffer.from(`${prefix}${indent}${opener}\n`, "utf8");
+      const artifact = migrateLegacyToAir(importSkillBytes(source, {
+        sourcePath: "authoritative-opener/SKILL.md",
+      }));
+      expectCode(
+        () => encodeAirMarkdownArtifact(artifact),
+        "AIR_MD_UNREPRESENTABLE_SOURCE",
+      );
+    }
+  }
+});
+
 test("AIR Markdown treats backtick-bearing pseudo-fence info as ordinary source", () => {
   const source = Buffer.from(
     "---\nname: pseudo-fence\ndescription: Backtick pseudo-fence fixture\n---\n\n" +

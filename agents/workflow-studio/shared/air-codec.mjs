@@ -779,8 +779,18 @@ const RAW_HTML_ELEMENT_END = Object.freeze({
   textarea: /<\/textarea[ \t]*>/iu,
 });
 
+function commonMarkBlockOpenerContent(line) {
+  let offset = 0;
+  while (offset < line.length && line[offset] === " " && offset < 4) {
+    offset += 1;
+  }
+  if (offset === 4 || line[offset] === "\t") return null;
+  return line.slice(offset);
+}
+
 function openRawHtmlContext(line) {
-  const content = line.replace(/^[ \t]{0,3}/u, "");
+  const content = commonMarkBlockOpenerContent(line);
+  if (content === null) return null;
   if (content.startsWith("<!--")) {
     return content.includes("-->") ? null : /-->/u;
   }
@@ -854,7 +864,9 @@ export function sourceEndsInOpenAirMarkdownContext(sourceText) {
       if (rawHtmlEnd.test(line)) rawHtmlEnd = null;
       continue;
     }
-    const match = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
+    const match = commonMarkBlockOpenerContent(line)?.match(
+      /^(`{3,}|~{3,})(.*)$/u,
+    );
     if (fence !== null) {
       if (
         match &&
@@ -927,7 +939,9 @@ export function hasRecognizedAirMarkdownCarrier(input) {
       continue;
     }
 
-    const fenceMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u);
+    const fenceMatch = commonMarkBlockOpenerContent(line)?.match(
+      /^(`{3,}|~{3,})(.*)$/u,
+    );
     if (fence !== null) {
       if (
         fenceMatch &&

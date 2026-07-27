@@ -953,6 +953,35 @@ async function runPass(browser, executablePath, pass) {
           await page.locator("#inspectorRegion").getAttribute("aria-hidden"),
           "true",
         );
+        const rapidInspectorMove = await page.evaluate(async () => {
+          const press = (key) => {
+            document.activeElement.dispatchEvent(
+              new KeyboardEvent("keydown", {
+                key,
+                bubbles: true,
+                cancelable: true,
+              }),
+            );
+          };
+          document.querySelector("#graphCanvas").focus();
+          press("F6");
+          press("Escape");
+          document.querySelector("#graphCanvas").focus();
+          press("F6");
+          const immediate = document.activeElement?.id;
+          const afterRestore = await new Promise((resolve) => {
+            requestAnimationFrame(() => resolve(document.activeElement?.id));
+          });
+          return { immediate, afterRestore };
+        });
+        assert.deepEqual(rapidInspectorMove, {
+          immediate: "inspectorRegion",
+          afterRestore: "inspectorRegion",
+        });
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(
+          () => document.activeElement?.id === "graphCanvas",
+        );
       }
       assert.equal(
         await page.evaluate(
