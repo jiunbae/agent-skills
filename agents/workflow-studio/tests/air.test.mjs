@@ -374,6 +374,9 @@ test("AIR Markdown rejects open raw HTML contexts and accepts closed or ordinary
     "## Workflow\n### Step 1: Inspect\nInspect safely.\n\n";
   const openTails = [
     "<!--\n",
+    "<?processing\n",
+    "<!DECLARATION\n",
+    "<![CDATA[open\n",
     ...["pre", "script", "style", "textarea"].map(
       (element) => `<${element}>\n`,
     ),
@@ -415,6 +418,10 @@ test("AIR Markdown rejects open raw HTML contexts and accepts closed or ordinary
 
   const controls = [
     "<!-- closed -->\n",
+    "<?processing?>\n",
+    "<!DECLARATION>\n",
+    "<![CDATA[closed]]>\n",
+    "<!ordinary-lowercase\n",
     "<script>\nconst ok = true;\n</script>\n",
     "<PRE>closed on one line</PRE>\n",
     "<scripture>\n",

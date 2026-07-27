@@ -468,6 +468,9 @@ test("malformed AIR carrier claims reach CLI, catalog, and HTTP", async (t) => {
     }),
     nestedRawHtmlCarrier("<!--\n", "nested-comment/SKILL.md"),
     nestedRawHtmlCarrier("<script>\n", "nested-script/SKILL.md"),
+    nestedRawHtmlCarrier("<?processing\n", "nested-processing/SKILL.md"),
+    nestedRawHtmlCarrier("<!DECLARATION\n", "nested-declaration/SKILL.md"),
+    nestedRawHtmlCarrier("<![CDATA[open\n", "nested-cdata/SKILL.md"),
   ];
   for (const [index, source] of claimed.entries()) {
     const path = join(directory, `claimed-${index}`, "SKILL.md");

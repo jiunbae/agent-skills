@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { constants as fsConstants } from "node:fs";
-import { access, copyFile, readFile } from "node:fs/promises";
+import { access, copyFile, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { importSkillBytes, importSkillFile } from "../src/core.mjs";
+import {
+  importSkillBytes,
+  importSkillFile,
+  validateArtifact,
+} from "../src/core.mjs";
+import {
+  validateNativePlan,
+  verifyPlanApproval,
+} from "../src/adapters.mjs";
 import { createStudioServer } from "../src/server.mjs";
 import {
   buildAirArtifact,
@@ -1073,7 +1081,7 @@ test("AIR Workbench resources, documents, sessions, and responsive shell", async
   }
 });
 
-test("AIR Workbench reviews checked native AIR plan and trace profiles", async (t) => {
+test("AIR Workbench reviews checked native AIR plan and trace profiles with carrier safety", async (t) => {
   const runtime = await browserRuntime();
   if (runtime.skip) {
     t.skip(runtime.skip);
@@ -1148,6 +1156,7 @@ test("AIR Workbench reviews checked native AIR plan and trace profiles", async (
       await page.locator("#nodeTitle").fill("Reviewed native AIR plan");
       await page.locator("#tabPlan").click();
       await page.locator("#planPrompt").fill("Review the edited native AIR plan.");
+      await page.locator("#planCwd").fill(await realpath("/tmp"));
       await page.locator("#approvePlan").click();
       await page.waitForFunction(
         () => !document.querySelector("#downloadPlan")?.disabled,
@@ -1163,10 +1172,14 @@ test("AIR Workbench reviews checked native AIR plan and trace profiles", async (
         await readFile(await planDownload.path(), "utf8"),
       );
       assert.equal(reviewedPlan.kind, "plan");
+      assert.equal(reviewedPlan.workflow.source.encoding, "utf-8");
       assert.equal(
         reviewedPlan.workflow.graph.nodes[0].title,
         "Reviewed native AIR plan",
       );
+      assert.equal(validateArtifact(reviewedPlan), true);
+      assert.equal(validateNativePlan(reviewedPlan), true);
+      assert.equal(verifyPlanApproval(reviewedPlan), true);
     } finally {
       await planSession.page.close();
       await planSession.studio.close();
@@ -1211,6 +1224,32 @@ test("AIR Workbench reviews checked native AIR plan and trace profiles", async (
     } finally {
       await traceSession.page.close();
       await traceSession.studio.close();
+    }
+
+    for (const [index, tail] of [
+      "<?processing\n",
+      "<!DECLARATION\n",
+      "<![CDATA[open\n",
+    ].entries()) {
+      const source = Buffer.from(
+        "---\nname: raw-html-carrier\ndescription: Raw HTML carrier safety\n---\n\n" +
+          "## Workflow\n\n### Step 1: Inspect\n\nInspect safely.\n\n" +
+          tail,
+        "utf8",
+      );
+      const artifact = migrateLegacyToAir(importSkillBytes(source, {
+        sourcePath: `browser-raw-html-${index}/SKILL.md`,
+      }));
+      const carrierSession = await openExplicitArtifact(artifact);
+      try {
+        assert.equal(
+          await carrierSession.page.locator("#downloadMarkdown").isDisabled(),
+          true,
+        );
+      } finally {
+        await carrierSession.page.close();
+        await carrierSession.studio.close();
+      }
     }
     assert.deepEqual(errors, []);
   } finally {

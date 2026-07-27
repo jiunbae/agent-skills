@@ -784,6 +784,15 @@ function openRawHtmlContext(line) {
   if (content.startsWith("<!--")) {
     return content.includes("-->") ? null : /-->/u;
   }
+  if (content.startsWith("<?")) {
+    return content.includes("?>") ? null : /\?>/u;
+  }
+  if (content.startsWith("<![CDATA[")) {
+    return content.includes("]]>") ? null : /\]\]>/u;
+  }
+  if (/^<![A-Z]/u.test(content)) {
+    return content.includes(">") ? null : />/u;
+  }
   const element = content.match(
     /^<(pre|script|style|textarea)(?=[ \t>]|$)/iu,
   );

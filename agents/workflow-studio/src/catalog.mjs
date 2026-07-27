@@ -712,7 +712,9 @@ export async function resolveEnabledPluginSkillRoots({
     limits.maxConfigBytes,
   );
   const configuration = parseEnabledPluginConfiguration(configBytes, limits);
-  if (configuration.exceeded) return pluginResolution([], "partial");
+  if (configuration.exceeded || configuration.partial) {
+    return pluginResolution([], "partial");
+  }
 
   let cacheAuthority;
   try {

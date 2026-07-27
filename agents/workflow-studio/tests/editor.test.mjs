@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,6 +43,7 @@ import {
   approvePlan as approveNativePlan,
   buildRunEnvelope,
   normalizeProviderEvent,
+  validateNativePlan,
   verifyPlanApproval,
 } from "../src/adapters.mjs";
 import {
@@ -1565,6 +1566,7 @@ test("checked native AIR plan opens in editable browser review with approval cle
     "Review the native AIR plan",
   );
   state = editPlan(state, "prompt", "Review this edited native AIR plan.");
+  state = editPlan(state, "cwd", await realpath("/tmp"));
   assert.equal(state.plan.approval, null);
   assert.deepEqual(state.airArtifact, air);
   state = await approvePlan(state);
@@ -1572,7 +1574,11 @@ test("checked native AIR plan opens in editable browser review with approval cle
   const reviewed = approvedPlanArtifact(state);
   assert.equal(reviewed.kind, "plan");
   assert.equal(reviewed.workflow.kind, "workflow");
+  assert.equal(reviewed.workflow.source.encoding, "utf-8");
   assert.equal(reviewed.workflow.graph.nodes[0].title, "Review the native AIR plan");
+  assert.equal(validateArtifact(reviewed), true);
+  assert.equal(validateNativePlan(reviewed), true);
+  assert.equal(verifyPlanApproval(reviewed), true);
 });
 
 test("checked native AIR trace opens read-only and preserves evidence for promotion", async () => {
@@ -1840,6 +1846,18 @@ test("browser AIR Markdown export matches native context safety", () => {
       "---\nname: comment\ndescription: Open HTML comment\n---\n\n<!--\n",
       "utf8",
     ),
+    Buffer.from(
+      "---\nname: processing\ndescription: Open processing instruction\n---\n\n<?processing\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: declaration\ndescription: Open declaration\n---\n\n<!DECLARATION\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: cdata\ndescription: Open CDATA\n---\n\n<![CDATA[open\n",
+      "utf8",
+    ),
     ...["pre", "script", "style", "textarea"].map((element) =>
       Buffer.from(
         `---\nname: raw-${element}\ndescription: Open raw element\n---\n\n<${element}>\n`,
@@ -1878,6 +1896,22 @@ test("browser AIR Markdown export matches native context safety", () => {
     ),
     Buffer.from(
       "---\nname: closed-comment\ndescription: Closed HTML comment\n---\n\n<!-- note -->\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: closed-processing\ndescription: Closed processing instruction\n---\n\n<?processing?>\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: closed-declaration\ndescription: Closed declaration\n---\n\n<!DECLARATION>\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: closed-cdata\ndescription: Closed CDATA\n---\n\n<![CDATA[closed]]>\n",
+      "utf8",
+    ),
+    Buffer.from(
+      "---\nname: ordinary-declaration\ndescription: Ordinary lowercase declaration-like text\n---\n\n<!ordinary-lowercase\n",
       "utf8",
     ),
     Buffer.from(

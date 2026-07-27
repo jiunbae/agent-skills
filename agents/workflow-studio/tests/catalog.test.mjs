@@ -347,6 +347,9 @@ test("enabled-plugin authority ignores multiline TOML content and recovers from 
   for (const plugin of ["basic-spoof", "literal-spoof", "real"]) {
     await putPlugin(cache, "market", plugin, "1.0.0");
   }
+  await putPlugin(cache, "market", "marker-only", "1.0.0", {
+    marker: true,
+  });
   await put(
     join(cache, "market", "real", "1.0.0", "skills", "real", "SKILL.md"),
     skill("real-plugin-skill", "Real plugin Skill"),
@@ -363,6 +366,8 @@ test("enabled-plugin authority ignores multiline TOML content and recovers from 
     "'''",
     '[plugins."real@market"]',
     "enabled = true",
+    '[plugins."marker-only@market"]',
+    "enabled = false",
     "",
   ].join("\n")));
 
@@ -374,6 +379,29 @@ test("enabled-plugin authority ignores multiline TOML content and recovers from 
     "enabled-plugin:market:real",
   ]);
   assert.equal(valid.status, "ready");
+
+  await put(config, Buffer.from([
+    'message = "unterminated',
+    '[plugins."marker-only@market"]',
+    "enabled = false",
+    "",
+  ].join("\n")));
+  const hiddenDisabled = await resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+  });
+  assert.deepEqual(hiddenDisabled.roots, []);
+  assert.equal(hiddenDisabled.status, "partial");
+  assert.equal(JSON.stringify(hiddenDisabled).includes(directory), false);
+
+  const markerOnly = await resolveEnabledPluginSkillRoots({
+    configPath: join(directory, "missing-config.toml"),
+    cacheRoot: cache,
+  });
+  assert.deepEqual(markerOnly.roots.map((root) => root.label), [
+    "enabled-plugin:market:marker-only",
+  ]);
+  assert.equal(markerOnly.status, "ready");
 
   await put(config, Buffer.from([
     'message = """',
@@ -415,7 +443,13 @@ test("enabled-plugin authority ignores multiline TOML content and recovers from 
   assert.equal(JSON.stringify(partialCatalog).includes(directory), false);
 
   await put(config, Buffer.from(
-    '[plugins."real@market"]\nenabled = true\n',
+    [
+      '[plugins."real@market"]',
+      "enabled = true",
+      '[plugins."marker-only@market"]',
+      "enabled = false",
+      "",
+    ].join("\n"),
   ));
   const recovered = await resolveEnabledPluginSkillRoots({
     configPath: config,
@@ -462,9 +496,7 @@ test("enabled-plugin resolver rejects disabled, stale, malformed, and traversal 
     configPath: config,
     cacheRoot: cache,
   });
-  assert.deepEqual(resolution.roots.map((root) => root.label), [
-    "enabled-plugin:market:control",
-  ]);
+  assert.deepEqual(resolution.roots, []);
   assert.equal(resolution.status, "partial");
 });
 

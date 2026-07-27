@@ -582,6 +582,7 @@ function airWorkflowProjection(artifact) {
     },
     source: {
       path: String(firstDefined(source.locator?.display, "SKILL.md")),
+      encoding: "utf-8",
       raw_base64: String(firstDefined(source.bytes_base64, "")),
       sha256: String(firstDefined(source.sha256, "")),
       newline: String(firstDefined(source.newline, "lf")),
@@ -2614,6 +2615,15 @@ function openRawHtmlContext(line) {
   const content = line.replace(/^[ \t]{0,3}/u, "");
   if (content.startsWith("<!--")) {
     return content.includes("-->") ? null : /-->/u;
+  }
+  if (content.startsWith("<?")) {
+    return content.includes("?>") ? null : /\?>/u;
+  }
+  if (content.startsWith("<![CDATA[")) {
+    return content.includes("]]>") ? null : /\]\]>/u;
+  }
+  if (/^<![A-Z]/u.test(content)) {
+    return content.includes(">") ? null : />/u;
   }
   const element = content.match(
     /^<(pre|script|style|textarea)(?=[ \t>]|$)/iu,
