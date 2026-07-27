@@ -58,6 +58,7 @@ let activePanel = "problems";
 let catalogGeneration = null;
 let sessionGeneration = null;
 let resourceItems = [];
+let skillCatalogResources = [];
 let workbenchCapabilities = null;
 let catalogStatusMessage = "";
 let pendingResource = null;
@@ -1455,6 +1456,19 @@ async function loadResource(
 ) {
   const epoch = ++loadRequestEpoch;
   const key = resourceKey(resource);
+  const requestedSkillHash =
+    resource.type === "skill" ? resource.item?.content_hash ?? null : null;
+  const requestIsCurrent = () => {
+    if (epoch !== loadRequestEpoch) return false;
+    if (resource.type !== "skill") return true;
+    const matches = skillCatalogResources.filter(
+      (candidate) => resourceKey(candidate) === key,
+    );
+    return (
+      matches.length === 1 &&
+      (matches[0].item?.content_hash ?? null) === requestedSkillHash
+    );
+  };
   if (refreshSession && key === activeResourceKey) persistActiveDocument();
   const cached = documents.get(key);
   if (cached && !refreshSession && !reloadSkill) {
@@ -1533,7 +1547,7 @@ async function loadResource(
         sourceChanged: sourceChanged || Boolean(response.source_changed),
       };
     }
-    if (epoch !== loadRequestEpoch) return;
+    if (!requestIsCurrent()) return;
     const entry = newDocument(resource, payload, metadata);
     if (cached && refreshSession && !metadata.sourceChanged) {
       const selectedId = cached.selection?.type === "node"
@@ -1557,7 +1571,7 @@ async function loadResource(
       catalogStatusMessage ||
       `${resourceItems.length} local resource${resourceItems.length === 1 ? "" : "s"}`;
   } catch (error) {
-    if (epoch !== loadRequestEpoch) return;
+    if (!requestIsCurrent()) return;
     const code = safeProblemCode(error, resource.type);
     const detail = error instanceof Error ? error.message : String(error);
     const message = code ? `[${code}] ${detail}` : detail;
@@ -1703,6 +1717,29 @@ function normalizeSessionResources(catalog) {
   }));
 }
 
+function skillCatalogIsIncomplete(catalog) {
+  return (
+    Boolean(catalog?.truncated) ||
+    (Array.isArray(catalog?.roots) &&
+      catalog.roots.some((root) =>
+        ["invalid", "partial", "unreadable"].includes(root?.status)))
+  );
+}
+
+function withoutReplacementClaim(resource) {
+  const item = { ...resource.item };
+  delete item.replaces_id;
+  return { ...resource, item };
+}
+
+function mergeIncompleteSkillResources(previous, incoming) {
+  const incomingKeys = new Set(incoming.map(resourceKey));
+  return [
+    ...incoming,
+    ...previous.filter((resource) => !incomingKeys.has(resourceKey(resource))),
+  ].map(withoutReplacementClaim);
+}
+
 function reconcileReplacedDocuments(nextResources) {
   persistActiveDocument();
   const skillResources = nextResources.filter(
@@ -1841,8 +1878,23 @@ async function loadCatalogs({ refresh = false } = {}) {
       : { items: [] };
     catalogGeneration = skills.generation ?? catalogGeneration;
     sessionGeneration = sessions.generation ?? sessionGeneration;
+    const incomingSkillResources = normalizeSkillResources(skills);
+    const skillsIncomplete =
+      skillsResult.status === "fulfilled" &&
+      skillCatalogIsIncomplete(skills);
+    const nextSkillResources = skillsResult.status === "rejected"
+      ? skillCatalogResources.map(withoutReplacementClaim)
+      : skillsIncomplete
+        ? mergeIncompleteSkillResources(
+            skillCatalogResources,
+            incomingSkillResources,
+          )
+        : incomingSkillResources;
+    if (skillsResult.status === "fulfilled") {
+      skillCatalogResources = nextSkillResources;
+    }
     const discoveredResources = [
-      ...normalizeSkillResources(skills),
+      ...nextSkillResources,
       ...normalizeSessionResources(sessions),
     ];
     const catalogResources = commandLineResource
@@ -1856,7 +1908,7 @@ async function loadCatalogs({ refresh = false } = {}) {
       ...(skillsResult.status === "rejected" ? ["Skills"] : []),
       ...(sessionsResult.status === "rejected" ? ["sessions"] : []),
     ];
-    const truncated = Boolean(skills.truncated) || Boolean(sessions.truncated);
+    const truncated = skillsIncomplete || Boolean(sessions.truncated);
     if (unavailable.length) {
       const subject =
         unavailable.length === 2 ? "Skills and sessions catalogs" : `${unavailable[0]} catalog`;

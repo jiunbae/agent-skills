@@ -691,8 +691,12 @@ export function createSessionRegistry({
       .slice(0, 22)}`;
   }
 
-  function allocateStableId(privateKey) {
-    const retained = stableIds.get(privateKey);
+  function allocateStableId(
+    privateKey,
+    retainedIds = stableIds,
+    retainedOwners = stableIdOwners,
+  ) {
+    const retained = retainedIds.get(privateKey);
     if (retained) return retained;
 
     // Preserve the configured entropy contract while deriving the public ID
@@ -708,9 +712,9 @@ export function createSessionRegistry({
       }
       id = derivedOpaqueToken("session", privateKey, attempt);
       attempt += 1;
-    } while (stableIdOwners.has(id));
-    stableIds.set(privateKey, id);
-    stableIdOwners.set(id, privateKey);
+    } while (retainedOwners.has(id));
+    retainedIds.set(privateKey, id);
+    retainedOwners.set(id, privateKey);
     return id;
   }
 
@@ -788,7 +792,7 @@ export function createSessionRegistry({
         continuity !== null &&
         continuity.continuity === published.continuity
       );
-      if (matches && checkpoint !== null) checkpoint();
+      if (matches && checkpoint !== null) await checkpoint();
       return matches;
     }
     return false;
@@ -807,6 +811,10 @@ export function createSessionRegistry({
   async function scan() {
     const started = now();
     const candidates = [];
+    const scanStableIds = new Map(stableIds);
+    const scanStableIdOwners = new Map(stableIdOwners);
+    const sourceStatesBeforeScan = new Map(sourceStates);
+    const scanSourceStates = new Map(sourceStates);
     const counts = new Map();
     let entries = 0;
     let files = 0;
@@ -916,8 +924,20 @@ export function createSessionRegistry({
             `${root.provider}\0${kind}\0${root.path}\0${identity(info)}\0${relativeLocator}`;
           const sourceKey =
             `${root.provider}\0${kind}\0${root.path}\0${relativeLocator}`;
-          const state = sourceState(sourceKey, identity(info));
-          const id = allocateStableId(privateKey);
+          const currentState = scanSourceStates.get(sourceKey);
+          const state = currentState?.identity === identity(info)
+            ? currentState
+            : {
+                epoch: null,
+                identity: identity(info),
+                published: null,
+              };
+          scanSourceStates.set(sourceKey, state);
+          const id = allocateStableId(
+            privateKey,
+            scanStableIds,
+            scanStableIdOwners,
+          );
           candidates.push({
             id,
             locator,
@@ -926,7 +946,6 @@ export function createSessionRegistry({
             provider: root.provider,
             streamKind: kind,
             identity: identity(info),
-            epoch: state.epoch,
             modifiedAt: Number(info.mtimeMs),
             authorization,
             directoryChain,
@@ -980,15 +999,17 @@ export function createSessionRegistry({
     const retainedSourceKeys = new Set(
       candidates.map(({ sourceKey }) => sourceKey),
     );
-    for (const privateKey of stableIds.keys()) {
+    for (const privateKey of scanStableIds.keys()) {
       if (!retainedPrivateKeys.has(privateKey)) {
-        const id = stableIds.get(privateKey);
-        stableIds.delete(privateKey);
-        if (stableIdOwners.get(id) === privateKey) stableIdOwners.delete(id);
+        const id = scanStableIds.get(privateKey);
+        scanStableIds.delete(privateKey);
+        if (scanStableIdOwners.get(id) === privateKey) {
+          scanStableIdOwners.delete(id);
+        }
       }
     }
-    for (const sourceKey of sourceStates.keys()) {
-      if (!retainedSourceKeys.has(sourceKey)) sourceStates.delete(sourceKey);
+    for (const sourceKey of scanSourceStates.keys()) {
+      if (!retainedSourceKeys.has(sourceKey)) scanSourceStates.delete(sourceKey);
     }
     const nextPrivateItems = new Map();
     const publicItems = [];
@@ -1008,9 +1029,9 @@ export function createSessionRegistry({
     const diagnostics = [...counts]
       .slice(0, boundedLimits.maxDiagnostics)
       .map(([code, count]) => publicDiagnostic(code, count));
-    generation += 1;
+    const nextGeneration = generation + 1;
     let next = {
-      generation,
+      generation: nextGeneration,
       items: publicItems,
       diagnostics,
       truncated,
@@ -1023,6 +1044,51 @@ export function createSessionRegistry({
       next.items.pop();
       next.truncated = true;
     }
+    if (
+      Buffer.byteLength(JSON.stringify(next), "utf8") >
+      boundedLimits.maxCatalogBytes
+    ) {
+      throw sessionError("AIR_SESSION_LIMIT");
+    }
+    let scanNextEpoch = nextEpoch;
+    for (const [sourceKey, state] of scanSourceStates) {
+      if (state.epoch !== null) continue;
+      if (!Number.isSafeInteger(scanNextEpoch)) {
+        throw sessionError("AIR_SESSION_LIMIT");
+      }
+      scanSourceStates.set(sourceKey, {
+        ...state,
+        epoch: scanNextEpoch,
+      });
+      scanNextEpoch += 1;
+    }
+    stableIds.clear();
+    for (const [privateKey, id] of scanStableIds) {
+      stableIds.set(privateKey, id);
+    }
+    stableIdOwners.clear();
+    for (const [id, privateKey] of scanStableIdOwners) {
+      stableIdOwners.set(id, privateKey);
+    }
+    for (const [sourceKey, priorState] of sourceStatesBeforeScan) {
+      if (
+        !scanSourceStates.has(sourceKey) &&
+        sourceStates.get(sourceKey) === priorState
+      ) {
+        sourceStates.delete(sourceKey);
+      }
+    }
+    for (const [sourceKey, state] of scanSourceStates) {
+      const priorState = sourceStatesBeforeScan.get(sourceKey);
+      if (
+        state !== priorState &&
+        sourceStates.get(sourceKey) === priorState
+      ) {
+        sourceStates.set(sourceKey, state);
+      }
+    }
+    nextEpoch = scanNextEpoch;
+    generation = nextGeneration;
     privateItems.clear();
     for (const item of next.items) {
       privateItems.set(item.id, nextPrivateItems.get(item.id));
@@ -1664,6 +1730,21 @@ export function createSessionRegistry({
         markSourceReset(item, epoch, identity(publicationInfo));
         return sourceChanged(sessionId, requestedGeneration);
       }
+      if (
+        !(await directoryChainIsAuthorized(
+          item.authorization,
+          item.directoryChain,
+        )) ||
+        await inspectAuthorizedEntry(
+          item.authorization,
+          item.locator,
+          "file",
+          item,
+        ) === null
+      ) {
+        markSourceReset(item, epoch, null);
+        return sourceChanged(sessionId, requestedGeneration);
+      }
       const finalPublicationInfo = await handle.stat({ bigint: true });
       if (
         identity(finalPublicationInfo) !== sourceIdentity ||
@@ -1686,21 +1767,6 @@ export function createSessionRegistry({
           publicationContinuity.continuity
       ) {
         markSourceReset(item, epoch, identity(finalPublicationInfo));
-        return sourceChanged(sessionId, requestedGeneration);
-      }
-      if (
-        !(await directoryChainIsAuthorized(
-          item.authorization,
-          item.directoryChain,
-        )) ||
-        await inspectAuthorizedEntry(
-          item.authorization,
-          item.locator,
-          "file",
-          item,
-        ) === null
-      ) {
-        markSourceReset(item, epoch, null);
         return sourceChanged(sessionId, requestedGeneration);
       }
       if (generation !== requestedGeneration) {

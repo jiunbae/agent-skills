@@ -12,6 +12,7 @@ import {
   link,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rename,
   rm,
@@ -526,6 +527,78 @@ test("port-0 HTTP rejects an accepted rewrite at the final publication cut", asy
     headers: { "Content-Type": "application/json" },
   });
   assert.equal(randomCalls, 4);
+  assert.equal(changed.status, 409);
+  assert.equal(JSON.parse(changed.body).code, "AIR_SESSION_SOURCE_CHANGED");
+  assert.equal(changed.body.includes(directory), false);
+});
+
+test("port-0 HTTP rejects a same-length rewrite after final authorization", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-session-http-authorized-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceRoot = join(directory, "codex");
+  const source = join(sourceRoot, "final-authorized-cut.jsonl");
+  const initial = Buffer.concat([
+    fixedRecord("session_meta", 0),
+    fixedRecord("event_msg", 1),
+  ]);
+  await mkdir(sourceRoot, { recursive: true });
+  await writeFile(source, initial);
+  let armed = false;
+  let rewrites = 0;
+  const registry = createSessionRegistry({
+    roots: [{ path: sourceRoot, provider: "codex" }],
+    randomBytes: (length) => Buffer.alloc(length, 0x44),
+    async publicationCheckpoint() {
+      if (!armed) return;
+      rewrites += 1;
+      const writer = await open(source, "r+");
+      try {
+        await writer.write(
+          fixedRecord("response_item", 0),
+          0,
+          initial.subarray(0, 128).byteLength,
+          0,
+        );
+        await writer.sync();
+      } finally {
+        await writer.close();
+      }
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const sessionId = catalog.items[0].id;
+  const studio = createStudioServer({
+    artifact: {},
+    assetsDir: await assets(t),
+    schemasDir: SCHEMAS,
+    catalog: fakeCatalog(),
+    sessionRegistry: registry,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+  assert.ok(address.port > 0);
+  const path =
+    `/air/v1/sessions/${sessionId}/snapshots?token=${encodeURIComponent(studio.token)}`;
+  const firstResponse = await http(address, {
+    method: "POST",
+    path,
+    body: JSON.stringify({ generation: catalog.generation }),
+    headers: { "Content-Type": "application/json" },
+  });
+  assert.equal(firstResponse.status, 200);
+  const first = JSON.parse(firstResponse.body);
+  armed = true;
+
+  const changed = await http(address, {
+    method: "POST",
+    path,
+    body: JSON.stringify({
+      generation: catalog.generation,
+      prior_snapshot_id: first.snapshot_id,
+    }),
+    headers: { "Content-Type": "application/json" },
+  });
+  assert.equal(rewrites, 1);
   assert.equal(changed.status, 409);
   assert.equal(JSON.parse(changed.body).code, "AIR_SESSION_SOURCE_CHANGED");
   assert.equal(changed.body.includes(directory), false);

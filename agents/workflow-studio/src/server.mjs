@@ -675,7 +675,14 @@ export function createStudioServer({
           return;
         }
         if (skillItemMatch) {
-          const air = await catalog.importAirArtifact(skillItemMatch[1]);
+          const id = skillItemMatch[1];
+          const air = await catalog.importAirArtifact(id);
+          // No await may follow this current-generation publication cut.
+          if (!catalog.getSnapshot().items.some((item) => item.id === id)) {
+            const error = new Error("Skill ID left the current catalog generation.");
+            error.code = "AIR_CATALOG_ITEM_STALE";
+            throw error;
+          }
           send(response, method, 200, encodeJson(air), {
             "Content-Type":
               `application/json; profile="${AIR_PROFILES.workflow}"`,

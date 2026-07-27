@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   link,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -127,6 +130,81 @@ test("enabled-plugin resolver admits only configured or marked unambiguous roots
     ],
   );
   assert.equal(resolution.status, "ready");
+});
+
+test("enabled-plugin marker absence, invalidity, bounds, and recovery remain distinct", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-marker-state-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = join(directory, "missing-config.toml");
+  const cache = join(directory, "cache");
+  const pluginRoot = await putPlugin(
+    cache,
+    "market",
+    "remote",
+    "1.0.0",
+  );
+  const markerPath = join(pluginRoot, ".codex-remote-plugin-install.json");
+  const resolveMarker = (limits) => resolveEnabledPluginSkillRoots({
+    configPath: config,
+    cacheRoot: cache,
+    ...(limits ? { limits } : {}),
+  });
+
+  const absent = await resolveMarker();
+  assert.deepEqual(absent.roots, []);
+  assert.equal(absent.status, "ready");
+  assert.deepEqual(absent.diagnostics, []);
+
+  await writeFile(
+    markerPath,
+    '{"schema_version":2,"remote_plugin_id":"plugin_connector_remote"}',
+  );
+  const malformed = await resolveMarker();
+  assert.deepEqual(malformed.roots, []);
+  assert.equal(malformed.status, "partial");
+  assert.deepEqual(
+    malformed.diagnostics.map((item) => item.code),
+    ["AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL"],
+  );
+  assert.equal(JSON.stringify(malformed).includes(directory), false);
+
+  const resolvingCatalog = createSkillCatalog({
+    rootResolver: resolveMarker,
+    randomIdBytes: ids(),
+  });
+  const partial = await resolvingCatalog.initialize();
+  assert.equal(partial.truncated, true);
+  assert.equal(partial.item_count, 0);
+
+  await writeFile(markerPath, "x".repeat(65));
+  const overBudget = await resolveMarker({ maxMarkerBytes: 64 });
+  assert.deepEqual(overBudget.roots, []);
+  assert.equal(overBudget.status, "partial");
+
+  await rm(markerPath);
+  await mkdir(markerPath);
+  const nonRegular = await resolveMarker();
+  assert.deepEqual(nonRegular.roots, []);
+  assert.equal(nonRegular.status, "partial");
+
+  await rm(markerPath, { recursive: true });
+  await writeFile(markerPath, JSON.stringify({
+    schema_version: 1,
+    remote_plugin_id: "plugin_connector_remote",
+  }));
+  await put(
+    join(pluginRoot, "1.0.0", "skills", "remote", "SKILL.md"),
+    skill("remote-plugin-skill", "Remote plugin Skill"),
+  );
+  const valid = await resolveMarker();
+  assert.deepEqual(valid.roots.map((root) => root.label), [
+    "enabled-plugin:market:remote",
+  ]);
+  assert.equal(valid.status, "ready");
+  const recovered = await resolvingCatalog.refresh();
+  assert.equal(recovered.truncated, false);
+  assert.equal(recovered.item_count, 1);
+  assert.equal(recovered.items[0].name, "remote-plugin-skill");
 });
 
 test("enabled-plugin authority ignores multiline TOML content and recovers from ambiguous lexical state", async (t) => {
@@ -671,6 +749,281 @@ test("refresh coalesces, preserves stable IDs, uses duplicates after races, and 
   assert.equal(converged.item_count, 1);
   assert.ok(beforeSwap.items.some((item) => item.id === converged.items[0].id));
   assert.equal("replaces_id" in converged.items[0], false);
+});
+
+test("replacement lineage requires covered authorities and stable queued directories", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-lineage-authority-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const originalLstat = fs.promises.lstat;
+  let deniedPath = null;
+  let queuedSwap = null;
+  fs.promises.lstat = async (path, ...args) => {
+    if (path === deniedPath) {
+      const error = new Error("synthetic permission denial");
+      error.code = "EACCES";
+      throw error;
+    }
+    if (queuedSwap !== null && path === queuedSwap.path) {
+      const swap = queuedSwap;
+      queuedSwap = null;
+      await rename(swap.path, swap.moved);
+      await symlink(swap.moved, swap.path);
+    }
+    return originalLstat(path, ...args);
+  };
+  syncBuiltinESMExports();
+
+  async function duplicateCatalog(name, { resolver = false } = {}) {
+    const rootOne = join(directory, name, "one");
+    const rootTwo = join(directory, name, "two");
+    const pathOne = join(rootOne, "copy", "SKILL.md");
+    const pathTwo = join(rootTwo, "copy", "SKILL.md");
+    const original = skill(name, "Before");
+    await put(pathOne, original);
+    await put(pathTwo, original);
+    let roots = [
+      { label: `${name}-one`, path: rootOne },
+      { label: `${name}-two`, path: rootTwo },
+    ];
+    const catalog = createSkillCatalog({
+      ...(resolver
+        ? { rootResolver: () => ({ roots, status: "ready" }) }
+        : { roots }),
+      randomIdBytes: ids(),
+    });
+    const initial = await catalog.initialize();
+    return {
+      catalog,
+      initial,
+      pathOne,
+      pathTwo,
+      rootOne,
+      rootTwo,
+      setRoots(value) {
+        roots = value;
+      },
+    };
+  }
+
+  try {
+    const missing = await duplicateCatalog("missing-authority");
+    const missingOldId = missing.initial.items[0].id;
+    const unmounted = join(directory, "missing-authority-unmounted");
+    await rename(missing.rootOne, unmounted);
+    await writeFile(
+      missing.pathTwo,
+      skill("missing-authority", "After"),
+    );
+    const missingAfter = await missing.catalog.refresh();
+    assert.deepEqual(
+      missingAfter.roots.map((root) => [root.source_label, root.status]),
+      [
+        ["missing-authority-one", "missing"],
+        ["missing-authority-two", "ready"],
+      ],
+    );
+    assert.equal("replaces_id" in missingAfter.items[0], false);
+    await rename(unmounted, missing.rootOne);
+    const restored = await missing.catalog.refresh();
+    assert.equal(restored.item_count, 2);
+    assert.ok(restored.items.some((item) => (
+      item.description === "Before" && item.id !== missingOldId
+    )));
+    assert.ok(restored.items.every((item) => !("replaces_id" in item)));
+
+    const dropped = await duplicateCatalog("dropped-authority", {
+      resolver: true,
+    });
+    dropped.setRoots([
+      { label: "dropped-authority-two", path: dropped.rootTwo },
+    ]);
+    await writeFile(
+      dropped.pathTwo,
+      skill("dropped-authority", "After"),
+    );
+    const droppedAfter = await dropped.catalog.refresh();
+    assert.deepEqual(
+      droppedAfter.roots.map((root) => [root.source_label, root.status]),
+      [["dropped-authority-two", "ready"]],
+    );
+    assert.equal("replaces_id" in droppedAfter.items[0], false);
+
+    const denied = await duplicateCatalog("denied-authority");
+    deniedPath = denied.rootOne;
+    await writeFile(denied.pathTwo, skill("denied-authority", "After"));
+    const deniedAfter = await denied.catalog.refresh();
+    deniedPath = null;
+    assert.equal("replaces_id" in deniedAfter.items[0], false);
+    assert.deepEqual(
+      deniedAfter.roots[0].diagnostics.map((item) => item.code),
+      ["AIR_CATALOG_ROOT_UNREADABLE"],
+    );
+    assert.equal(JSON.stringify(deniedAfter).includes(directory), false);
+
+    const swapRootOne = join(directory, "queued-swap", "one");
+    const swapRootTwo = join(directory, "queued-swap", "two");
+    const queuedPath = join(swapRootOne, "zzz");
+    const movedPath = join(directory, "queued-swap-moved");
+    const swapPathTwo = join(swapRootTwo, "copy", "SKILL.md");
+    await put(
+      join(swapRootOne, "aaa", "SKILL.md"),
+      skill("queued-pad", "Pad"),
+    );
+    await put(
+      join(queuedPath, "SKILL.md"),
+      skill("queued-authority", "Before"),
+    );
+    await put(
+      swapPathTwo,
+      skill("queued-authority", "Before"),
+    );
+    const swapping = createSkillCatalog({
+      roots: [
+        { label: "queued-one", path: swapRootOne },
+        { label: "queued-two", path: swapRootTwo },
+      ],
+      randomIdBytes: ids(),
+    });
+    const swapInitial = await swapping.initialize();
+    const swapOldId = swapInitial.items.find(
+      (item) => item.name === "queued-authority",
+    ).id;
+    await writeFile(
+      swapPathTwo,
+      skill("queued-authority", "After"),
+    );
+    queuedSwap = {
+      path: await realpath(queuedPath),
+      moved: movedPath,
+    };
+    const swapAfter = await swapping.refresh();
+    assert.equal(queuedSwap, null);
+    assert.equal(swapAfter.truncated, false);
+    assert.deepEqual(swapAfter.limit_codes, []);
+    const swapNew = swapAfter.items.find(
+      (item) => item.name === "queued-authority",
+    );
+    assert.notEqual(swapNew.id, swapOldId);
+    assert.equal("replaces_id" in swapNew, false);
+    assert.deepEqual(
+      swapAfter.roots[0].diagnostics.map((item) => item.code),
+      ["AIR_CATALOG_DIRECTORY_UNREADABLE"],
+    );
+    assert.equal(JSON.stringify(swapAfter).includes(directory), false);
+
+    const liveRoot = join(directory, "valid-lineage", "live");
+    const livePath = join(liveRoot, "SKILL.md");
+    const neverPresent = join(directory, "valid-lineage", "default-missing");
+    await put(livePath, skill("valid-lineage", "Before"));
+    const valid = createSkillCatalog({
+      roots: [
+        { label: "default-missing", path: neverPresent },
+        { label: "live", path: liveRoot },
+      ],
+      randomIdBytes: ids(),
+    });
+    const validBefore = await valid.initialize();
+    await writeFile(livePath, skill("valid-lineage", "After"));
+    const validAfter = await valid.refresh();
+    assert.equal(validAfter.items[0].replaces_id, validBefore.items[0].id);
+  } finally {
+    fs.promises.lstat = originalLstat;
+    syncBuiltinESMExports();
+  }
+});
+
+test("artifact reads require a current catalog content identity after asynchronous work", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-artifact-cut-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const raceRoot = join(directory, "race");
+  const original = skill("generation-race", "Generation race");
+  const copyCount = 192;
+  for (let index = 0; index < copyCount; index += 1) {
+    await put(
+      join(raceRoot, String(index).padStart(3, "0"), "SKILL.md"),
+      original,
+    );
+  }
+  let rootsEnabled = true;
+  const raceCatalog = createSkillCatalog({
+    rootResolver: () => ({
+      roots: rootsEnabled ? [{ label: "race", path: raceRoot }] : [],
+      status: "ready",
+    }),
+    randomIdBytes: ids(),
+  });
+  const initial = await raceCatalog.initialize();
+  const oldId = initial.items[0].id;
+  for (let index = 0; index < copyCount - 1; index += 1) {
+    await writeFile(
+      join(raceRoot, String(index).padStart(3, "0"), "SKILL.md"),
+      Buffer.concat([original, Buffer.from(String(index))]),
+    );
+  }
+
+  const order = [];
+  const reading = raceCatalog.importAirArtifact(oldId).then(
+    () => {
+      order.push("read");
+      return { status: "fulfilled" };
+    },
+    (error) => {
+      order.push("read");
+      return { status: "rejected", code: error?.code };
+    },
+  );
+  rootsEnabled = false;
+  const refreshing = raceCatalog.refresh().then((snapshot) => {
+    order.push("refresh");
+    return snapshot;
+  });
+  const [readResult, removed] = await Promise.all([reading, refreshing]);
+  assert.deepEqual(order, ["refresh", "read"]);
+  assert.deepEqual(readResult, {
+    status: "rejected",
+    code: "AIR_CATALOG_ITEM_STALE",
+  });
+  assert.equal(removed.generation, 2);
+  assert.equal(removed.item_count, 0);
+  assert.throws(() => raceCatalog.getItem(oldId), {
+    code: "AIR_CATALOG_ITEM_STALE",
+  });
+
+  const controlRoot = join(directory, "control");
+  const controlBytes = skill("generation-control", "Generation control");
+  await put(join(controlRoot, "SKILL.md"), controlBytes);
+  let resolverFailure = false;
+  const controlCatalog = createSkillCatalog({
+    rootResolver: () => {
+      if (resolverFailure) throw new Error("private resolver failure");
+      return {
+        roots: [{ label: "control", path: controlRoot }],
+        status: "ready",
+      };
+    },
+    randomIdBytes: ids(),
+  });
+  const controlInitial = await controlCatalog.initialize();
+  const controlId = controlInitial.items[0].id;
+  const firstRefresh = controlCatalog.refresh();
+  const coalescedRefresh = controlCatalog.refresh();
+  assert.equal(firstRefresh, coalescedRefresh);
+  const unchanged = await firstRefresh;
+  assert.equal(unchanged.items[0].id, controlId);
+  assert.deepEqual(
+    (await controlCatalog.readArtifactSource(controlId)).bytes,
+    controlBytes,
+  );
+
+  resolverFailure = true;
+  await assert.rejects(controlCatalog.refresh(), {
+    code: "AIR_CATALOG_REFRESH_FAILED",
+  });
+  assert.equal(controlCatalog.getSnapshot(), unchanged);
+  assert.deepEqual(
+    (await controlCatalog.importAirArtifact(controlId)).body.source.bytes_base64,
+    controlBytes.toString("base64"),
+  );
 });
 
 test("retired Skill IDs are never rebound within one catalog registry lifetime", async (t) => {

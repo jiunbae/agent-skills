@@ -472,6 +472,7 @@ async function authoritativePluginRoots({
 
   let scannedEntries = cacheEntries.length;
   const authorities = new Map();
+  let markerPartial = false;
   for (const [key, state] of states) {
     if (state !== "enabled") continue;
     const authority = parsePluginAuthorityName(key);
@@ -530,6 +531,8 @@ async function authoritativePluginRoots({
           plugin: pluginEntry.name,
           marketplace: marketplaceEntry.name,
         }));
+      } else if (marker !== undefined) {
+        markerPartial = true;
       }
       if (authorities.size > limits.maxAuthorities) {
         return { roots: [], exceeded: true };
@@ -609,7 +612,7 @@ async function authoritativePluginRoots({
   return {
     roots,
     exceeded: false,
-    partial: roots.length < authorities.size,
+    partial: markerPartial || roots.length < authorities.size,
   };
 }
 
@@ -1158,7 +1161,15 @@ async function walkRoot(root, allRoots, state) {
     let entries;
     try {
       info = await beforeDeadline(lstat(current.path), state);
-      if (!info.isDirectory() || info.isSymbolicLink()) continue;
+      if (!info.isDirectory() || info.isSymbolicLink()) {
+        state.authorityComplete = false;
+        rootDiagnostic(
+          root.rootState,
+          "AIR_CATALOG_DIRECTORY_UNREADABLE",
+          "A Skill directory could not be inspected.",
+        );
+        continue;
+      }
       const identity = statsIdentity(info);
       if (visited.has(identity)) continue;
       visited.add(identity);
@@ -1334,6 +1345,17 @@ function groupRecords(records) {
 
 function privateSourceAuthorities(records) {
   return new Set(records.map((record) => record.path));
+}
+
+function priorAuthoritiesRemainCovered(priorItems, roots) {
+  for (const item of priorItems.values()) {
+    for (const authority of item.authorities) {
+      if (!roots.some((root) => isContained(root.physical, authority))) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function applyAdjacentReplacements({
@@ -1515,6 +1537,9 @@ async function scanCatalog({
   };
   const normalized = roots.map(normalizeRoot);
   const availableRoots = await canonicalRoots(normalized, state);
+  if (!priorAuthoritiesRemainCovered(priorItems, availableRoots)) {
+    state.authorityComplete = false;
+  }
   for (const root of availableRoots) {
     if (!canContinue(state)) break;
     await walkRoot(root, availableRoots, state);
@@ -1656,6 +1681,30 @@ class SkillCatalog {
     return this.#snapshot;
   }
 
+  #currentItem(id) {
+    if (typeof id !== "string") {
+      throw catalogError("AIR_CATALOG_ITEM_NOT_FOUND", "Skill ID was not found.");
+    }
+    const item = this.#items.get(id);
+    if (item) return item;
+    if (this.#tombstones.has(id)) {
+      throw catalogError(
+        "AIR_CATALOG_ITEM_STALE",
+        "Skill ID belongs to the previous catalog generation.",
+      );
+    }
+    throw catalogError("AIR_CATALOG_ITEM_NOT_FOUND", "Skill ID was not found.");
+  }
+
+  #assertCurrentItem(id, expectedHash) {
+    const current = this.#items.get(id);
+    if (current?.hash === expectedHash) return current;
+    throw catalogError(
+      "AIR_CATALOG_ITEM_STALE",
+      "Skill ID left the current catalog generation.",
+    );
+  }
+
   #nextOpaqueIdSequence() {
     if (this.#opaqueIdSequence >= MAX_OPAQUE_ID_SEQUENCE) {
       throw catalogError(
@@ -1749,36 +1798,22 @@ class SkillCatalog {
   }
 
   getItem(id) {
-    if (typeof id !== "string") {
-      throw catalogError("AIR_CATALOG_ITEM_NOT_FOUND", "Skill ID was not found.");
-    }
-    const item = this.#items.get(id);
-    if (item) return item.publicItem;
-    if (this.#tombstones.has(id)) {
-      throw catalogError(
-        "AIR_CATALOG_ITEM_STALE",
-        "Skill ID belongs to the previous catalog generation.",
-      );
-    }
-    throw catalogError("AIR_CATALOG_ITEM_NOT_FOUND", "Skill ID was not found.");
+    return this.#currentItem(id).publicItem;
   }
 
-  async readArtifactSource(id) {
-    const item = this.#items.get(id);
-    if (!item) {
-      this.getItem(id);
-      throw catalogError("AIR_CATALOG_ITEM_NOT_FOUND", "Skill ID was not found.");
-    }
+  async #readArtifactSource(id, item) {
     for (const source of item.records) {
+      let bytes;
       try {
-        const bytes = await rereadSource(source, item.hash, this.#limits);
-        return Object.freeze({
-          bytes,
-          sourcePath: `air-catalog/${id}/SKILL.md`,
-        });
-      } catch (error) {
-        if (error?.code !== "AIR_CATALOG_ITEM_STALE") continue;
+        bytes = await rereadSource(source, item.hash, this.#limits);
+      } catch {
+        continue;
       }
+      this.#assertCurrentItem(id, item.hash);
+      return Object.freeze({
+        bytes,
+        sourcePath: `air-catalog/${id}/SKILL.md`,
+      });
     }
     throw catalogError(
       "AIR_CATALOG_ITEM_STALE",
@@ -1786,15 +1821,29 @@ class SkillCatalog {
     );
   }
 
+  async readArtifactSource(id) {
+    const item = this.#currentItem(id);
+    return this.#readArtifactSource(id, item);
+  }
+
   async importArtifact(id) {
-    return airToLegacy(await this.importAirArtifact(id));
+    const item = this.#currentItem(id);
+    const source = await this.#readArtifactSource(id, item);
+    const artifact = airToLegacy(importSkillBytesAsAir(source.bytes, {
+      sourcePath: source.sourcePath,
+    }));
+    this.#assertCurrentItem(id, item.hash);
+    return artifact;
   }
 
   async importAirArtifact(id) {
-    const source = await this.readArtifactSource(id);
-    return importSkillBytesAsAir(source.bytes, {
+    const item = this.#currentItem(id);
+    const source = await this.#readArtifactSource(id, item);
+    const artifact = importSkillBytesAsAir(source.bytes, {
       sourcePath: source.sourcePath,
     });
+    this.#assertCurrentItem(id, item.hash);
+    return artifact;
   }
 }
 

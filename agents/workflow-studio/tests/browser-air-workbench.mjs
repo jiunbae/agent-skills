@@ -443,10 +443,12 @@ async function fixtures({ bounded = false } = {}) {
     },
   };
   const controls = {
-    setSkillCatalog(items, generation) {
+    setSkillCatalog(items, generation, { truncated = false, roots } = {}) {
       catalogSnapshot = {
         ...catalogSnapshot,
         generation,
+        truncated,
+        ...(roots === undefined ? {} : { roots }),
         item_count: items.length,
         items,
       };
@@ -1552,6 +1554,159 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       await pseudoFenceStudio.close();
     }
 
+    const initialCatalogItems = [
+      skillItem(SKILL_A, "a".repeat(64), "repository"),
+      skillItem(SKILL_B, "b".repeat(64), "user"),
+      skillItem(SKILL_C, "c".repeat(64), "enabled-plugin"),
+    ];
+    controls.setSkillCatalog(initialCatalogItems, 20, {
+      truncated: false,
+      roots: [],
+    });
+    const retainedCatalogPage = await context.newPage();
+    try {
+      await retainedCatalogPage.goto(baseUrl, {
+        waitUntil: "domcontentloaded",
+      });
+      await retainedCatalogPage.locator(".react-flow.air-flow-ready")
+        .waitFor({ state: "visible" });
+      const visibleSkillRows = () => retainedCatalogPage.locator(
+        '.resource-tree .resource-row[data-resource-key^="skill:"]',
+      );
+      const retainedRow = (id) => retainedCatalogPage.locator(
+        `.resource-row[data-resource-key="skill:${id}"]`,
+      );
+      assert.equal(await visibleSkillRows().count(), 3);
+
+      await retainedCatalogPage.route(skillsPattern, async (route) => {
+        if (
+          new URL(route.request().url()).searchParams.get("refresh") === "1"
+        ) {
+          await route.fulfill({
+            status: 503,
+            contentType: "application/problem+json",
+            body: JSON.stringify({
+              type: "about:blank",
+              title: "Synthetic refresh failure",
+              status: 503,
+            }),
+          });
+          return;
+        }
+        await route.continue();
+      });
+      await retainedCatalogPage.locator("#refreshResources").click();
+      await retainedCatalogPage.waitForFunction(
+        () => document.querySelector("#resourceStatus")?.textContent
+          ?.includes("Partial discovery: Skills catalog failed"),
+      );
+      assert.equal(await visibleSkillRows().count(), 3);
+      assert.doesNotMatch(
+        (await retainedRow(SKILL_A).textContent()) ?? "",
+        /removed/u,
+      );
+      await retainedCatalogPage.unroute(skillsPattern);
+
+      controls.setSkillCatalog([
+        {
+          ...skillItem(SKILL_A6, "1".repeat(64), "repository"),
+          replaces_id: SKILL_A,
+        },
+      ], 21, { truncated: true, roots: [] });
+      await retainedCatalogPage.locator("#refreshResources").click();
+      await retainedCatalogPage.waitForFunction(
+        () =>
+          document.querySelectorAll(
+            '.resource-tree .resource-row[data-resource-key^="skill:"]',
+          ).length === 4 &&
+          document.querySelector("#resourceStatus")?.textContent
+            ?.includes("partial catalog"),
+      );
+      for (const id of [SKILL_A, SKILL_B, SKILL_C, SKILL_A6]) {
+        assert.equal(await retainedRow(id).count(), 1);
+      }
+      assert.doesNotMatch(
+        (await retainedRow(SKILL_A).textContent()) ?? "",
+        /removed/u,
+      );
+
+      controls.setSkillCatalog([
+        {
+          ...skillItem(SKILL_A7, "2".repeat(64), "repository"),
+          replaces_id: SKILL_A,
+        },
+      ], 22, {
+        truncated: false,
+        roots: [{
+          source_label: "unreadable-source",
+          source_kind: "repository",
+          status: "unreadable",
+          record_count: 0,
+          diagnostics: [],
+          omitted_diagnostic_count: 0,
+        }],
+      });
+      await retainedCatalogPage.locator("#refreshResources").click();
+      await retainedCatalogPage.waitForFunction(
+        () =>
+          document.querySelectorAll(
+            '.resource-tree .resource-row[data-resource-key^="skill:"]',
+          ).length === 5 &&
+          document.querySelector("#resourceStatus")?.textContent
+            ?.includes("partial catalog"),
+      );
+      for (const id of [
+        SKILL_A,
+        SKILL_B,
+        SKILL_C,
+        SKILL_A6,
+        SKILL_A7,
+      ]) {
+        assert.equal(await retainedRow(id).count(), 1);
+      }
+      assert.doesNotMatch(
+        (await retainedRow(SKILL_A).textContent()) ?? "",
+        /removed/u,
+      );
+
+      controls.setSkillCatalog([
+        skillItem(SKILL_B, "b".repeat(64), "user"),
+      ], 23, { truncated: false, roots: [] });
+      await retainedCatalogPage.locator("#refreshResources").click();
+      await retainedCatalogPage.waitForFunction(
+        (key) =>
+          document.querySelectorAll(
+            '.resource-tree .resource-row[data-resource-key^="skill:"]',
+          ).length === 2 &&
+          document.querySelector(
+            `.resource-row[data-resource-key="${key}"]`,
+          )?.textContent?.includes("removed"),
+        `skill:${SKILL_A}`,
+      );
+      assert.equal(await retainedRow(SKILL_B).count(), 1);
+      assert.equal(await retainedRow(SKILL_C).count(), 0);
+      assert.equal(await retainedRow(SKILL_A6).count(), 0);
+      assert.equal(await retainedRow(SKILL_A7).count(), 0);
+
+      controls.setSkillCatalog(initialCatalogItems, 24, {
+        truncated: false,
+        roots: [],
+      });
+      await retainedCatalogPage.locator("#refreshResources").click();
+      await retainedCatalogPage.waitForFunction(
+        () =>
+          document.querySelectorAll(
+            '.resource-tree .resource-row[data-resource-key^="skill:"]',
+          ).length === 3,
+      );
+      assert.doesNotMatch(
+        (await retainedRow(SKILL_A).textContent()) ?? "",
+        /removed/u,
+      );
+    } finally {
+      await retainedCatalogPage.close();
+    }
+
     const skillSource = await readFile(BACKGROUND_IMPLEMENTER, "utf8");
     const changedSkill = (title, sourcePath) => importSkillBytes(
       Buffer.from(
@@ -1568,6 +1723,259 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       skillItem(SKILL_B, "b".repeat(64), "user"),
       skillItem(SKILL_C, "c".repeat(64), "enabled-plugin"),
     ];
+
+    controls.setSkillCatalog(initialCatalogItems, 30, {
+      truncated: false,
+      roots: [],
+    });
+    const refreshFirstPage = await context.newPage();
+    try {
+      await refreshFirstPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+      await refreshFirstPage.locator(".react-flow.air-flow-ready")
+        .waitFor({ state: "visible" });
+      const refreshFirstRow = (id) => refreshFirstPage.locator(
+        `.resource-row[data-resource-key="skill:${id}"]`,
+      );
+      const secondGeneration = changedSkill(
+        "Decompose the refresh-first B task DAG",
+        "synthetic-refresh-first-v2/SKILL.md",
+      );
+      const thirdGeneration = changedSkill(
+        "Decompose the refresh-first C task DAG",
+        "synthetic-refresh-first-v3/SKILL.md",
+      );
+      controls.setSkillArtifact(SKILL_A2, secondGeneration);
+      controls.setSkillArtifact(SKILL_A3, thirdGeneration);
+      controls.setSkillCatalog(
+        catalogItems(SKILL_A2, "c", SKILL_A),
+        31,
+      );
+      await refreshFirstPage.locator("#refreshResources").click();
+      await refreshFirstPage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("changed"),
+        `skill:${SKILL_A2}`,
+      );
+      assert.equal(
+        await refreshFirstRow(SKILL_A2).getAttribute("aria-current"),
+        "true",
+      );
+
+      await refreshFirstPage.locator("#nodeTitle")
+        .fill("Keep the refresh-first dirty B to C state");
+      await refreshFirstPage.locator("#tabPlan").click();
+      await refreshFirstPage.locator("#planCwd").fill(REPOSITORY_ROOT);
+      await refreshFirstPage.locator("#planPrompt")
+        .fill("Review the refresh-first B to C state.");
+      await refreshFirstPage.locator("#approvePlan").click();
+      await refreshFirstPage.waitForFunction(
+        () => !document.querySelector("#downloadPlan")?.disabled,
+      );
+      await refreshFirstPage.locator("#tabGraph").click();
+      await refreshFirstPage.locator("#openDiff").click();
+      await refreshFirstPage.locator("#reviewDrawer")
+        .waitFor({ state: "visible" });
+      assert.equal(await refreshFirstPage.locator("#undoEdit").isEnabled(), true);
+      assert.equal(
+        await refreshFirstPage.locator(".react-flow__node.selected").count(),
+        1,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#tabGraph")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#openDiff")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#reviewDiffTab")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadPlan").isEnabled(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadIr").isEnabled(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadMarkdown").isEnabled(),
+        true,
+      );
+
+      let releaseRefresh;
+      const refreshGate = new Promise((resolveGate) => {
+        releaseRefresh = resolveGate;
+      });
+      let markRefreshRequested;
+      const refreshRequested = new Promise((resolveRequest) => {
+        markRefreshRequested = resolveRequest;
+      });
+      let heldRefresh = false;
+      await refreshFirstPage.route(skillsPattern, async (route) => {
+        if (
+          !heldRefresh &&
+          new URL(route.request().url()).searchParams.get("refresh") === "1"
+        ) {
+          heldRefresh = true;
+          markRefreshRequested();
+          await refreshGate;
+        }
+        await route.continue();
+      });
+
+      let releaseSecondGeneration;
+      const secondGenerationGate = new Promise((resolveGate) => {
+        releaseSecondGeneration = resolveGate;
+      });
+      let markSecondGenerationRequested;
+      const secondGenerationRequested = new Promise((resolveRequest) => {
+        markSecondGenerationRequested = resolveRequest;
+      });
+      const secondGenerationPattern =
+        `**/air/v1/skills/${SKILL_A2}/artifact*`;
+      await refreshFirstPage.route(
+        secondGenerationPattern,
+        async (route) => {
+          markSecondGenerationRequested();
+          await secondGenerationGate;
+          await route.continue();
+        },
+      );
+
+      controls.setSkillCatalog(
+        catalogItems(SKILL_A3, "d", SKILL_A2),
+        32,
+      );
+      await refreshFirstPage.locator("#refreshResources").click();
+      await refreshRequested;
+      await refreshFirstRow(SKILL_A2).click();
+      await refreshFirstPage.locator("#staleSkillDialog")
+        .waitFor({ state: "visible" });
+      await refreshFirstPage.locator("#reloadStaleSkill").click();
+      await secondGenerationRequested;
+
+      releaseRefresh();
+      await refreshFirstPage.waitForFunction(
+        (key) => document.querySelector(
+          `.resource-row[data-resource-key="${key}"]`,
+        )?.textContent?.includes("changed"),
+        `skill:${SKILL_A3}`,
+      );
+      assert.equal(await refreshFirstRow(SKILL_A2).count(), 0);
+      assert.equal(
+        await refreshFirstRow(SKILL_A3).getAttribute("aria-current"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#nodeTitle").inputValue(),
+        "Keep the refresh-first dirty B to C state",
+      );
+      assert.equal(await refreshFirstPage.locator("#undoEdit").isEnabled(), true);
+      assert.equal(
+        await refreshFirstPage.locator(".react-flow__node.selected").count(),
+        1,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#tabGraph")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#openDiff")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#reviewDrawer").isVisible(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#reviewDiffTab")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadPlan").isEnabled(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadIr").isEnabled(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadMarkdown").isEnabled(),
+        true,
+      );
+      await refreshFirstPage.waitForFunction(
+        (key) => document.activeElement?.dataset?.resourceKey === key,
+        `skill:${SKILL_A3}`,
+      );
+
+      const lateSecondGeneration = refreshFirstPage.waitForResponse(
+        (response) =>
+          response.url().includes(
+            `/air/v1/skills/${SKILL_A2}/artifact`,
+          ),
+      );
+      releaseSecondGeneration();
+      await lateSecondGeneration;
+      await refreshFirstPage.waitForTimeout(100);
+      assert.equal(
+        await refreshFirstPage.locator("#nodeTitle").inputValue(),
+        "Keep the refresh-first dirty B to C state",
+      );
+      assert.equal(await refreshFirstPage.locator("#undoEdit").isEnabled(), true);
+      assert.equal(
+        await refreshFirstRow(SKILL_A3).getAttribute("aria-current"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.evaluate(
+          () => document.activeElement?.dataset?.resourceKey,
+        ),
+        `skill:${SKILL_A3}`,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#openDiff")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#reviewDrawer").isVisible(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#reviewDiffTab")
+          .getAttribute("aria-selected"),
+        "true",
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadPlan").isEnabled(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadIr").isEnabled(),
+        true,
+      );
+      assert.equal(
+        await refreshFirstPage.locator("#downloadMarkdown").isEnabled(),
+        true,
+      );
+    } finally {
+      await refreshFirstPage.close();
+    }
+
+    controls.setSkillCatalog(initialCatalogItems, 33, {
+      truncated: false,
+      roots: [],
+    });
     const stalePage = await context.newPage();
     try {
       await stalePage.goto(baseUrl, { waitUntil: "domcontentloaded" });

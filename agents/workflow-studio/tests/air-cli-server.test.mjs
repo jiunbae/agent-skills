@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -730,6 +737,134 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
   });
   assert.equal(integrityHead.status, 422);
   assert.equal(integrityHead.body.byteLength, 0);
+});
+
+test("AIR catalog refresh omits lineage when a prior root is transiently missing", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-server-lineage-root-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rootOne = join(directory, "one");
+  const rootTwo = join(directory, "two");
+  const pathOne = join(rootOne, "copy", "SKILL.md");
+  const pathTwo = join(rootTwo, "copy", "SKILL.md");
+  await put(pathOne, SKILL);
+  await put(pathTwo, SKILL);
+  const catalog = createSkillCatalog({
+    roots: [
+      { label: "http-one", path: rootOne },
+      { label: "http-two", path: rootTwo },
+    ],
+  });
+  const initial = await catalog.initialize();
+  const oldId = initial.items[0].id;
+  const studio = createStudioServer({
+    artifact: importSkillBytes(SKILL, { sourcePath: "bootstrap/SKILL.md" }),
+    assetsDir: ASSETS,
+    schemasDir: SCHEMAS,
+    catalog,
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+
+  await rename(rootOne, join(directory, "one-unmounted"));
+  const changed = Buffer.concat([
+    SKILL,
+    Buffer.from("\n### Step 2: Report\nReport safely.\n", "utf8"),
+  ]);
+  await writeFile(pathTwo, changed);
+  const response = await http(
+    address,
+    `/air/v1/skills?refresh=1&token=${encodeURIComponent(studio.token)}`,
+  );
+  assert.equal(response.status, 200);
+  const refreshed = JSON.parse(response.body);
+  assert.equal(refreshed.generation, 2);
+  assert.deepEqual(
+    refreshed.roots.map((root) => [root.source_label, root.status]),
+    [["http-one", "missing"], ["http-two", "ready"]],
+  );
+  assert.equal(refreshed.item_count, 1);
+  assert.notEqual(refreshed.items[0].id, oldId);
+  assert.equal("replaces_id" in refreshed.items[0], false);
+  assert.equal(response.body.includes(Buffer.from(directory)), false);
+  assert.equal(response.body.includes(changed), false);
+});
+
+test("AIR Skill artifact publication rejects an ID removed after asynchronous import", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-server-artifact-cut-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await put(join(directory, "installed", "SKILL.md"), SKILL);
+  let rootsEnabled = true;
+  const catalog = createSkillCatalog({
+    rootResolver: () => ({
+      roots: rootsEnabled
+        ? [{ path: directory, label: "synthetic", kind: "explicit" }]
+        : [],
+      status: "ready",
+    }),
+  });
+  const initial = await catalog.initialize();
+  const oldId = initial.items[0].id;
+  let markImportReady;
+  const importReady = new Promise((resolvePromise) => {
+    markImportReady = resolvePromise;
+  });
+  let releasePublication;
+  const publicationGate = new Promise((resolvePromise) => {
+    releasePublication = resolvePromise;
+  });
+  const publicationCatalog = {
+    getSnapshot() {
+      return catalog.getSnapshot();
+    },
+    getItem(id) {
+      return catalog.getItem(id);
+    },
+    async importAirArtifact(id) {
+      const air = await catalog.importAirArtifact(id);
+      markImportReady();
+      await publicationGate;
+      return air;
+    },
+  };
+  const studio = createStudioServer({
+    artifact: importSkillBytes(SKILL, { sourcePath: "bootstrap/SKILL.md" }),
+    assetsDir: ASSETS,
+    schemasDir: SCHEMAS,
+    catalog: publicationCatalog,
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await studio.listen();
+  t.after(() => studio.close());
+
+  const order = [];
+  const responsePromise = http(
+    address,
+    `/air/v1/skills/${oldId}/artifact?token=` +
+      encodeURIComponent(studio.token),
+  ).then((response) => {
+    order.push("response");
+    return response;
+  });
+  await importReady;
+  rootsEnabled = false;
+  const removed = await catalog.refresh();
+  order.push("refresh");
+  assert.equal(removed.generation, 2);
+  assert.equal(removed.item_count, 0);
+  assert.throws(() => catalog.getItem(oldId), {
+    code: "AIR_CATALOG_ITEM_STALE",
+  });
+  releasePublication();
+  const response = await responsePromise;
+  assert.deepEqual(order, ["refresh", "response"]);
+  assert.equal(response.status, 409);
+  assert.equal(
+    JSON.parse(response.body.toString("utf8")).code,
+    "AIR_CATALOG_ITEM_CHANGED",
+  );
 });
 
 test("AIR Skill artifact GET and HEAD preserve only allowlisted safe codes", async (t) => {

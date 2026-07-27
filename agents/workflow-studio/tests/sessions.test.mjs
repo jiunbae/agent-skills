@@ -1199,6 +1199,59 @@ test("snapshot rechecks newly accepted bytes after old high-water reconciliation
   assert.equal(JSON.stringify({ first, changed, reset }).includes(dirs.root), false);
 });
 
+test("snapshot authorizes before its final same-length content cut", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "final-authorized-cut.jsonl");
+  const initial = Buffer.concat([
+    fixedRecord("session_meta", 0),
+    fixedRecord("event_msg", 1),
+  ]);
+  await writeFile(source, initial);
+  let armed = false;
+  let rewrites = 0;
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+    async publicationCheckpoint() {
+      if (!armed) return;
+      rewrites += 1;
+      const writer = await open(source, "r+");
+      try {
+        await writer.write(
+          fixedRecord("response_item", 0),
+          0,
+          initial.subarray(0, 128).byteLength,
+          0,
+        );
+        await writer.sync();
+      } finally {
+        await writer.close();
+      }
+    },
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  const input = {
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  };
+  const first = await registry.snapshot(input);
+  armed = true;
+
+  const changed = await registry.snapshot({
+    ...input,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(rewrites, 1);
+  assert.deepEqual(changed, {
+    snapshot_id: null,
+    session_id: input.sessionId,
+    generation: input.generation,
+    source_changed: true,
+    artifact: null,
+  });
+  assert.equal(JSON.stringify(changed).includes(dirs.root), false);
+});
+
 test("snapshot rejects a catalog refresh committed at the final publication cut", async (t) => {
   const dirs = await fixture(t);
   await writeFile(
@@ -1448,6 +1501,127 @@ test("catalog count limit is explicit and never discloses omitted locators", asy
   );
   assert.equal(JSON.stringify(catalog).includes(SENTINEL), false);
   assert.equal(JSON.stringify(catalog).includes(dirs.root), false);
+});
+
+test("session catalog byte ceiling is exact and failed refreshes retain authority", async (t) => {
+  const dirs = await fixture(t);
+  const emptyProbe = createSessionRegistry({
+    roots: [],
+    randomBytes: deterministicRandom(),
+  });
+  const empty = await emptyProbe.catalog({ refresh: true });
+  const emptyBytes = Buffer.byteLength(JSON.stringify(empty), "utf8");
+
+  const exact = createSessionRegistry({
+    roots: [],
+    limits: { ...SESSION_LIMITS, maxCatalogBytes: emptyBytes },
+    randomBytes: deterministicRandom(),
+  });
+  const exactCatalog = await exact.catalog({ refresh: true });
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(exactCatalog), "utf8"),
+    emptyBytes,
+  );
+
+  const oneOver = createSessionRegistry({
+    roots: [],
+    limits: { ...SESSION_LIMITS, maxCatalogBytes: emptyBytes - 1 },
+    randomBytes: deterministicRandom(),
+  });
+  const noInitialPublication = await oneOver.catalog();
+  await assert.rejects(
+    oneOver.catalog({ refresh: true }),
+    { code: "AIR_SESSION_LIMIT" },
+  );
+  assert.deepEqual(await oneOver.catalog(), noInitialPublication);
+
+  const source = join(dirs.codex, "retained.jsonl");
+  const auxiliary = join(dirs.root, "auxiliary");
+  await Promise.all([
+    writeFile(source, fixedRecord("session_meta", 0)),
+    mkdir(auxiliary),
+  ]);
+  const roots = [
+    { path: dirs.codex, provider: "codex" },
+    { path: auxiliary, provider: "codex" },
+  ];
+  let probeTimeLimited = false;
+  let probeClock = 0;
+  const sizeProbe = createSessionRegistry({
+    roots,
+    limits: { ...SESSION_LIMITS, maxDurationMs: 1 },
+    randomBytes: deterministicRandom(),
+    now() {
+      return probeTimeLimited ? probeClock++ * 10 : 0;
+    },
+  });
+  const readyProbe = await sizeProbe.catalog({ refresh: true });
+  const retainedLimit = Buffer.byteLength(
+    JSON.stringify(readyProbe),
+    "utf8",
+  );
+  probeTimeLimited = true;
+  await rm(auxiliary, { recursive: true });
+  const partialProbe = await sizeProbe.catalog({ refresh: true });
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(partialProbe), "utf8") >
+      retainedLimit,
+  );
+  await mkdir(auxiliary);
+
+  let retainedTimeLimited = false;
+  let retainedClock = 0;
+  const retained = createSessionRegistry({
+    roots,
+    limits: {
+      ...SESSION_LIMITS,
+      maxCatalogBytes: retainedLimit,
+      maxDurationMs: 1,
+    },
+    randomBytes: deterministicRandom(),
+    now() {
+      return retainedTimeLimited ? retainedClock++ * 10 : 0;
+    },
+  });
+  const before = await retained.catalog({ refresh: true });
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(before), "utf8"),
+    retainedLimit,
+  );
+  const first = await retained.snapshot({
+    sessionId: before.items[0].id,
+    generation: before.generation,
+  });
+  retainedTimeLimited = true;
+  await rm(auxiliary, { recursive: true });
+  await assert.rejects(
+    retained.catalog({ refresh: true }),
+    { code: "AIR_SESSION_LIMIT" },
+  );
+  assert.deepEqual(await retained.catalog(), before);
+
+  await Promise.all([
+    mkdir(auxiliary),
+    appendFile(source, fixedRecord("event_msg", 1)),
+  ]);
+  retainedTimeLimited = false;
+  const recovered = await retained.catalog({ refresh: true });
+  assert.equal(recovered.generation, before.generation + 1);
+  assert.equal(recovered.items[0].id, before.items[0].id);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(recovered), "utf8") <= retainedLimit,
+  );
+  const continued = await retained.snapshot({
+    sessionId: recovered.items[0].id,
+    generation: recovered.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(continued.source_changed, false);
+  assert.equal(continued.artifact.body.events.length, 2);
+  assert.equal(
+    JSON.stringify({ before, recovered, continued }).includes(dirs.root),
+    false,
+  );
 });
 
 test("hard-linked overlapping roots retain unique collision-safe authority", async (t) => {
