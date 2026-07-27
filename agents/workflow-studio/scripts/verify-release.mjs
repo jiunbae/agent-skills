@@ -53,7 +53,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "air-cli-server.test.mjs": 10,
   "air-spec.test.mjs": 2,
   "air.test.mjs": 18,
-  "catalog.test.mjs": 12,
+  "catalog.test.mjs": 13,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
   "editor.test.mjs": 46,

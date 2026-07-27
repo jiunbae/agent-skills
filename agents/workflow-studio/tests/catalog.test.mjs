@@ -673,6 +673,55 @@ test("refresh coalesces, preserves stable IDs, uses duplicates after races, and 
   assert.equal("replaces_id" in converged.items[0], false);
 });
 
+test("retired Skill IDs are never rebound within one catalog registry lifetime", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-retired-id-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "skills");
+  const oldPath = join(root, "old", "SKILL.md");
+  await put(oldPath, skill("old-skill", "Old Skill"));
+  let entropyCalls = 0;
+  const catalog = createSkillCatalog({
+    roots: [{ label: "retired-id", path: root }],
+    randomIdBytes: () => {
+      entropyCalls += 1;
+      return Buffer.alloc(16, 7);
+    },
+  });
+
+  const first = await catalog.initialize();
+  const oldId = first.items[0].id;
+  const issuedIds = new Set([oldId]);
+  assert.match(oldId, /^skill_[A-Za-z0-9_-]{22}$/u);
+  await rm(dirname(oldPath), { recursive: true });
+  const removed = await catalog.refresh();
+  assert.equal(removed.item_count, 0);
+  assert.throws(() => catalog.getItem(oldId), {
+    code: "AIR_CATALOG_ITEM_STALE",
+  });
+
+  for (let generation = 0; generation < 20; generation += 1) {
+    const currentPath = join(root, `new-${generation}`, "SKILL.md");
+    await put(
+      currentPath,
+      skill(`new-skill-${generation}`, `Unrelated Skill ${generation}`),
+    );
+    const replacement = await catalog.refresh();
+    assert.equal(replacement.item_count, 1);
+    const replacementId = replacement.items[0].id;
+    assert.match(replacementId, /^skill_[A-Za-z0-9_-]{22}$/u);
+    assert.equal(issuedIds.has(replacementId), false);
+    issuedIds.add(replacementId);
+    assert.equal("replaces_id" in replacement.items[0], false);
+    await rm(dirname(currentPath), { recursive: true });
+    await catalog.refresh();
+  }
+  assert.equal(issuedIds.size, 21);
+  assert.equal(entropyCalls, 1);
+  assert.throws(() => catalog.getItem(oldId), {
+    code: "AIR_CATALOG_ITEM_NOT_FOUND",
+  });
+});
+
 test("bounded partial scans publish typed limits and failed refresh retains the atomic generation", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "air-bounds-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -689,17 +738,20 @@ test("bounded partial scans publish typed limits and failed refresh retains the 
   assert.ok(partial.limit_codes.includes("AIR_CATALOG_CANDIDATE_LIMIT"));
   assert.equal(partial.item_count, 1);
 
-  let allocations = 0;
+  let resolverFailure = false;
   const failing = createSkillCatalog({
-    roots: [{ label: "atomic", path: root }],
-    randomIdBytes(size) {
-      allocations += 1;
-      if (allocations > 2) throw new Error("private random failure");
-      return Buffer.alloc(size, allocations);
+    rootResolver() {
+      if (resolverFailure) throw new Error("private resolver failure");
+      return {
+        roots: [{ label: "atomic", path: root }],
+        status: "ready",
+      };
     },
+    randomIdBytes: ids(),
   });
   const stable = await failing.initialize();
   await writeFile(join(root, "a", "SKILL.md"), skill("one", "Changed One"));
+  resolverFailure = true;
   await assert.rejects(failing.refresh(), {
     code: "AIR_CATALOG_REFRESH_FAILED",
     message: /previous generation was retained/u,
@@ -707,7 +759,7 @@ test("bounded partial scans publish typed limits and failed refresh retains the 
   assert.equal(failing.getSnapshot(), stable);
   assert.doesNotMatch(
     JSON.stringify(failing.getSnapshot()),
-    /private random failure/u,
+    /private resolver failure/u,
   );
 
   const aliases = join(directory, "aliases");

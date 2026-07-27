@@ -6,7 +6,11 @@ import {
   readdir,
   stat,
 } from "node:fs/promises";
-import { createHash, randomBytes as secureRandomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createHash,
+  randomBytes as secureRandomBytes,
+} from "node:crypto";
 import { homedir } from "node:os";
 import {
   basename,
@@ -73,6 +77,8 @@ const VALID_PLUGIN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const REMOTE_PLUGIN_MARKER = ".codex-remote-plugin-install.json";
 const UTF8_FATAL = new TextDecoder("utf-8", { fatal: true });
 const O_NOFOLLOW = FS_CONSTANTS.O_NOFOLLOW ?? 0;
+const MAX_OPAQUE_ID_SEQUENCE = (1n << 128n) - 1n;
+const OPAQUE_ID_LOW_MASK = (1n << 64n) - 1n;
 
 function catalogError(code, message, details) {
   const error = new Error(message);
@@ -1388,28 +1394,22 @@ function applyAdjacentReplacements({
   }
 }
 
-function randomOpaqueId(randomIdBytes, used) {
-  for (let attempts = 0; attempts < 32; attempts += 1) {
-    const bytes = randomIdBytes(16);
-    if (!Buffer.isBuffer(bytes) && !(bytes instanceof Uint8Array)) {
-      throw catalogError(
-        "AIR_CATALOG_RANDOM_FAILED",
-        "Opaque ID generator did not return bytes.",
-      );
-    }
-    if (bytes.byteLength !== 16) {
-      throw catalogError(
-        "AIR_CATALOG_RANDOM_FAILED",
-        "Opaque ID generator must return exactly 16 bytes.",
-      );
-    }
-    const id = `skill_${Buffer.from(bytes).toString("base64url")}`;
-    if (!used.has(id)) return id;
+function opaqueIdForSequence(key, sequence, used) {
+  const block = Buffer.alloc(16);
+  block.writeBigUInt64BE(sequence >> 64n, 0);
+  block.writeBigUInt64BE(sequence & OPAQUE_ID_LOW_MASK, 8);
+  // One fixed-width block: AES supplies a keyed permutation, not encryption.
+  const cipher = createCipheriv("aes-128-ecb", key, null);
+  cipher.setAutoPadding(false);
+  const opaqueBytes = Buffer.concat([cipher.update(block), cipher.final()]);
+  const id = `skill_${opaqueBytes.toString("base64url")}`;
+  if (used.has(id)) {
+    throw catalogError(
+      "AIR_CATALOG_RANDOM_FAILED",
+      "Opaque Skill ID permutation produced a duplicate.",
+    );
   }
-  throw catalogError(
-    "AIR_CATALOG_RANDOM_FAILED",
-    "Could not allocate a unique opaque Skill ID.",
-  );
+  return id;
 }
 
 function publicRootState(root) {
@@ -1423,13 +1423,13 @@ function publicRootState(root) {
   });
 }
 
-function buildItems(state, priorIds, randomIdBytes) {
+function buildItems(state, priorIds, allocateOpaqueId) {
   const groups = groupRecords(state.records);
   const usedIds = new Set(priorIds.values());
   const internals = new Map();
   const preliminary = [];
   for (const [hash, records] of groups) {
-    const id = priorIds.get(hash) ?? randomOpaqueId(randomIdBytes, usedIds);
+    const id = priorIds.get(hash) ?? allocateOpaqueId(usedIds);
     usedIds.add(id);
     const metadata = parseMetadata(records[0].bytes, state.limits);
     const imported = importSummary(records[0].bytes, id);
@@ -1485,7 +1485,7 @@ async function scanCatalog({
   priorIds,
   priorItems,
   priorAuthorityComplete,
-  randomIdBytes,
+  allocateOpaqueId,
   generation,
   pluginStatus = "ready",
 }) {
@@ -1520,7 +1520,11 @@ async function scanCatalog({
     await walkRoot(root, availableRoots, state);
     if (state.records.length >= limits.maxRecords) break;
   }
-  const { items, internals } = buildItems(state, priorIds, randomIdBytes);
+  const { items, internals } = buildItems(
+    state,
+    priorIds,
+    allocateOpaqueId,
+  );
   const rootStates = Object.freeze(state.rootStates.map(publicRootState));
   const limitCodes = [...state.limitCodes].sort();
   let publicItems = items;
@@ -1628,6 +1632,8 @@ class SkillCatalog {
   #tombstones = new Set();
   #authorityComplete = false;
   #refreshPromise = null;
+  #opaqueIdKey = null;
+  #opaqueIdSequence = 0n;
 
   constructor({ roots, rootResolver, limits, randomIdBytes }) {
     this.#roots = roots;
@@ -1648,6 +1654,41 @@ class SkillCatalog {
       );
     }
     return this.#snapshot;
+  }
+
+  #nextOpaqueIdSequence() {
+    if (this.#opaqueIdSequence >= MAX_OPAQUE_ID_SEQUENCE) {
+      throw catalogError(
+        "AIR_CATALOG_RANDOM_FAILED",
+        "Opaque Skill ID allocation reached its registry lifetime limit.",
+      );
+    }
+    this.#opaqueIdSequence += 1n;
+    return this.#opaqueIdSequence;
+  }
+
+  #opaqueIdCipherKey() {
+    if (this.#opaqueIdKey !== null) return this.#opaqueIdKey;
+    const bytes = this.#randomIdBytes(16);
+    if (!Buffer.isBuffer(bytes) && !(bytes instanceof Uint8Array)) {
+      throw catalogError(
+        "AIR_CATALOG_RANDOM_FAILED",
+        "Opaque ID generator did not return bytes.",
+      );
+    }
+    if (bytes.byteLength !== 16) {
+      throw catalogError(
+        "AIR_CATALOG_RANDOM_FAILED",
+        "Opaque ID generator must return exactly 16 bytes.",
+      );
+    }
+    this.#opaqueIdKey = Buffer.from(bytes);
+    return this.#opaqueIdKey;
+  }
+
+  #allocateOpaqueId(used) {
+    const sequence = this.#nextOpaqueIdSequence();
+    return opaqueIdForSequence(this.#opaqueIdCipherKey(), sequence, used);
   }
 
   refresh() {
@@ -1680,7 +1721,7 @@ class SkillCatalog {
         priorIds,
         priorItems,
         priorAuthorityComplete,
-        randomIdBytes: this.#randomIdBytes,
+        allocateOpaqueId: (used) => this.#allocateOpaqueId(used),
         generation,
         pluginStatus: resolution.status,
       })).then(({ snapshot, internals, authorityComplete }) => {
