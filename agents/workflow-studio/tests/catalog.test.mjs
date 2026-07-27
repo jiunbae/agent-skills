@@ -901,6 +901,79 @@ test("bounded partial scans publish typed limits and failed refresh retains the 
   assert.equal(exactAfter.truncated, true);
   assert.ok(exactAfter.limit_codes.includes("AIR_CATALOG_RESPONSE_LIMIT"));
   assert.ok(exactAfter.items.every((item) => !("replaces_id" in item)));
+
+  const envelopeRoot = join(directory, "response-envelope");
+  await mkdir(envelopeRoot, { recursive: true });
+  const envelopeProbe = createSkillCatalog({
+    roots: [{ label: "response-envelope", path: envelopeRoot }],
+    randomIdBytes: ids(),
+  });
+  const envelope = await envelopeProbe.initialize();
+  const envelopeBytes = Buffer.byteLength(JSON.stringify(envelope), "utf8");
+  assert.equal(envelope.item_count, 0);
+
+  const envelopeExact = createSkillCatalog({
+    roots: [{ label: "response-envelope", path: envelopeRoot }],
+    limits: { maxCatalogBytes: envelopeBytes },
+    randomIdBytes: ids(),
+  });
+  const exactEnvelope = await envelopeExact.initialize();
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(exactEnvelope), "utf8"),
+    envelopeBytes,
+  );
+
+  const envelopeOneOver = createSkillCatalog({
+    roots: [{ label: "response-envelope", path: envelopeRoot }],
+    limits: { maxCatalogBytes: envelopeBytes - 1 },
+    randomIdBytes: ids(),
+  });
+  await assert.rejects(envelopeOneOver.initialize(), (error) => {
+    assert.equal(error.code, "AIR_CATALOG_REFRESH_FAILED");
+    assert.deepEqual(error.details, { generation: 0 });
+    return true;
+  });
+  assert.throws(() => envelopeOneOver.getSnapshot(), {
+    code: "AIR_CATALOG_NOT_READY",
+  });
+
+  const partialProbe = createSkillCatalog({
+    rootResolver: async () => ({
+      roots: [{ label: "response-envelope", path: envelopeRoot }],
+      status: "partial",
+    }),
+    randomIdBytes: ids(),
+  });
+  const partialEnvelope = await partialProbe.initialize();
+  const retentionLimit =
+    Buffer.byteLength(JSON.stringify(partialEnvelope), "utf8") - 1;
+  assert.ok(envelopeBytes <= retentionLimit);
+
+  let envelopeStatus = "ready";
+  const retained = createSkillCatalog({
+    rootResolver: async () => ({
+      roots: [{ label: "response-envelope", path: envelopeRoot }],
+      status: envelopeStatus,
+    }),
+    limits: { maxCatalogBytes: retentionLimit },
+    randomIdBytes: ids(),
+  });
+  const retainedBefore = await retained.initialize();
+  envelopeStatus = "partial";
+  await assert.rejects(retained.refresh(), (error) => {
+    assert.equal(error.code, "AIR_CATALOG_REFRESH_FAILED");
+    assert.deepEqual(error.details, { generation: 1 });
+    return true;
+  });
+  assert.equal(retained.getSnapshot(), retainedBefore);
+  envelopeStatus = "ready";
+  const retainedRecovered = await retained.refresh();
+  assert.equal(retainedRecovered.generation, 2);
+  assert.equal(retainedRecovered.truncated, false);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(retainedRecovered), "utf8") <=
+      retentionLimit,
+  );
 });
 
 test("actual repository Skill smoke returns aggregates and a synthetic locator only", async () => {

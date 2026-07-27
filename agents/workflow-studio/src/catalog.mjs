@@ -1570,6 +1570,12 @@ async function scanCatalog({
   ) {
     publicItems = publicItems.slice(0, -1);
   }
+  if (responseByteLength() > limits.maxCatalogBytes) {
+    throw catalogError(
+      "AIR_CATALOG_RESPONSE_LIMIT",
+      "The mandatory Skill catalog envelope exceeds its response byte limit.",
+    );
+  }
   for (const item of publicItems) Object.freeze(item);
   const publicIds = new Set(publicItems.map((item) => item.id));
   for (const id of internals.keys()) {
