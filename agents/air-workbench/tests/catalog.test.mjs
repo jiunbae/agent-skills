@@ -2123,3 +2123,280 @@ test("a directory link outside every root still settles authority", async (t) =>
     ["AIR_CATALOG_SYMLINK_OUTSIDE_ROOTS"],
   );
 });
+
+test("a maxRoots overflow publishes a typed bound and suppresses lineage", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-root-limit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const one = join(directory, "one");
+  const two = join(directory, "two");
+  const changing = join(one, "a", "SKILL.md");
+  await put(changing, skill("rl-a", "Before"));
+  await put(join(two, "b", "SKILL.md"), skill("rl-b", "Second"));
+
+  let extra = false;
+  const catalog = createSkillCatalog({
+    rootResolver: () => ({
+      roots: extra
+        ? [{ label: "rl-one", path: one }, { label: "rl-two", path: two }]
+        : [{ label: "rl-one", path: one }],
+      status: "ready",
+    }),
+    limits: { maxRoots: 1 },
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.equal(before.item_count, 1);
+  const priorId = before.items[0].id;
+
+  await writeFile(changing, skill("rl-a", "After!"));
+  extra = true;
+  const after = await catalog.refresh();
+
+  assert.equal(after.truncated, true);
+  assert.ok(after.limit_codes.includes("AIR_CATALOG_ROOT_LIMIT"));
+  assert.deepEqual(after.limit_codes, ["AIR_CATALOG_ROOT_LIMIT"]);
+  assert.deepEqual(after.roots.map((state) => state.status), ["ready"]);
+  assert.equal(after.roots.length, 1);
+  assert.deepEqual(after.roots[0].diagnostics, []);
+  const changed = after.items.find((item) => item.name === "rl-a");
+  assert.notEqual(changed.id, priorId);
+  assert.ok(after.items.every((item) => !("replaces_id" in item)));
+  assert.equal(JSON.stringify(after).includes(directory), false);
+});
+
+test("a maxTotalBytes overflow publishes a typed bound and suppresses lineage", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-total-bytes-limit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const root = join(directory, "skills");
+  const changing = join(root, "a", "SKILL.md");
+  const first = skill("tb-a", "Before");
+  await put(changing, first);
+  const catalog = createSkillCatalog({
+    roots: [{ label: "tb", path: root }],
+    limits: { maxTotalBytes: first.length },
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.equal(before.total_byte_count, first.length);
+  const priorId = before.items[0].id;
+
+  await writeFile(changing, skill("tb-a", "After!"));
+  await put(join(root, "b", "SKILL.md"), skill("tb-b", "Second"));
+  const after = await catalog.refresh();
+
+  assert.equal(after.truncated, true);
+  assert.ok(after.limit_codes.includes("AIR_CATALOG_TOTAL_BYTES_LIMIT"));
+  assert.deepEqual(after.limit_codes, ["AIR_CATALOG_TOTAL_BYTES_LIMIT"]);
+  assert.deepEqual(after.roots.map((state) => state.status), ["ready"]);
+  assert.equal(after.roots[0].record_count, 1);
+  assert.equal(after.item_count, 1);
+  assert.equal(after.total_byte_count, first.length);
+  const changed = after.items.find((item) => item.name === "tb-a");
+  assert.notEqual(changed.id, priorId);
+  assert.ok(after.items.every((item) => !("replaces_id" in item)));
+  assert.equal(JSON.stringify(after).includes(directory), false);
+});
+
+test("a maxEntries overflow publishes a typed bound and suppresses lineage", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-entry-limit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const root = join(directory, "skills");
+  const changing = join(root, "a", "SKILL.md");
+  await put(changing, skill("el-a", "Before"));
+  const catalog = createSkillCatalog({
+    roots: [{ label: "el", path: root }],
+    limits: { maxEntries: 3 },
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.equal(before.scanned_entry_count, 2);
+  const priorId = before.items[0].id;
+
+  await writeFile(changing, skill("el-a", "After!"));
+  await put(join(root, "b", "SKILL.md"), skill("el-b", "Second"));
+  const after = await catalog.refresh();
+
+  assert.equal(after.truncated, true);
+  assert.ok(after.limit_codes.includes("AIR_CATALOG_ENTRY_LIMIT"));
+  assert.deepEqual(after.limit_codes, ["AIR_CATALOG_ENTRY_LIMIT"]);
+  assert.deepEqual(after.roots.map((state) => state.status), ["partial"]);
+  assert.equal(after.scanned_entry_count, 4);
+  assert.equal(after.item_count, 1);
+  const changed = after.items.find((item) => item.name === "el-a");
+  assert.notEqual(changed.id, priorId);
+  assert.ok(after.items.every((item) => !("replaces_id" in item)));
+  assert.equal(JSON.stringify(after).includes(directory), false);
+});
+
+test("a subtree beyond the walk depth publishes no record and is already truncated", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-depth-limit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const root = join(directory, "skills");
+  const changing = join(root, "g", "SKILL.md");
+  await put(changing, skill("dl-g", "Before"));
+  const catalog = createSkillCatalog({
+    roots: [{ label: "dl", path: root }],
+    limits: { maxDepth: 1 },
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.deepEqual(before.roots.map((state) => state.status), ["ready"]);
+  assert.deepEqual(before.items.map((item) => item.name), ["dl-g"]);
+  const priorId = before.items[0].id;
+
+  await writeFile(changing, skill("dl-g", "After!"));
+  await put(join(root, "g", "deep", "SKILL.md"), skill("dl-deep", "Deeper"));
+  const after = await catalog.refresh();
+
+  // Two invariants are pinned here at once. First: a subtree beyond
+  // `limits.maxDepth` never publishes a record — `dl-deep` is refused, not
+  // merely deprioritised. Second: the depth case is *already* truncated and
+  // carries its own typed bound, so it needs no separate authority clear;
+  // that premise is what any `settleAuthority` rework must preserve.
+  assert.deepEqual(after.items.map((item) => item.name), ["dl-g"]);
+  assert.equal(after.truncated, true);
+  assert.ok(after.limit_codes.includes("AIR_CATALOG_DEPTH_LIMIT"));
+  assert.deepEqual(after.limit_codes, ["AIR_CATALOG_DEPTH_LIMIT"]);
+  assert.deepEqual(after.roots.map((state) => state.status), ["partial"]);
+  assert.equal(after.roots[0].record_count, 1);
+  assert.equal(after.scanned_entry_count, 3);
+  const changed = after.items.find((item) => item.name === "dl-g");
+  assert.notEqual(changed.id, priorId);
+  assert.ok(after.items.every((item) => !("replaces_id" in item)));
+  assert.equal(JSON.stringify(after).includes(directory), false);
+});
+
+test("a per-root time limit publishes a typed bound and suppresses lineage", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-time-limit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const walked = join(directory, "walked");
+  const stalled = join(directory, "stalled");
+  const changing = join(walked, "a", "SKILL.md");
+  await put(changing, skill("tl-a", "Before"));
+  await put(join(stalled, "b", "SKILL.md"), skill("tl-b", "Second"));
+  const catalog = createSkillCatalog({
+    roots: [
+      { label: "tl-walked", path: walked },
+      { label: "tl-stalled", path: stalled },
+    ],
+    limits: { maxDurationMs: 500 },
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.deepEqual(before.roots.map((state) => state.status), [
+    "ready",
+    "ready",
+  ]);
+  assert.deepEqual(before.roots.map((state) => state.record_count), [1, 1]);
+  const priorId = before.items.find((item) => item.name === "tl-a").id;
+
+  await writeFile(changing, skill("tl-a", "After!"));
+  const originalReaddir = fs.promises.readdir;
+  const stallTimers = new Set();
+  let stall = true;
+  fs.promises.readdir = (path, options) => (
+    stall && String(path).startsWith(stalled)
+      ? new Promise((resolveStall) => {
+        const timer = setTimeout(() => {
+          stallTimers.delete(timer);
+          resolveStall(originalReaddir(path, options));
+        }, 10_000);
+        stallTimers.add(timer);
+      })
+      : originalReaddir(path, options)
+  );
+  syncBuiltinESMExports();
+  let after;
+  try {
+    after = await catalog.refresh();
+  } finally {
+    stall = false;
+    fs.promises.readdir = originalReaddir;
+    syncBuiltinESMExports();
+    for (const timer of stallTimers) clearTimeout(timer);
+    stallTimers.clear();
+  }
+
+  assert.equal(after.truncated, true);
+  assert.ok(after.limit_codes.includes("AIR_CATALOG_TIME_LIMIT"));
+  assert.deepEqual(after.limit_codes, ["AIR_CATALOG_TIME_LIMIT"]);
+  assert.deepEqual(after.roots.map((state) => state.status), [
+    "ready",
+    "partial",
+  ]);
+  assert.equal(after.roots[1].record_count, 0);
+  assert.deepEqual(after.items.map((item) => item.name), ["tl-a"]);
+  const changed = after.items.find((item) => item.name === "tl-a");
+  assert.notEqual(changed.id, priorId);
+  assert.ok(after.items.every((item) => !("replaces_id" in item)));
+  assert.equal(JSON.stringify(after).includes(directory), false);
+
+  const recovered = await catalog.refresh();
+  assert.equal(recovered.truncated, false);
+  assert.deepEqual(recovered.limit_codes, []);
+  assert.deepEqual(recovered.roots.map((state) => state.status), [
+    "ready",
+    "ready",
+  ]);
+  assert.equal(JSON.stringify(recovered).includes(directory), false);
+});
+
+test("a subtree under SKIP_DIRECTORIES never publishes a record and costs no authority", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-skip-directories-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const root = join(directory, "skills");
+  const changing = join(root, "real", "SKILL.md");
+  await put(changing, skill("sk-real", "Before"));
+  await put(join(root, "node_modules", "pkg", "SKILL.md"), skill("sk-hidden", "Hidden"));
+  // Mixed case on purpose: the walk lowercases each directory name before the
+  // SKIP_DIRECTORIES lookup, so `Cache` must be refused exactly like `cache`.
+  await put(join(root, "Cache", "pkg", "SKILL.md"), skill("sk-cache", "Hidden"));
+  const catalog = createSkillCatalog({
+    roots: [{ label: "sk", path: root }],
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.deepEqual(before.items.map((item) => item.name), ["sk-real"]);
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.deepEqual(before.roots.map((state) => state.status), ["ready"]);
+  assert.deepEqual(before.roots[0].diagnostics, []);
+  assert.equal(before.roots[0].record_count, 1);
+  assert.equal(before.item_count, 1);
+  assert.equal(before.scanned_entry_count, 4);
+  const priorId = before.items[0].id;
+
+  await writeFile(changing, skill("sk-real", "After!"));
+  const after = await catalog.refresh();
+
+  // The invariant: skipping a SKIP_DIRECTORIES subtree publishes no record,
+  // emits no diagnostic, sets no bound, and does NOT clear authority. Because
+  // the refusal costs no observation, real lineage survives — `sk-real` still
+  // carries `replaces_id`. A settleAuthority rework that treated the skip as
+  // an unobserved subtree would break exactly this.
+  assert.deepEqual(after.items.map((item) => item.name), ["sk-real"]);
+  assert.equal(after.truncated, false);
+  assert.deepEqual(after.limit_codes, []);
+  assert.deepEqual(after.roots.map((state) => state.status), ["ready"]);
+  assert.deepEqual(after.roots[0].diagnostics, []);
+  assert.notEqual(after.items[0].id, priorId);
+  assert.equal(typeof after.items[0].replaces_id, "string");
+  assert.equal(after.items[0].replaces_id, priorId);
+  assert.equal(JSON.stringify(after).includes(directory), false);
+});
