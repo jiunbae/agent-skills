@@ -241,8 +241,16 @@ complete observation of every configured root, whether because a published
 bound was reached or because authority over a root, directory, or entry could
 not be established. A catalog with `truncated: false` asserts complete,
 authorized observation. Every published diagnostic therefore implies
-`truncated: true`, and the diagnostic code remains the only channel that
-distinguishes a bound from an authority failure.
+`truncated: true`.
+
+The diagnostic enum is closed, and not every bound has a code in it. The
+code-carrying conditions are the entry, file, catalog, and duration bounds and
+every authority failure; among those, the diagnostic code remains the only
+channel that distinguishes a bound from an authority failure. The `maxDepth`
+and `maxRoots` bounds have no code in the closed enum: reaching either MUST
+publish `truncated: true` with no diagnostic, so for those two bounds
+`truncated` alone is the signal. A reader MUST NOT treat an empty diagnostics
+array as evidence that no bound was reached.
 
 ## 5. Canonicalization and identity
 

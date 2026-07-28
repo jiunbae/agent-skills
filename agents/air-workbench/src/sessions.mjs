@@ -208,6 +208,10 @@ async function inspectAuthorizedEntry(
   }
 }
 
+// Absence is not an authority failure. `authorizeRoot` reports it separately so
+// `scan` can decide what a missing root means for that particular root.
+const ABSENT_ROOT = Symbol("air.session.absent-root");
+
 async function authorizeRoot(root) {
   try {
     const before = await lstat(root.path, { bigint: true });
@@ -233,7 +237,14 @@ async function authorizeRoot(root) {
       identity: accepted.identity,
       directoryChain: Object.freeze([accepted]),
     });
-  } catch {
+  } catch (error) {
+    // ENOENT is the only error that proves absence rather than a refusal to
+    // observe, and it is reported as absence so an optional root deleted after
+    // the registry was built stops being an authority failure that no refresh
+    // could ever clear. Every other class — EACCES on an ancestor, ELOOP,
+    // ENOTDIR, ENAMETOOLONG, EIO — means something may well be there and could
+    // not be seen, so it keeps settling the catalog incomplete.
+    if (error?.code === "ENOENT") return ABSENT_ROOT;
     return null;
   }
 }
@@ -296,6 +307,11 @@ function normalizeRoot(root) {
     path: resolve(root.path),
     provider: root.provider,
     label: root.label === "project" ? "project" : "user",
+    // Optionality is carried on the record rather than applied as a filter, so
+    // presence can be re-observed on every scan instead of being frozen into
+    // the root set at construction. An explicitly configured root is never
+    // optional and always settles incomplete when it cannot be observed.
+    optional: root.optional === true,
   });
 }
 
@@ -304,7 +320,9 @@ function defaultRootIsPresent(path) {
   // the places a provider would install its sessions if it were installed at
   // all. An absent one is a complete observation of nothing, not a refusal to
   // observe, so it must not settle the catalog incomplete — incompleteness
-  // requires that something observable was not observed.
+  // requires that something observable was not observed. This is re-evaluated
+  // once per scan: a root installed later becomes observable, and one removed
+  // later returns to being an absent optional root.
   //
   // Only ENOENT proves absence. Every other error — EACCES on an ancestor,
   // ELOOP, EIO — means something may well be there and could not be seen, so
@@ -326,14 +344,14 @@ export function resolveSessionRoots({
   const roots = [];
   if (typeof cwd === "string" && isAbsolute(cwd)) {
     roots.push(
-      { path: resolve(cwd, ".codex", "sessions"), provider: "codex", label: "project" },
-      { path: resolve(cwd, ".claude", "projects"), provider: "claude", label: "project" },
+      { path: resolve(cwd, ".codex", "sessions"), provider: "codex", label: "project", optional: true },
+      { path: resolve(cwd, ".claude", "projects"), provider: "claude", label: "project", optional: true },
     );
   }
   if (typeof home === "string" && isAbsolute(home)) {
     roots.push(
-      { path: resolve(home, ".codex", "sessions"), provider: "codex", label: "user" },
-      { path: resolve(home, ".claude", "projects"), provider: "claude", label: "user" },
+      { path: resolve(home, ".codex", "sessions"), provider: "codex", label: "user", optional: true },
+      { path: resolve(home, ".claude", "projects"), provider: "claude", label: "user", optional: true },
     );
   }
   const seen = new Set();
@@ -345,8 +363,7 @@ export function resolveSessionRoots({
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
-      })
-      .filter((root) => defaultRootIsPresent(root.path)),
+      }),
   );
 }
 
@@ -856,7 +873,20 @@ export function createSessionRegistry({
     };
 
     for (const root of normalizedRoots) {
+      // An optional root's presence is re-observed here, every generation,
+      // rather than frozen into the root set when the registry was built. One
+      // installed after construction becomes observable; one removed after
+      // construction returns to being an absent optional root instead of
+      // pinning an authority failure that no refresh could clear.
+      if (root.optional && !defaultRootIsPresent(root.path)) continue;
       const authorization = await authorizeRoot(root);
+      if (authorization === ABSENT_ROOT) {
+        // Absence of an optional root is a complete observation of nothing;
+        // absence of an explicitly configured root is still incompleteness.
+        if (root.optional) continue;
+        markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
+        continue;
+      }
       if (authorization === null) {
         markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
         continue;
@@ -1080,23 +1110,36 @@ export function createSessionRegistry({
         snapshot_available: true,
       }));
     }
-    const diagnostics = [...counts]
-      .slice(0, boundedLimits.maxDiagnostics)
-      .map(([code, count]) => publicDiagnostic(code, count));
+    const publishedDiagnostics = () =>
+      [...counts]
+        .slice(0, boundedLimits.maxDiagnostics)
+        .map(([code, count]) => publicDiagnostic(code, count));
+    const catalogBytes = (value) =>
+      Buffer.byteLength(JSON.stringify(value), "utf8");
     const nextGeneration = generation + 1;
     let next = {
       generation: nextGeneration,
       items: publicItems,
-      diagnostics,
+      diagnostics: publishedDiagnostics(),
       truncated,
     };
-    while (
-      Buffer.byteLength(JSON.stringify(next), "utf8") >
-        boundedLimits.maxCatalogBytes &&
+    if (
+      catalogBytes(next) > boundedLimits.maxCatalogBytes &&
       next.items.length > 0
     ) {
-      next.items.pop();
+      // The byte ceiling drops rows that were observed and authorized, which is
+      // the same bound the item-count ceiling already publishes as
+      // `AIR_SESSION_CATALOG_LIMIT`. Record it once before shrinking so the
+      // diagnostic's own bytes are inside the budget being measured.
+      markIncomplete("AIR_SESSION_CATALOG_LIMIT");
+      next.diagnostics = publishedDiagnostics();
       next.truncated = true;
+      while (
+        catalogBytes(next) > boundedLimits.maxCatalogBytes &&
+        next.items.length > 0
+      ) {
+        next.items.pop();
+      }
     }
     if (
       Buffer.byteLength(JSON.stringify(next), "utf8") >

@@ -1969,10 +1969,13 @@ test("an absent default session root is a complete observation of nothing", asyn
   await writeFile(join(installed, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
 
   // `<home>/.claude/projects` and both project-local roots were never
-  // installed. Nothing observable exists there, so nothing was left
-  // unobserved and the listing is complete.
+  // installed. They are still returned as optional probe locations so their
+  // presence can be re-observed later; nothing observable exists there now, so
+  // nothing was left unobserved and the listing is complete.
   const roots = resolveSessionRoots({ cwd: project, home });
-  assert.deepEqual(roots.map((root) => root.path), [installed]);
+  assert.equal(roots.length, 4);
+  assert.equal(roots.every((root) => root.optional === true), true);
+  assert.equal(roots.some((root) => root.path === installed), true);
 
   const registry = createSessionRegistry({
     roots,
@@ -2005,16 +2008,16 @@ test("a default session root that exists but cannot be observed still publishes 
   await mkdir(join(linkHome, ".codex"), { recursive: true });
   await symlink(target, join(linkHome, ".codex", "sessions"), "dir");
 
-  // Absence is filtered; existence is not. A default root that is present but
+  // Absence is skipped; existence is not. A default root that is present but
   // is the wrong type is a refusal to observe and must still settle.
   for (const home of [fileHome, linkHome]) {
     const roots = resolveSessionRoots({
       cwd: join(dirs.root, "never-installed"),
       home,
     });
-    assert.deepEqual(
-      roots.map((root) => root.path),
-      [join(home, ".codex", "sessions")],
+    assert.equal(
+      roots.some((root) => root.path === join(home, ".codex", "sessions")),
+      true,
     );
     const registry = createSessionRegistry({
       roots,
@@ -2060,9 +2063,9 @@ test("an unreadable default session root still publishes incompleteness", {
     await chmod(installed, 0o700);
   }
 
-  // The root exists, so it survives the absence filter and its unreadability
+  // The root exists, so it survives the absence check and its unreadability
   // is genuine incompleteness — a real session was hidden from the scan.
-  assert.deepEqual(roots.map((root) => root.path), [installed]);
+  assert.equal(roots.some((root) => root.path === installed), true);
   assert.deepEqual(catalog.items, []);
   assert.deepEqual(catalog.diagnostics, [{
     severity: "warning",
@@ -2176,5 +2179,196 @@ test("a non-regular jsonl entry is refused loudly whatever its type", async (t) 
     code: "AIR_SESSION_ROOT_UNAVAILABLE",
     count: 1,
   }]);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("a default session root installed after construction becomes observable", async (t) => {
+  const dirs = await fixture(t);
+  const home = join(dirs.root, "late-home");
+  const project = join(dirs.root, "late-project");
+  const installed = join(home, ".codex", "sessions");
+  await mkdir(installed, { recursive: true });
+  await mkdir(project);
+  await writeFile(join(installed, "first.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  const registry = createSessionRegistry({
+    roots: resolveSessionRoots({ cwd: project, home }),
+    randomBytes: deterministicRandom(),
+  });
+  const before = await registry.catalog({ refresh: true });
+  assert.equal(before.items.length, 1);
+  assert.deepEqual(before.diagnostics, []);
+  assert.equal(before.truncated, false);
+
+  // A provider installed after the registry was built must become visible on
+  // the next scan. Freezing the probe at construction would hide a populated
+  // authorized root behind an assertion of complete observation.
+  const late = join(home, ".claude", "projects");
+  await mkdir(late, { recursive: true });
+  await writeFile(join(late, "late.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  const after = await registry.catalog({ refresh: true });
+  assert.equal(after.items.length, 2);
+  assert.equal(
+    after.items.some(({ provider }) => provider === "claude"),
+    true,
+  );
+  assert.deepEqual(after.diagnostics, []);
+  assert.equal(after.truncated, false);
+  assertPublishedIncompleteness(after, dirs);
+});
+
+test("a default session root removed after construction stops pinning incompleteness", async (t) => {
+  const dirs = await fixture(t);
+  const home = join(dirs.root, "vanishing-home");
+  const project = join(dirs.root, "vanishing-project");
+  const kept = join(home, ".codex", "sessions");
+  const removed = join(home, ".claude", "projects");
+  await mkdir(kept, { recursive: true });
+  await mkdir(removed, { recursive: true });
+  await mkdir(project);
+  await writeFile(join(kept, "kept.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  await writeFile(join(removed, "gone.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  const registry = createSessionRegistry({
+    roots: resolveSessionRoots({ cwd: project, home }),
+    randomBytes: deterministicRandom(),
+  });
+  const before = await registry.catalog({ refresh: true });
+  assert.equal(before.items.length, 2);
+  assert.equal(before.truncated, false);
+
+  // Uninstalling a provider returns its probe location to being an absent
+  // optional root. It must not settle a permanent authority failure that no
+  // refresh could ever clear.
+  await rm(removed, { recursive: true, force: true });
+
+  const after = await registry.catalog({ refresh: true });
+  assert.equal(after.items.length, 1);
+  assert.equal(
+    after.diagnostics.some(({ code }) => code === ROOT_UNAVAILABLE),
+    false,
+  );
+  assert.deepEqual(after.diagnostics, []);
+  assert.equal(after.truncated, false);
+  assertPublishedIncompleteness(after, dirs);
+});
+
+test("an explicitly configured absent root still settles incomplete on every scan", async (t) => {
+  const dirs = await fixture(t);
+  const absent = join(dirs.root, "configured-but-absent");
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  // A configured root is a demand, not a probe: its absence is a refusal to
+  // observe something the operator asked for and never self-heals into silence.
+  const registry = createSessionRegistry({
+    roots: [
+      { path: dirs.codex, provider: "codex" },
+      { path: absent, provider: "claude" },
+    ],
+    randomBytes: deterministicRandom(),
+  });
+  for (const _ of [0, 1]) {
+    const catalog = await registry.catalog({ refresh: true });
+    assert.equal(catalog.items.length, 1);
+    assert.equal(catalog.truncated, true);
+    assert.deepEqual(catalog.diagnostics, [{
+      severity: "warning",
+      code: ROOT_UNAVAILABLE,
+      count: 1,
+    }]);
+    assertPublishedIncompleteness(catalog, dirs);
+  }
+});
+
+test("a default session root hidden by a non-ENOENT error still settles incomplete", {
+  skip: PERMISSIONS_ARE_ENFORCED
+    ? false
+    : "directory permissions are not enforced for this process",
+}, async (t) => {
+  const dirs = await fixture(t);
+  const home = join(dirs.root, "blocked-home");
+  const ancestor = join(home, ".codex");
+  const installed = join(ancestor, "sessions");
+  const notDirectory = join(home, ".claude");
+  await mkdir(installed, { recursive: true });
+  await writeFile(join(installed, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  // `<home>/.claude` is a regular file, so `<home>/.claude/projects` fails with
+  // ENOTDIR rather than ENOENT: something may be there and cannot be seen.
+  await writeFile(notDirectory, `${SENTINEL}\n`);
+
+  let catalog;
+  try {
+    await chmod(ancestor, 0o000);
+    const registry = createSessionRegistry({
+      roots: resolveSessionRoots({
+        cwd: join(dirs.root, "never-installed"),
+        home,
+      }),
+      randomBytes: deterministicRandom(),
+    });
+    catalog = await registry.catalog({ refresh: true });
+  } finally {
+    await chmod(ancestor, 0o700);
+  }
+
+  // EACCES on an ancestor and ENOTDIR are not proof of absence, so both roots
+  // are kept and both publish a refusal to observe.
+  assert.deepEqual(catalog.items, []);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: ROOT_UNAVAILABLE,
+    count: 2,
+  }]);
+  assert.equal(catalog.truncated, true);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("the session catalog byte ceiling publishes the catalog limit it enforces", async (t) => {
+  const dirs = await fixture(t);
+  await Promise.all([
+    writeFile(join(dirs.codex, `${SENTINEL}-a.jsonl`), "{}\n"),
+    writeFile(join(dirs.codex, `${SENTINEL}-b.jsonl`), "{}\n"),
+  ]);
+  const roots = [{ path: dirs.codex, provider: "codex" }];
+  const unbounded = createSessionRegistry({
+    roots,
+    randomBytes: deterministicRandom(),
+  });
+  const full = await unbounded.catalog({ refresh: true });
+  assert.equal(full.items.length, 2);
+  assert.deepEqual(full.diagnostics, []);
+
+  // Budget exactly one retained row plus the diagnostic that explains why the
+  // other row was dropped. The byte ceiling drops authorized rows just as the
+  // item-count ceiling does, so it must publish the same code rather than
+  // leaving `truncated: true` indistinguishable from an authority failure.
+  const budget = Buffer.byteLength(
+    JSON.stringify({
+      generation: full.generation,
+      items: full.items.slice(0, 1),
+      diagnostics: [{
+        severity: "warning",
+        code: "AIR_SESSION_CATALOG_LIMIT",
+        count: 1,
+      }],
+      truncated: true,
+    }),
+    "utf8",
+  );
+  const bounded = createSessionRegistry({
+    roots,
+    limits: { ...SESSION_LIMITS, maxCatalogBytes: budget },
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await bounded.catalog({ refresh: true });
+  assert.equal(catalog.items.length, 1);
+  assert.equal(catalog.truncated, true);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: "AIR_SESSION_CATALOG_LIMIT",
+    count: 1,
+  }]);
+  assert.ok(Buffer.byteLength(JSON.stringify(catalog), "utf8") <= budget);
   assertPublishedIncompleteness(catalog, dirs);
 });
