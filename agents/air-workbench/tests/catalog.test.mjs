@@ -2536,3 +2536,248 @@ test("non-nested sibling roots keep their existing drop and no-drop lineage", as
   assert.equal("replaces_id" in third.items[0], false);
   assert.equal(JSON.stringify(third).includes(directory), false);
 });
+
+test("a link into a subtree no root walks publishes nothing and costs no authority", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-link-unwalkable-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // The default nesting resolveSkillRoots emits: a grouped repository root that
+  // lexically contains a non-grouped project root. Containment is geometry, not
+  // policy — the enclosing root skips `node_modules` and `.git` outright, so a
+  // link that merely lands inside it must not authorize reading Skill content
+  // out of subtrees every root deliberately excludes.
+  const repo = join(directory, "repo");
+  const project = join(repo, ".agents", "skills");
+  const grouped = join(repo, "agents", "bar", "SKILL.md");
+  const nested = join(project, "foo", "SKILL.md");
+  await put(grouped, skill("lu-bar", "Before"));
+  await put(nested, skill("lu-foo", "Before"));
+  await put(
+    join(repo, "node_modules", "pkg", "SKILL.md"),
+    skill("lu-vendored", "Vendored"),
+  );
+  await put(join(repo, ".git", "hooks", "SKILL.md"), skill("lu-git", "Git"));
+  await symlink(join(repo, "node_modules", "pkg"), join(project, "vendored"));
+  await symlink(join(repo, ".git", "hooks"), join(project, "git"));
+
+  const catalog = createSkillCatalog({
+    roots: [
+      { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+      { label: "project-nested", path: project },
+    ],
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.deepEqual(before.items.map((item) => item.name), ["lu-bar", "lu-foo"]);
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.deepEqual(
+    before.roots.map((root) => [root.source_label, root.status]),
+    [["repo-grouped", "ready"], ["project-nested", "ready"]],
+  );
+  assert.deepEqual(before.roots.flatMap((root) => root.diagnostics), []);
+
+  // The refusal is authority-neutral: no walk of any configured root could have
+  // published those targets, so nothing was left unobserved and real lineage
+  // must survive.
+  await writeFile(nested, skill("lu-foo", "After"));
+  const after = await catalog.refresh();
+  assert.deepEqual(after.items.map((item) => item.name), ["lu-bar", "lu-foo"]);
+  assert.equal(after.truncated, false);
+  assert.deepEqual(after.limit_codes, []);
+  assert.deepEqual(after.roots.flatMap((root) => root.diagnostics), []);
+  const foo = after.items.find((item) => item.name === "lu-foo");
+  assert.equal(
+    foo.replaces_id,
+    before.items.find((item) => item.name === "lu-foo").id,
+  );
+  assert.equal(JSON.stringify(after).includes(directory), false);
+});
+
+test("a link past the walk depth or off the grouped shape publishes nothing", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-link-shape-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // Same nesting, but the targets are excluded by shape rather than by name:
+  // a grouped root reads SKILL.md only at depth exactly 2 under a
+  // REPOSITORY_SKILL_GROUPS entry, so neither a deeper directory nor one under
+  // a non-group top-level entry could ever carry a record.
+  const repo = join(directory, "repo");
+  const project = join(repo, ".agents", "skills");
+  await put(join(repo, "agents", "bar", "SKILL.md"), skill("ls-bar", "Bar"));
+  await put(join(project, "foo", "SKILL.md"), skill("ls-foo", "Foo"));
+  await put(
+    join(repo, "agents", "bar", "baz", "SKILL.md"),
+    skill("ls-deep", "Too deep for a grouped root"),
+  );
+  await put(
+    join(repo, "tools", "thing", "SKILL.md"),
+    skill("ls-ungrouped", "Not a repository Skill group"),
+  );
+  await symlink(join(repo, "agents", "bar", "baz"), join(project, "deep"));
+  await symlink(join(repo, "tools", "thing"), join(project, "ungrouped"));
+
+  const shaped = createSkillCatalog({
+    roots: [
+      { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+      { label: "project-nested", path: project },
+    ],
+    randomIdBytes: ids(),
+  });
+  const snapshot = await shaped.initialize();
+  assert.deepEqual(snapshot.items.map((item) => item.name), ["ls-bar", "ls-foo"]);
+  assert.equal(snapshot.truncated, false);
+  assert.deepEqual(snapshot.limit_codes, []);
+  assert.deepEqual(
+    snapshot.roots.map((root) => [root.source_label, root.status]),
+    [["repo-grouped", "ready"], ["project-nested", "ready"]],
+  );
+  assert.deepEqual(snapshot.roots.flatMap((root) => root.diagnostics), []);
+
+  // The maxDepth half: the target root's own walk stops short of the target, so
+  // a link may not read past the bound the walk itself publishes.
+  const deepRoot = join(directory, "deep");
+  const holder = join(directory, "holder");
+  await put(join(deepRoot, "a", "SKILL.md"), skill("ld-shallow", "Shallow"));
+  await put(
+    join(deepRoot, "a", "b", "c", "SKILL.md"),
+    skill("ld-beyond", "Beyond maxDepth"),
+  );
+  await mkdir(holder, { recursive: true });
+  await symlink(join(deepRoot, "a", "b", "c"), join(holder, "beyond"));
+  const bounded = createSkillCatalog({
+    roots: [
+      { label: "deep", path: deepRoot },
+      { label: "holder", path: holder },
+    ],
+    limits: { maxDepth: 2 },
+    randomIdBytes: ids(),
+  });
+  const boundedSnapshot = await bounded.initialize();
+  assert.deepEqual(
+    boundedSnapshot.items.map((item) => item.name),
+    ["ld-shallow"],
+  );
+  assert.ok(boundedSnapshot.limit_codes.includes("AIR_CATALOG_DEPTH_LIMIT"));
+  assert.equal(JSON.stringify(boundedSnapshot).includes(directory), false);
+});
+
+test("a link no root can walk never vouches for lineage once its holder is dropped", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-link-authority-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // A record read through a link records the target root as its authority root.
+  // If that root's own walk can never reach the target, the coverage check
+  // vouches for the observation with a root that never made it: drop the root
+  // that actually held the link and the generation still calls itself complete.
+  const repo = join(directory, "repo");
+  const project = join(repo, ".agents", "skills");
+  const grouped = join(repo, "agents", "bar", "SKILL.md");
+  await put(grouped, skill("la-bar", "Before"));
+  await put(
+    join(repo, "node_modules", "pkg", "SKILL.md"),
+    skill("la-vendored", "Vendored"),
+  );
+  await mkdir(project, { recursive: true });
+  await symlink(join(repo, "node_modules", "pkg"), join(project, "vendored"));
+
+  let roots = [
+    { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+    { label: "project-nested", path: project },
+  ];
+  const catalog = createSkillCatalog({
+    rootResolver: () => ({ roots, status: "ready" }),
+    randomIdBytes: ids(),
+  });
+  const first = await catalog.initialize();
+  assert.deepEqual(first.items.map((item) => item.name), ["la-bar"]);
+
+  // Control on the same layout: nothing is lost, so real lineage is published.
+  await writeFile(grouped, skill("la-bar", "Middle"));
+  const second = await catalog.refresh();
+  assert.deepEqual(second.items.map((item) => item.name), ["la-bar"]);
+  assert.equal(second.items[0].replaces_id, first.items[0].id);
+
+  // The link holder leaves the resolver result with nothing changing on disk.
+  roots = [
+    { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+  ];
+  await writeFile(grouped, skill("la-bar", "After"));
+  const third = await catalog.refresh();
+  assert.deepEqual(
+    third.roots.map((root) => [root.source_label, root.status]),
+    [["repo-grouped", "ready"]],
+  );
+  assert.equal(third.truncated, false);
+  assert.deepEqual(third.limit_codes, []);
+  assert.deepEqual(third.roots.flatMap((root) => root.diagnostics), []);
+
+  // No prior item may vanish unclaimed while this generation still publishes
+  // replacement lineage: that is exactly a disappearance reported as clean.
+  const survived = new Set(third.items.map((item) => item.id));
+  const claimed = new Set(
+    third.items.map((item) => item.replaces_id).filter(Boolean),
+  );
+  assert.deepEqual(
+    second.items
+      .filter((item) => !survived.has(item.id) && !claimed.has(item.id))
+      .map((item) => item.name),
+    [],
+  );
+  assert.equal(third.items[0].replaces_id, second.items[0].id);
+  assert.equal(JSON.stringify(third).includes(directory), false);
+});
+
+test("a link a root does walk is followed and vouched for by that root", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-link-followed-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // The positive control: the target is publishable by the nested project root,
+  // so the link is still followed. The enclosing grouped root also contains the
+  // target lexically and is searched first, but it can never walk into it, so
+  // it must not become the record's authority root.
+  const repo = join(directory, "repo");
+  const project = join(repo, ".agents", "skills");
+  const links = join(directory, "links");
+  const nested = join(project, "foo", "SKILL.md");
+  await put(nested, skill("lf-foo", "Before"));
+  await mkdir(links, { recursive: true });
+  await symlink(join(project, "foo"), join(links, "mirror"));
+
+  let roots = [
+    { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+    { label: "project-nested", path: project },
+    { label: "link-holder", path: links },
+  ];
+  const catalog = createSkillCatalog({
+    rootResolver: () => ({ roots, status: "ready" }),
+    randomIdBytes: ids(),
+  });
+  const first = await catalog.initialize();
+  assert.deepEqual(first.items.map((item) => item.name), ["lf-foo"]);
+  assert.equal(first.items[0].location_count, 2);
+  assert.deepEqual(
+    first.items[0].source_labels.find((source) => source.label === "link-holder"),
+    { label: "link-holder", kind: "explicit", locations: 1, linked_locations: 1 },
+  );
+  assert.deepEqual(first.roots.flatMap((root) => root.diagnostics), []);
+
+  await writeFile(nested, skill("lf-foo", "Middle"));
+  const second = await catalog.refresh();
+  assert.equal(second.items[0].replaces_id, first.items[0].id);
+
+  // Dropping the grouped root that merely contains the target changes nothing:
+  // the root that observed the linked record is still available, so lineage is
+  // published rather than suppressed.
+  roots = [
+    { label: "project-nested", path: project },
+    { label: "link-holder", path: links },
+  ];
+  await writeFile(nested, skill("lf-foo", "After"));
+  const third = await catalog.refresh();
+  assert.equal(third.truncated, false);
+  assert.deepEqual(third.limit_codes, []);
+  assert.equal(third.items[0].location_count, 2);
+  assert.equal(third.items[0].replaces_id, second.items[0].id);
+  assert.equal(JSON.stringify(third).includes(directory), false);
+});

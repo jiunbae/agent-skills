@@ -19,6 +19,7 @@ import {
   join,
   relative,
   resolve,
+  sep,
 } from "node:path";
 
 import { importSkillBytesAsAir } from "./air.mjs";
@@ -1435,6 +1436,31 @@ function candidateError(rootState, error, state) {
   rootDiagnostic(rootState, code, messages[code], "error");
 }
 
+// Would `root`'s own walkRoot publish `join(target, "SKILL.md")`? Containment
+// is geometry; publishability is policy, and only the second one authorizes a
+// read. `target` is always a realpath, so no component is a symbolic link and
+// walkRoot's symlink guards cannot apply — every remaining rule walkRoot
+// enforces on the way down is a rule about the path's own segments.
+function rootWalkWouldPublish(root, target, state) {
+  if (!isContained(root.physical, target)) return false;
+  const relativePath = relative(root.physical, target);
+  const segments = relativePath === "" ? [] : relativePath.split(sep);
+  // Reaching depth N requires queueing from depth N-1 under
+  // `current.depth < maxDepth`, so depth N is walked exactly when N <= maxDepth.
+  if (segments.length > state.limits.maxDepth) return false;
+  for (const segment of segments) {
+    // A directory named SKILL.md is refused as a candidate, never queued.
+    if (segment === "SKILL.md") return false;
+    if (SKIP_DIRECTORIES.has(segment.toLowerCase())) return false;
+  }
+  if (root.grouped === true) {
+    // Grouped roots read SKILL.md only at depth 2, stop queueing at depth 2,
+    // and descend only REPOSITORY_SKILL_GROUPS entries at depth 0.
+    return segments.length === 2 && REPOSITORY_SKILL_GROUPS.has(segments[0]);
+  }
+  return true;
+}
+
 async function maybeReadSkillDirectoryLink(
   linkPath,
   root,
@@ -1466,22 +1492,27 @@ async function maybeReadSkillDirectoryLink(
     return null;
   }
 
+  // Only a root whose own walk would publish the target may authorize the read:
+  // `targetRoot.physical` then becomes a correct `allowedRoot` by construction,
+  // and the authority it records belongs to a root that genuinely observes that
+  // path rather than one that merely contains it.
   const targetRoot = allRoots.find((candidate) => (
     candidate !== root &&
-    isContained(candidate.physical, target)
+    rootWalkWouldPublish(candidate, target, state)
   ));
   if (!targetRoot) {
-    if (isContained(root.physical, target)) {
-      // The link resolves inside the root that holds it. The targetRoot search
-      // above excludes this root (`candidate !== root`), so an own-root link is
-      // never followed into a record in ANY generation. Refusing it therefore
-      // costs no observation, whatever the target is: a target this walk
-      // reaches is published directly, and a target under SKIP_DIRECTORIES or
-      // past maxDepth is published by no generation at all. Following it would
-      // instead open a second traversal path into a subtree already queued and
-      // would cycle whenever the target is an ancestor of the link. Claiming
-      // the subtree is unobserved would suppress real lineage and publish a
-      // diagnostic whose message is false.
+    if (allRoots.some((candidate) => isContained(candidate.physical, target))) {
+      // The link resolves inside a configured root, yet no configured root's
+      // own walk would publish the target's SKILL.md. Refusing the link costs
+      // no observation either way: a target some root's walk can reach is
+      // published by that walk directly, and a target no root's walk can reach
+      // — under SKIP_DIRECTORIES, past maxDepth, or off a grouped root's
+      // depth-exactly-2 group shape — is published by no walk of any configured
+      // root. Following it would read content out of a subtree every root
+      // deliberately excludes, open a second traversal path into a subtree
+      // already queued, and cycle whenever the target is an ancestor of the
+      // link. Claiming the subtree is unobserved would suppress real lineage
+      // and publish a diagnostic whose message is false.
       return null;
     }
     // Refusing to follow the link means whatever it holds is unobserved; a
