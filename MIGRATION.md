@@ -58,8 +58,13 @@ If you installed it under the old path before this change, remove the orphaned
 copy once:
 
 ```bash
-./install.sh --uninstall agents/workflow-studio
+./install.sh --codex --uninstall agents/workflow-studio
 ```
+
+`--codex` is required. It is **not** the default: without it the uninstaller
+only clears the Claude skills directory and the now-broken Codex symlink in
+`~/.agents/skills/workflow-studio` (or the legacy `~/.codex/skills/`) survives.
+Passing `--codex` on an uninstall does not install anything.
 
 Marker, error-code, environment-variable and legacy hash spellings, the
 `schemas/workflow-ir.schema.json` `$id`, and the `scripts/workflow-studio.mjs`
