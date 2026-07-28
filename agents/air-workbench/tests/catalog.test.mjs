@@ -2400,3 +2400,139 @@ test("a subtree under SKIP_DIRECTORIES never publishes a record and costs no aut
   assert.equal(after.items[0].replaces_id, priorId);
   assert.equal(JSON.stringify(after).includes(directory), false);
 });
+
+test("a resolver-dropped nested root suppresses lineage the outer root cannot observe", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-nested-drop-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // The production layout: a grouped repository root that lexically contains
+  // the three project roots, but whose depth-0 filter only ever descends
+  // REPOSITORY_SKILL_GROUPS entries, so it can never observe `.agents/skills`.
+  const repo = join(directory, "repo");
+  const grouped = join(repo, "agents", "bar", "SKILL.md");
+  const nested = join(repo, ".agents", "skills", "foo", "SKILL.md");
+  await put(grouped, skill("nested-drop", "Before"));
+  await put(nested, skill("nested-drop", "Before"));
+  let roots = [
+    { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+    { label: "project-nested", path: join(repo, ".agents", "skills") },
+  ];
+  const catalog = createSkillCatalog({
+    rootResolver: () => ({ roots, status: "ready" }),
+    randomIdBytes: ids(),
+  });
+  const first = await catalog.initialize();
+  assert.equal(first.items.length, 1);
+  assert.equal(first.items[0].location_count, 2);
+  assert.deepEqual(
+    first.roots.map((root) => [root.source_label, root.status]),
+    [["repo-grouped", "ready"], ["project-nested", "ready"]],
+  );
+
+  // Control on the same nested layout: nothing is lost, so real adjacent
+  // lineage must still be published.
+  await writeFile(grouped, skill("nested-drop", "Middle"));
+  await writeFile(nested, skill("nested-drop", "Middle"));
+  const second = await catalog.refresh();
+  assert.equal(second.items.length, 1);
+  assert.equal(second.items[0].location_count, 2);
+  assert.equal(second.items[0].replaces_id, first.items[0].id);
+
+  // The defect: the nested root leaves the resolver result, nothing on disk
+  // changes there, and the outer grouped root lexically contains — but cannot
+  // observe — the abandoned authority.
+  roots = [
+    { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+  ];
+  await writeFile(grouped, skill("nested-drop", "After"));
+  const third = await catalog.refresh();
+  assert.deepEqual(
+    third.roots.map((root) => [root.source_label, root.status]),
+    [["repo-grouped", "ready"]],
+  );
+  assert.equal(third.truncated, false);
+  assert.deepEqual(third.limit_codes, []);
+  assert.equal(third.items.length, 1);
+  assert.notEqual(third.items[0].id, second.items[0].id);
+  assert.equal("replaces_id" in third.items[0], false);
+  // The abandoned authority is still on disk, byte-identical.
+  assert.deepEqual(
+    await readFile(nested),
+    skill("nested-drop", "Middle"),
+  );
+  assert.equal(JSON.stringify(third).includes(directory), false);
+});
+
+test("an ENOENT-missing nested root suppresses lineage the outer root cannot observe", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-nested-missing-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // Same nesting, but through the one canonicalRoots branch that deliberately
+  // does not clear authority: ENOENT on a never-discovered root.
+  const repo = join(directory, "repo");
+  const grouped = join(repo, "agents", "bar", "SKILL.md");
+  const nestedRoot = join(repo, ".agents", "skills");
+  await put(grouped, skill("nested-missing", "Before"));
+  await put(join(nestedRoot, "foo", "SKILL.md"), skill("nested-missing", "Before"));
+  const catalog = createSkillCatalog({
+    roots: [
+      { label: "repo-grouped", path: repo, kind: "repository", grouped: true },
+      { label: "project-nested", path: nestedRoot },
+    ],
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.items.length, 1);
+  assert.equal(before.items[0].location_count, 2);
+
+  await rm(nestedRoot, { recursive: true, force: true });
+  await writeFile(grouped, skill("nested-missing", "After"));
+  const after = await catalog.refresh();
+  assert.deepEqual(
+    after.roots.map((root) => [root.source_label, root.status]),
+    [["repo-grouped", "ready"], ["project-nested", "missing"]],
+  );
+  assert.equal(after.truncated, false);
+  assert.deepEqual(after.limit_codes, []);
+  assert.equal(after.items.length, 1);
+  assert.notEqual(after.items[0].id, before.items[0].id);
+  assert.equal("replaces_id" in after.items[0], false);
+  assert.equal(JSON.stringify(after).includes(directory), false);
+});
+
+test("non-nested sibling roots keep their existing drop and no-drop lineage", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-sibling-control-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // The control for the two tests above: siblings share no containment, so a
+  // drop was already refused and a no-drop generation was already published.
+  const one = join(directory, "one");
+  const two = join(directory, "two");
+  await put(join(one, "copy", "SKILL.md"), skill("sibling", "Before"));
+  await put(join(two, "copy", "SKILL.md"), skill("sibling", "Before"));
+  let roots = [
+    { label: "sibling-one", path: one },
+    { label: "sibling-two", path: two },
+  ];
+  const catalog = createSkillCatalog({
+    rootResolver: () => ({ roots, status: "ready" }),
+    randomIdBytes: ids(),
+  });
+  const first = await catalog.initialize();
+  assert.equal(first.items[0].location_count, 2);
+
+  await writeFile(join(one, "copy", "SKILL.md"), skill("sibling", "Middle"));
+  await writeFile(join(two, "copy", "SKILL.md"), skill("sibling", "Middle"));
+  const second = await catalog.refresh();
+  assert.equal(second.items[0].replaces_id, first.items[0].id);
+
+  roots = [{ label: "sibling-two", path: two }];
+  await writeFile(join(two, "copy", "SKILL.md"), skill("sibling", "After"));
+  const third = await catalog.refresh();
+  assert.deepEqual(
+    third.roots.map((root) => [root.source_label, root.status]),
+    [["sibling-two", "ready"]],
+  );
+  assert.equal("replaces_id" in third.items[0], false);
+  assert.equal(JSON.stringify(third).includes(directory), false);
+});

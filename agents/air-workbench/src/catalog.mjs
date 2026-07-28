@@ -1472,13 +1472,16 @@ async function maybeReadSkillDirectoryLink(
   ));
   if (!targetRoot) {
     if (isContained(root.physical, target)) {
-      // The link resolves inside the root that holds it, so this same walk
-      // reaches the target directly and everything under it is already
-      // observed and published. The link stays refused: following it would
-      // open a second traversal path into a subtree already queued and would
-      // cycle whenever the target is an ancestor of the link. But refusing it
-      // costs no observation, so claiming the subtree is unobserved would
-      // suppress real lineage and publish a diagnostic whose message is false.
+      // The link resolves inside the root that holds it. The targetRoot search
+      // above excludes this root (`candidate !== root`), so an own-root link is
+      // never followed into a record in ANY generation. Refusing it therefore
+      // costs no observation, whatever the target is: a target this walk
+      // reaches is published directly, and a target under SKIP_DIRECTORIES or
+      // past maxDepth is published by no generation at all. Following it would
+      // instead open a second traversal path into a subtree already queued and
+      // would cycle whenever the target is an ancestor of the link. Claiming
+      // the subtree is unobserved would suppress real lineage and publish a
+      // diagnostic whose message is false.
       return null;
     }
     // Refusing to follow the link means whatever it holds is unobserved; a
@@ -1798,10 +1801,23 @@ function privateSourceAuthorities(records) {
   return new Set(records.map((record) => record.path));
 }
 
+function privateSourceAuthorityRoots(records) {
+  return new Set(records.map((record) => record.allowedRoot));
+}
+
 function priorAuthoritiesRemainCovered(priorItems, roots) {
   for (const item of priorItems.values()) {
     for (const authority of item.authorities) {
       if (!roots.some((root) => isContained(root.physical, authority))) {
+        return false;
+      }
+    }
+    // Containment is not observation: a grouped repository root lexically
+    // contains a nested project root but its depth-0 filter can never descend
+    // into it. Only the root that actually observed the authority can vouch
+    // for it, so require that exact root to still be available.
+    for (const authorityRoot of item.authorityRoots) {
+      if (!roots.some((root) => root.physical === authorityRoot)) {
         return false;
       }
     }
@@ -1929,6 +1945,7 @@ function buildItems(state, priorIds, allocateOpaqueId) {
       hash,
       records,
       authorities: privateSourceAuthorities(records),
+      authorityRoots: privateSourceAuthorityRoots(records),
       publicItem: item,
     });
   }
