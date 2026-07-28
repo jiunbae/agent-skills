@@ -28,6 +28,7 @@ import {
   PRIVACY_CATEGORIES,
   SESSION_LIMITS,
   createSessionRegistry,
+  resolveSessionRoots,
 } from "../src/sessions.mjs";
 
 const SENTINEL = "AIR_PRIVATE_CANARY_63fcf4";
@@ -1911,10 +1912,158 @@ test("a symlinked jsonl entry is refused loudly, never silently", async (t) => {
   });
 
   const catalog = await registry.catalog({ refresh: true });
-  // `link.jsonl` is refused before authority can be inspected; the refusal is
-  // still an unobserved candidate and must be published. `link.txt` could
-  // never have carried a session and must not manufacture a diagnostic.
+  // Both links are refused before authority can be inspected, and both are
+  // unobserved candidates that must be published. A link's target type is
+  // unknowable without resolving it, which policy forbids, so `link.txt` is
+  // not "a file that could never have carried a session" — it may be a
+  // directory holding an entire session subtree. Its name proves nothing.
   assert.equal(catalog.items.length, 1);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: ROOT_UNAVAILABLE,
+    count: 2,
+  }]);
+  assert.equal(catalog.truncated, true);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("a directory symlink is refused loudly, never silently", async (t) => {
+  const dirs = await fixture(t);
+  const outside = join(dirs.root, "outside");
+  const archived = join(outside, "2026", "07");
+  await mkdir(archived, { recursive: true });
+  await writeFile(
+    join(archived, "hidden.jsonl"),
+    `{"prompt":"${SENTINEL}"}\n`,
+  );
+  const realSub = join(dirs.codex, "real-sub");
+  await mkdir(realSub);
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  await writeFile(join(realSub, "inner.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  // `real-sub` proves subtrees are walked and published, so `archive` stands
+  // exactly where a walked subtree would have been.
+  await symlink(join(outside, "2026"), join(dirs.codex, "archive"), "dir");
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  const catalog = await registry.catalog({ refresh: true });
+  assert.equal(catalog.items.length, 2);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: ROOT_UNAVAILABLE,
+    count: 1,
+  }]);
+  assert.equal(catalog.truncated, true);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("an absent default session root is a complete observation of nothing", async (t) => {
+  const dirs = await fixture(t);
+  const home = join(dirs.root, "home");
+  const project = join(dirs.root, "project");
+  const installed = join(home, ".codex", "sessions");
+  await mkdir(installed, { recursive: true });
+  await mkdir(project);
+  await writeFile(join(installed, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  // `<home>/.claude/projects` and both project-local roots were never
+  // installed. Nothing observable exists there, so nothing was left
+  // unobserved and the listing is complete.
+  const roots = resolveSessionRoots({ cwd: project, home });
+  assert.deepEqual(roots.map((root) => root.path), [installed]);
+
+  const registry = createSessionRegistry({
+    roots,
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  assert.equal(catalog.items.length, 1);
+  assert.deepEqual(catalog.diagnostics, []);
+  assert.equal(catalog.truncated, false);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("a default session root that exists but cannot be observed still publishes incompleteness", async (t) => {
+  const dirs = await fixture(t);
+  const target = join(dirs.root, "link-target");
+  await mkdir(target);
+  await writeFile(
+    join(target, `${SENTINEL}.jsonl`),
+    `{"prompt":"${SENTINEL}"}\n`,
+  );
+
+  const fileHome = join(dirs.root, "file-home");
+  await mkdir(join(fileHome, ".codex"), { recursive: true });
+  await writeFile(
+    join(fileHome, ".codex", "sessions"),
+    `{"prompt":"${SENTINEL}"}\n`,
+  );
+
+  const linkHome = join(dirs.root, "link-home");
+  await mkdir(join(linkHome, ".codex"), { recursive: true });
+  await symlink(target, join(linkHome, ".codex", "sessions"), "dir");
+
+  // Absence is filtered; existence is not. A default root that is present but
+  // is the wrong type is a refusal to observe and must still settle.
+  for (const home of [fileHome, linkHome]) {
+    const roots = resolveSessionRoots({
+      cwd: join(dirs.root, "never-installed"),
+      home,
+    });
+    assert.deepEqual(
+      roots.map((root) => root.path),
+      [join(home, ".codex", "sessions")],
+    );
+    const registry = createSessionRegistry({
+      roots,
+      randomBytes: deterministicRandom(),
+    });
+    const catalog = await registry.catalog({ refresh: true });
+    assert.deepEqual(catalog.items, []);
+    assert.deepEqual(catalog.diagnostics, [{
+      severity: "warning",
+      code: ROOT_UNAVAILABLE,
+      count: 1,
+    }]);
+    assert.equal(catalog.truncated, true);
+    assertPublishedIncompleteness(catalog, dirs);
+  }
+});
+
+test("an unreadable default session root still publishes incompleteness", {
+  skip: PERMISSIONS_ARE_ENFORCED
+    ? false
+    : "directory permissions are not enforced for this process",
+}, async (t) => {
+  const dirs = await fixture(t);
+  const home = join(dirs.root, "locked-home");
+  const installed = join(home, ".codex", "sessions");
+  await mkdir(installed, { recursive: true });
+  await writeFile(join(installed, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  await chmod(installed, 0o000);
+  let catalog;
+  let roots;
+  try {
+    roots = resolveSessionRoots({
+      cwd: join(dirs.root, "never-installed"),
+      home,
+    });
+    const registry = createSessionRegistry({
+      roots,
+      randomBytes: deterministicRandom(),
+    });
+    catalog = await registry.catalog({ refresh: true });
+  } finally {
+    await chmod(installed, 0o700);
+  }
+
+  // The root exists, so it survives the absence filter and its unreadability
+  // is genuine incompleteness — a real session was hidden from the scan.
+  assert.deepEqual(roots.map((root) => root.path), [installed]);
+  assert.deepEqual(catalog.items, []);
   assert.deepEqual(catalog.diagnostics, [{
     severity: "warning",
     code: ROOT_UNAVAILABLE,

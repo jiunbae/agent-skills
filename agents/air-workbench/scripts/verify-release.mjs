@@ -55,7 +55,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "air-cli-server.test.mjs": 12,
   "air-spec.test.mjs": 2,
   "air.test.mjs": 19,
-  "catalog.test.mjs": 32,
+  "catalog.test.mjs": 35,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
   "editor.test.mjs": 49,
@@ -66,7 +66,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
   "session-api.test.mjs": 13,
-  "sessions.test.mjs": 37,
+  "sessions.test.mjs": 41,
 });
 const NON_TEXT_EXTENSIONS = new Set([
   ".7z",

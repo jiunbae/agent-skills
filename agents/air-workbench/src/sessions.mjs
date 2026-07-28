@@ -4,7 +4,7 @@ import {
   createHmac,
   randomBytes as cryptoRandomBytes,
 } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, lstatSync } from "node:fs";
 import {
   lstat,
   open,
@@ -299,6 +299,26 @@ function normalizeRoot(root) {
   });
 }
 
+function defaultRootIsPresent(path) {
+  // These four roots are *probed* locations, not configured demands: they are
+  // the places a provider would install its sessions if it were installed at
+  // all. An absent one is a complete observation of nothing, not a refusal to
+  // observe, so it must not settle the catalog incomplete — incompleteness
+  // requires that something observable was not observed.
+  //
+  // Only ENOENT proves absence. Every other error — EACCES on an ancestor,
+  // ELOOP, EIO — means something may well be there and could not be seen, so
+  // the root is kept and `authorizeRoot` publishes the refusal. A root that
+  // exists but is unreadable, a regular file, or a symbolic link also passes
+  // this filter and settles incomplete exactly as before.
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    return error?.code !== "ENOENT";
+  }
+}
+
 export function resolveSessionRoots({
   cwd = process.cwd(),
   home = process.env.HOME || homedir(),
@@ -325,7 +345,8 @@ export function resolveSessionRoots({
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
-      }),
+      })
+      .filter((root) => defaultRootIsPresent(root.path)),
   );
 }
 
@@ -886,6 +907,16 @@ export function createSessionRegistry({
             break;
           }
           const locator = resolve(directory, dirent.name);
+          if (dirent.isSymbolicLink()) {
+            // A link reports `isDirectory() === false` and its name carries no
+            // type, so it would otherwise fall past the directory branch and
+            // out through the name filter unobserved. Its target's type cannot
+            // be known without resolving it, and resolving is forbidden here,
+            // so the link stands where either a session subtree or a session
+            // file could have been. Refuse it loudly whatever it is named.
+            markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
+            continue;
+          }
           if (dirent.isDirectory()) {
             if (depth >= boundedLimits.maxDepth) {
               // The depth bound leaves this subtree unobserved. It is a
@@ -918,10 +949,11 @@ export function createSessionRegistry({
           }
           if (!JSONL.test(dirent.name)) continue;
           if (!dirent.isFile()) {
-            // Anything else named `*.jsonl` — a symbolic link, FIFO, socket
-            // or device — stands where a session file could have been but is
-            // refused before its authority can be inspected. Publish the
-            // refusal rather than dropping the candidate without a trace.
+            // Anything else named `*.jsonl` — a FIFO, socket or device;
+            // symbolic links are already refused above — stands where a
+            // session file could have been but is refused before its
+            // authority can be inspected. Publish the refusal rather than
+            // dropping the candidate without a trace.
             markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
             continue;
           }
