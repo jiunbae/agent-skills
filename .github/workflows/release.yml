@@ -22,21 +22,29 @@ jobs:
       - name: Count skills
         id: skills
         run: |
-          COUNT=$(find . -name "SKILL.md" -type f | wc -l | tr -d ' ')
+          # A skill is exactly <group>/<skill>/SKILL.md. Fixed depth keeps
+          # example and fixture SKILL.md files shipped inside a skill from
+          # being counted as skills of their own.
+          COUNT=$(find . -mindepth 3 -maxdepth 3 -name "SKILL.md" -type f -not -path "./.git/*" | wc -l | tr -d ' ')
           echo "COUNT=$COUNT" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         id: notes
         run: |
           # 스킬 그룹별 개수
-          AGENTS=$(find agents -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-          DEVELOPMENT=$(find development -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-          BUSINESS=$(find business -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-          INTEGRATIONS=$(find integrations -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-          ML=$(find ml -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-          CONTEXT=$(find context -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-          META=$(find meta -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-          SECURITY=$(find security -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+          count_group() {
+            find "$1" -mindepth 2 -maxdepth 2 -name "SKILL.md" -type f 2>/dev/null |
+              wc -l | tr -d ' '
+          }
+          AGENTS=$(count_group agents)
+          DEVELOPMENT=$(count_group development)
+          BUSINESS=$(count_group business)
+          INTEGRATIONS=$(count_group integrations)
+          ML=$(count_group ml)
+          CONTEXT=$(count_group context)
+          META=$(count_group meta)
+          SECURITY=$(count_group security)
+          COMMON=$(count_group common)
 
           cat << EOF > release_notes.md
           ## agent-skills ${{ steps.version.outputs.VERSION }}
@@ -61,10 +69,11 @@ jobs:
           | context | ${CONTEXT} |
           | meta | ${META} |
           | security | ${SECURITY} |
+          | common | ${COMMON} |
 
           ### Changes
 
-          See [CHANGELOG](https://github.com/open330/agt/blob/main/CHANGELOG.md) for details.
+          See [CHANGELOG](https://github.com/jiunbae/agent-skills/blob/main/CHANGELOG.md) for details.
           EOF
 
       - name: Create Release
