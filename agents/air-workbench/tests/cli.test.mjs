@@ -18,10 +18,10 @@ import { delimiter, join, resolve } from "node:path";
 import test from "node:test";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
-const CLI = join(ROOT, "agents/workflow-studio/scripts/workflow-studio.mjs");
+const CLI = join(ROOT, "agents/air-workbench/scripts/workflow-studio.mjs");
 const FAKE_AGENT = join(
   ROOT,
-  "agents/workflow-studio/tests/fixtures/fake-agent.mjs",
+  "agents/air-workbench/tests/fixtures/fake-agent.mjs",
 );
 
 function invoke(args, { cwd = ROOT, env } = {}) {

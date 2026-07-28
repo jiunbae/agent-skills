@@ -20,7 +20,7 @@ node scripts/air.mjs --help
 ```
 
 AIR is a project-defined format, not an IANA or standards-body format.
-`agents/workflow-studio/` is the retained physical package path; “Workflow
+`agents/air-workbench/` is the retained physical package path; “Workflow
 Studio” identifies only `scripts/workflow-studio.mjs`, its compatibility
 commands, and legacy artifacts.
 

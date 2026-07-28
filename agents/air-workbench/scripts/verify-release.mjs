@@ -297,9 +297,9 @@ async function verifyCopiedInstall() {
     "--quiet",
     "--target",
     target,
-    "agents/workflow-studio",
+    "agents/air-workbench",
   ], REPOSITORY);
-  const installed = join(target, "workflow-studio");
+  const installed = join(target, "air-workbench");
   accessSync(join(installed, "SKILL.md"), fsConstants.R_OK);
   assert.deepEqual(namedEntries(installed, "node_modules"), []);
   const offlineEnvironment = { ...process.env, npm_config_offline: "true" };

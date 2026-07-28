@@ -828,7 +828,7 @@ export async function resolveSourceCheckoutRoot({
   const expectedComponent = join(
     repositoryRoot,
     "agents",
-    "workflow-studio",
+    "air-workbench",
   );
   try {
     const [

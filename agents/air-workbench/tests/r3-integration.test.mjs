@@ -44,7 +44,7 @@ import {
 
 const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(TEST_DIRECTORY, "../../..");
-const CLI = join(ROOT, "agents/workflow-studio/scripts/workflow-studio.mjs");
+const CLI = join(ROOT, "agents/air-workbench/scripts/workflow-studio.mjs");
 const FAKE_AGENT = join(TEST_DIRECTORY, "fixtures/fake-agent.mjs");
 
 function workflowFixture(sourcePath = "/virtual/r3-integration/SKILL.md") {

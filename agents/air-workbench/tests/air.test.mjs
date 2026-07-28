@@ -528,7 +528,7 @@ test("activated AIR Markdown reopens by bytes with stable authoritative semantic
   const carrier = await readFile(
     resolve(
       ROOT,
-      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+      "agents/air-workbench/examples/hello-agent/workflow.air.md",
     ),
   );
   const expected = decodeAirMarkdownArtifact(carrier);
@@ -594,7 +594,7 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
   const carrier = await readFile(
     resolve(
       ROOT,
-      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+      "agents/air-workbench/examples/hello-agent/workflow.air.md",
     ),
   );
   const marker = carrier.toString("utf8").match(
@@ -715,7 +715,7 @@ test("activated Skill recognition preserves hostile carrier-like Markdown or fai
 
 test("terminal AIR carrier claims missing their final newline fail closed", async () => {
   const lfCarrier = await readFile(
-    resolve(ROOT, "agents/workflow-studio/examples/hello-agent/workflow.air.md"),
+    resolve(ROOT, "agents/air-workbench/examples/hello-agent/workflow.air.md"),
   );
   const crlfSource = Buffer.from(
     "---\r\nname: missing-crlf\r\ndescription: Missing CRLF carrier newline\r\n---\r\n\r\n## Workflow\r\n### Step 1: Inspect\r\nInspect safely.\r\n",
@@ -748,7 +748,7 @@ test("recognized terminal AIR carriers propagate integrity failures", async () =
   const carrier = await readFile(
     resolve(
       ROOT,
-      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+      "agents/air-workbench/examples/hello-agent/workflow.air.md",
     ),
   );
   const decoded = decodeAirMarkdownArtifact(carrier);
@@ -788,7 +788,7 @@ test("terminal AIR object claims fail closed for wrong or missing carrier discri
   const carrier = await readFile(
     resolve(
       ROOT,
-      "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+      "agents/air-workbench/examples/hello-agent/workflow.air.md",
     ),
   );
   const claimed = [

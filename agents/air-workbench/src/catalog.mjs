@@ -2072,7 +2072,9 @@ async function scanCatalog({
   return {
     snapshot,
     internals,
-    authorityComplete: state.authorityComplete,
+    // Authority and bounds are one answer, not two channels a caller has to
+    // remember to combine: a bounded scan observed less than it enumerated.
+    authorityComplete: state.authorityComplete && !responseTruncated,
   };
 }
 
@@ -2233,7 +2235,7 @@ class SkillCatalog {
       );
       this.#items = internals;
       this.#idsByHash = nextIdsByHash;
-      this.#authorityComplete = authorityComplete && !snapshot.truncated;
+      this.#authorityComplete = authorityComplete;
       this.#snapshot = snapshot;
       return snapshot;
     }).catch((error) => {

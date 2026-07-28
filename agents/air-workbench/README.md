@@ -125,7 +125,7 @@ evidence remains asymmetric and may be `unknown`.
 
 ## Legacy compatibility
 
-The physical package path remains `agents/workflow-studio/`. The current
+The physical package path remains `agents/air-workbench/`. The current
 executable entry, Workflow IR `1.0`, exact `workflow-studio:v1` Markdown
 metadata, and tokenized `/api/artifact` route remain supported compatibility
 boundaries:
@@ -323,7 +323,7 @@ npm run build
 npm run check:generated
 ```
 
-Run those commands from `agents/workflow-studio`. Commit both files in
+Run those commands from `agents/air-workbench`. Commit both files in
 `assets/generated/` whenever their source or lockfile changes, and keep
 `THIRD_PARTY_NOTICES.md` synchronized with the production bundle. The local
 server serves only these checked-in JavaScript and CSS assets; it never fetches
@@ -339,7 +339,7 @@ Run the complete release inventory from the repository root:
 ```bash
 WORKFLOW_STUDIO_PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs \
 WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE=/path/to/chromium \
-node agents/workflow-studio/scripts/verify-release.mjs
+node agents/air-workbench/scripts/verify-release.mjs
 ```
 
 The default delivery mode also requires a clean worktree, including all

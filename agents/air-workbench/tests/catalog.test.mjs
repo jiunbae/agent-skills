@@ -877,7 +877,7 @@ test("Workbench proves a source checkout, discovers only grouped Skills, and doe
   const directory = await mkdtemp(join(tmpdir(), "air-source-checkout-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
 
-  const componentRoot = join(ROOT, "agents", "workflow-studio");
+  const componentRoot = join(ROOT, "agents", "air-workbench");
   assert.equal(
     await resolveSourceCheckoutRoot({
       componentRoot,
@@ -914,7 +914,7 @@ test("Workbench proves a source checkout, discovers only grouped Skills, and doe
     installedHome,
     ".agents",
     "skills",
-    "workflow-studio",
+    "air-workbench",
   );
   await put(
     join(installedComponent, "SKILL.md"),
@@ -1024,7 +1024,7 @@ test("catalog recognizes activated AIR carriers without reparsing their graph", 
   t.after(() => rm(directory, { recursive: true, force: true }));
   const carrier = await readFile(join(
     ROOT,
-    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    "agents/air-workbench/examples/hello-agent/workflow.air.md",
   ));
   const expected = decodeAirMarkdownArtifact(carrier).artifact;
   await put(join(directory, "hello-agent", "SKILL.md"), carrier);

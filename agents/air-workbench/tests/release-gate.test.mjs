@@ -137,7 +137,7 @@ test("release help and README disclose the untracked worktree boundary", () => {
 
 test("live privacy scanner requires and scans every repository installer", () => {
   const repository = mkdtempSync(join(tmpdir(), "air-privacy-release-"));
-  const component = join(repository, "agents/workflow-studio");
+  const component = join(repository, "agents/air-workbench");
   const installers = ["install.sh", "install.ps1", "install.cmd", "setup.sh"];
   const safePlaceholders = [
     ["", "Users", "<name>", "project"].join("/"),
@@ -326,7 +326,7 @@ test("live privacy scanner requires and scans every repository installer", () =>
     writeFileSync(boundary, Buffer.alloc(2 * 1024 * 1024 + 1, "x"));
     assert.throws(
       () => verifyPrivacySurfaces({ repository, component }),
-      /Privacy scan file too large: agents\/workflow-studio\/privacy-boundary\.txt/,
+      /Privacy scan file too large: agents\/air-workbench\/privacy-boundary\.txt/,
     );
     rmSync(boundary);
   } finally {

@@ -31,10 +31,10 @@ import { createStudioServer } from "../src/server.mjs";
 
 const run = promisify(execFile);
 const ROOT = resolve(import.meta.dirname, "../../..");
-const CLI = join(ROOT, "agents/workflow-studio/scripts/workflow-studio.mjs");
-const AIR = join(ROOT, "agents/workflow-studio/scripts/air.mjs");
-const ASSETS = join(ROOT, "agents/workflow-studio/assets");
-const SCHEMAS = join(ROOT, "agents/workflow-studio/schemas");
+const CLI = join(ROOT, "agents/air-workbench/scripts/workflow-studio.mjs");
+const AIR = join(ROOT, "agents/air-workbench/scripts/air.mjs");
+const ASSETS = join(ROOT, "agents/air-workbench/assets");
+const SCHEMAS = join(ROOT, "agents/air-workbench/schemas");
 const SKILL = Buffer.from(
   "---\nname: air-cli-test\ndescription: Synthetic AIR CLI fixture\n---\n\n## Workflow\n\n### Step 1: Inspect\nInspect safely.\n",
 );
@@ -263,7 +263,7 @@ test("air import recognizes an activated carrier by bytes and does not nest it",
   t.after(() => rm(directory, { recursive: true, force: true }));
   const carrier = await readFile(join(
     ROOT,
-    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    "agents/air-workbench/examples/hello-agent/workflow.air.md",
   ));
   const expected = decodeAirMarkdownArtifact(carrier).artifact;
   let activated = join(directory, "ACTIVATED.md");
@@ -443,7 +443,7 @@ test("malformed AIR carrier claims reach CLI, catalog, and HTTP", async (t) => {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const carrier = await readFile(join(
     ROOT,
-    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    "agents/air-workbench/examples/hello-agent/workflow.air.md",
   ));
   const crlfCarrier = encodeAirMarkdownArtifact(
     migrateLegacyToAir(importSkillBytes(Buffer.from(
@@ -693,7 +693,7 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
   const integrityRoot = join(directory, "integrity-root");
   const checkedCarrier = await readFile(join(
     ROOT,
-    "agents/workflow-studio/examples/hello-agent/workflow.air.md",
+    "agents/air-workbench/examples/hello-agent/workflow.air.md",
   ));
   const checkedSource = decodeAirMarkdownArtifact(checkedCarrier).logicalSource;
   const corruptedCarrier = Buffer.from(checkedCarrier);
@@ -975,7 +975,7 @@ test("AIR Workbench URL preserves explicit initial artifact authority", async (t
   t.after(() => rm(directory, { recursive: true, force: true }));
   const artifact = join(
     ROOT,
-    "agents/workflow-studio/examples/hello-agent/workflow.air.json",
+    "agents/air-workbench/examples/hello-agent/workflow.air.json",
   );
   const child = spawn(process.execPath, [
     AIR,
