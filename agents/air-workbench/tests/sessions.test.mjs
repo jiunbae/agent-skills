@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import {
   closeSync,
@@ -7,10 +8,12 @@ import {
 } from "node:fs";
 import {
   appendFile,
+  chmod,
   link,
   mkdir,
   mkdtemp,
   open,
+  readFile,
   rename,
   rm,
   symlink,
@@ -75,6 +78,21 @@ function assertNoRawHashOracles(value, rawValues) {
     const oracle = createHash("sha256").update(rawValue).digest("hex");
     assert.equal(response.includes(oracle), false, `raw SHA-256 oracle ${oracle}`);
   }
+}
+
+const SESSIONS_SOURCE = new URL("../src/sessions.mjs", import.meta.url);
+const ROOT_UNAVAILABLE = "AIR_SESSION_ROOT_UNAVAILABLE";
+// `chmod` is only meaningful for an unprivileged process: root traverses a
+// directory regardless of its permission bits, so the authority-failure
+// fixtures below cannot be constructed as root.
+const PERMISSIONS_ARE_ENFORCED = process.getuid?.() !== 0;
+
+function assertPublishedIncompleteness(catalog, dirs) {
+  // A published diagnostic is an admission that the listing is not a complete
+  // observation, so `truncated` must never be false while diagnostics exist.
+  assert.equal(catalog.diagnostics.length > 0 ? catalog.truncated : true, true);
+  assert.equal(JSON.stringify(catalog).includes(SENTINEL), false);
+  assert.equal(JSON.stringify(catalog).includes(dirs.root), false);
 }
 
 async function fixture(t) {
@@ -1739,4 +1757,275 @@ test("hard-linked overlapping roots retain unique collision-safe authority", asy
   );
   assert.equal(JSON.stringify({ reversedCatalog, reversedSnapshots })
     .includes(dirs.root), false);
+});
+
+test("unavailable configured roots publish incompleteness, not a complete catalog", async (t) => {
+  const dirs = await fixture(t);
+  const missing = join(dirs.root, "missing-root");
+  const notADirectory = join(dirs.root, "root-file");
+  const aliasTarget = join(dirs.root, "alias-target");
+  const alias = join(dirs.root, "alias-root");
+  await writeFile(notADirectory, `{"prompt":"${SENTINEL}"}\n`);
+  await mkdir(aliasTarget);
+  await writeFile(
+    join(aliasTarget, `${SENTINEL}.jsonl`),
+    `{"prompt":"${SENTINEL}"}\n`,
+  );
+  await symlink(aliasTarget, alias, "dir");
+
+  for (const path of [missing, notADirectory, alias]) {
+    const registry = createSessionRegistry({
+      roots: [{ path, provider: "codex" }],
+      randomBytes: deterministicRandom(),
+    });
+    const catalog = await registry.catalog({ refresh: true });
+    assert.deepEqual(catalog.items, []);
+    assert.deepEqual(catalog.diagnostics, [{
+      severity: "warning",
+      code: ROOT_UNAVAILABLE,
+      count: 1,
+    }]);
+    assert.equal(catalog.truncated, true);
+    assertPublishedIncompleteness(catalog, dirs);
+  }
+});
+
+test("an unreadable directory publishes incompleteness for the sessions it hides", {
+  skip: PERMISSIONS_ARE_ENFORCED
+    ? false
+    : "directory permissions are not enforced for this process",
+}, async (t) => {
+  const dirs = await fixture(t);
+  const sub = join(dirs.codex, "sub");
+  await mkdir(sub);
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  await writeFile(join(sub, "inner.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  await chmod(sub, 0o000);
+  let catalog;
+  try {
+    catalog = await registry.catalog({ refresh: true });
+  } finally {
+    await chmod(sub, 0o700);
+  }
+
+  // `inner.jsonl` is a real session that the scan could not observe.
+  assert.equal(catalog.items.length, 1);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: ROOT_UNAVAILABLE,
+    count: 1,
+  }]);
+  assert.equal(catalog.truncated, true);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("a readable but untraversable directory publishes incompleteness", {
+  skip: PERMISSIONS_ARE_ENFORCED
+    ? false
+    : "directory permissions are not enforced for this process",
+}, async (t) => {
+  const dirs = await fixture(t);
+  const sub = join(dirs.codex, "sub");
+  const deeper = join(sub, "deeper");
+  await mkdir(deeper, { recursive: true });
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  await writeFile(join(sub, "inner.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  // Mode 0o444 is the load-bearing trick: `readdir` needs `r` and succeeds,
+  // while every child `lstat` needs `x` and fails. It is the only
+  // deterministic, non-racy way to make `inspectAuthorizedEntry` return null.
+  await chmod(sub, 0o444);
+  let catalog;
+  try {
+    catalog = await registry.catalog({ refresh: true });
+  } finally {
+    await chmod(sub, 0o700);
+  }
+
+  assert.equal(catalog.items.length, 1);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: ROOT_UNAVAILABLE,
+    count: 2,
+  }]);
+  assert.equal(catalog.truncated, true);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("a readable but untraversable root publishes incompleteness", {
+  skip: PERMISSIONS_ARE_ENFORCED
+    ? false
+    : "directory permissions are not enforced for this process",
+}, async (t) => {
+  const dirs = await fixture(t);
+  await mkdir(join(dirs.codex, "sub"));
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  await chmod(dirs.codex, 0o444);
+  let catalog;
+  try {
+    catalog = await registry.catalog({ refresh: true });
+  } finally {
+    await chmod(dirs.codex, 0o700);
+  }
+
+  // The listing is byte-identical in shape to an empty healthy catalog, so
+  // `truncated` is the only channel that can carry the refusal.
+  assert.deepEqual(catalog.items, []);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: ROOT_UNAVAILABLE,
+    count: 2,
+  }]);
+  assert.equal(catalog.truncated, true);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("a symlinked jsonl entry is refused loudly, never silently", async (t) => {
+  const dirs = await fixture(t);
+  const outside = join(dirs.root, "outside");
+  await mkdir(outside);
+  await writeFile(
+    join(outside, "target.jsonl"),
+    `{"prompt":"${SENTINEL}"}\n`,
+  );
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  await symlink(join(outside, "target.jsonl"), join(dirs.codex, "link.jsonl"));
+  await symlink(join(outside, "target.jsonl"), join(dirs.codex, "link.txt"));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  const catalog = await registry.catalog({ refresh: true });
+  // `link.jsonl` is refused before authority can be inspected; the refusal is
+  // still an unobserved candidate and must be published. `link.txt` could
+  // never have carried a session and must not manufacture a diagnostic.
+  assert.equal(catalog.items.length, 1);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: ROOT_UNAVAILABLE,
+    count: 1,
+  }]);
+  assert.equal(catalog.truncated, true);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("a fully observed catalog never claims false incompleteness", async (t) => {
+  const dirs = await fixture(t);
+  const sub = join(dirs.codex, "sub");
+  await mkdir(sub);
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  await writeFile(join(sub, "inner.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  await writeFile(join(dirs.codex, "notes.txt"), `${SENTINEL}\n`);
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  const catalog = await registry.catalog({ refresh: true });
+  assert.equal(catalog.items.length, 2);
+  assert.deepEqual(catalog.diagnostics, []);
+  assert.equal(catalog.truncated, false);
+  assertPublishedIncompleteness(catalog, dirs);
+});
+
+test("session diagnostics cannot be recorded without publishing incompleteness", async (t) => {
+  const dirs = await fixture(t);
+  const source = await readFile(SESSIONS_SOURCE, "utf8");
+  // The diagnostic count and `truncated` must be written by one statement, so
+  // no future branch can record a diagnostic and forget the completeness bit.
+  assert.equal(/\baddDiagnostic\b/u.test(source), false);
+  assert.equal(/\bmarkIncomplete\b/u.test(source), true);
+
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  const healthy = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const bounded = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    limits: { ...SESSION_LIMITS, maxCatalogItems: 0 },
+    randomBytes: deterministicRandom(),
+  });
+  const unauthorized = createSessionRegistry({
+    roots: [{ path: join(dirs.root, "absent"), provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+
+  for (const registry of [healthy, bounded, unauthorized]) {
+    const catalog = await registry.catalog({ refresh: true });
+    assertPublishedIncompleteness(catalog, dirs);
+  }
+});
+
+test("the session depth bound truncates the listing it leaves unobserved", async (t) => {
+  const dirs = await fixture(t);
+  // A directory at the depth bound is never queued, so everything under it is
+  // unobserved. The spec requires `truncated: true` for a reached bound just
+  // as it does for an unproven authority.
+  const nested = join(dirs.codex, "one", "two");
+  await mkdir(nested, { recursive: true });
+  await writeFile(join(nested, `${SENTINEL}-deep.jsonl`), `{"prompt":"${SENTINEL}"}\n`);
+  await writeFile(join(dirs.codex, "shallow.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  const bounded = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    limits: { ...SESSION_LIMITS, maxDepth: 1 },
+    randomBytes: deterministicRandom(),
+  });
+  const boundedCatalog = await bounded.catalog({ refresh: true });
+  assert.equal(boundedCatalog.items.length, 1);
+  assert.equal(boundedCatalog.truncated, true);
+  assertPublishedIncompleteness(boundedCatalog, dirs);
+
+  const complete = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const completeCatalog = await complete.catalog({ refresh: true });
+  assert.equal(completeCatalog.items.length, 2);
+  assert.equal(completeCatalog.truncated, false);
+  assertPublishedIncompleteness(completeCatalog, dirs);
+});
+
+test("a non-regular jsonl entry is refused loudly whatever its type", async (t) => {
+  const dirs = await fixture(t);
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+  // A FIFO stands exactly where a session file could have been, so it must
+  // settle incompleteness like a symbolic link rather than vanish silently.
+  const fifo = join(dirs.codex, `${SENTINEL}-pipe.jsonl`);
+  const made = spawnSync("mkfifo", [fifo]);
+  if (made.status !== 0) {
+    t.skip("mkfifo is unavailable on this host");
+    return;
+  }
+  await writeFile(join(dirs.codex, "note.txt"), "not a session stream\n");
+
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  assert.equal(catalog.items.length, 1);
+  assert.equal(catalog.truncated, true);
+  assert.deepEqual(catalog.diagnostics, [{
+    severity: "warning",
+    code: "AIR_SESSION_ROOT_UNAVAILABLE",
+    count: 1,
+  }]);
+  assertPublishedIncompleteness(catalog, dirs);
 });

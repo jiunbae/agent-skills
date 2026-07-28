@@ -236,6 +236,14 @@ rather than publish an ID collision or a last-write-wins alias. It retains only
 the bounded current catalog generation; removed or truncated identities are
 pruned and are never aliased to a different source.
 
+A session catalog MUST publish `truncated: true` whenever the listing is not a
+complete observation of every configured root, whether because a published
+bound was reached or because authority over a root, directory, or entry could
+not be established. A catalog with `truncated: false` asserts complete,
+authorized observation. Every published diagnostic therefore implies
+`truncated: true`, and the diagnostic code remains the only channel that
+distinguishes a bound from an authority failure.
+
 ## 5. Canonicalization and identity
 
 AIR uses RFC 8785 JSON Canonicalization Scheme bytes over I-JSON-compatible

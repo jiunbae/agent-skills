@@ -825,14 +825,19 @@ export function createSessionRegistry({
     let files = 0;
     let truncated = roots.length > boundedLimits.maxRoots;
 
-    const addDiagnostic = (code) => {
+    // `truncated` means: this listing is not a complete observation of the
+    // configured roots — because a published bound was reached OR because
+    // authority could not be proven. Recording a diagnostic and publishing
+    // that incompleteness are one statement so no branch can forget either.
+    const markIncomplete = (code) => {
       counts.set(code, (counts.get(code) ?? 0) + 1);
+      truncated = true;
     };
 
     for (const root of normalizedRoots) {
       const authorization = await authorizeRoot(root);
       if (authorization === null) {
-        addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+        markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
         continue;
       }
       const queue = [{
@@ -842,8 +847,7 @@ export function createSessionRegistry({
       }];
       while (queue.length > 0) {
         if (now() - started > boundedLimits.maxDurationMs) {
-          addDiagnostic("AIR_SESSION_TIME_LIMIT");
-          truncated = true;
+          markIncomplete("AIR_SESSION_TIME_LIMIT");
           queue.length = 0;
           break;
         }
@@ -854,14 +858,14 @@ export function createSessionRegistry({
             directoryChain,
           ))
         ) {
-          addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+          markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
           continue;
         }
         let dirents;
         try {
           dirents = await readdir(directory, { withFileTypes: true });
         } catch {
-          addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+          markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
           continue;
         }
         if (
@@ -870,28 +874,35 @@ export function createSessionRegistry({
             directoryChain,
           ))
         ) {
-          addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+          markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
           continue;
         }
         dirents.sort((left, right) => left.name.localeCompare(right.name));
         for (const dirent of dirents) {
           entries += 1;
           if (entries > boundedLimits.maxEntries) {
-            addDiagnostic("AIR_SESSION_ENTRY_LIMIT");
-            truncated = true;
+            markIncomplete("AIR_SESSION_ENTRY_LIMIT");
             queue.length = 0;
             break;
           }
           const locator = resolve(directory, dirent.name);
           if (dirent.isDirectory()) {
-            if (depth < boundedLimits.maxDepth) {
+            if (depth >= boundedLimits.maxDepth) {
+              // The depth bound leaves this subtree unobserved. It is a
+              // published bound with no code in the closed diagnostic enum,
+              // so it truncates the listing exactly as the root-count bound
+              // and the byte-shrink loop already do.
+              truncated = true;
+              continue;
+            }
+            {
               const accepted = await inspectAuthorizedEntry(
                 authorization,
                 locator,
                 "directory",
               );
               if (accepted === null) {
-                addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+                markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
                 continue;
               }
               queue.push({
@@ -905,11 +916,18 @@ export function createSessionRegistry({
             }
             continue;
           }
-          if (!dirent.isFile() || !JSONL.test(dirent.name)) continue;
+          if (!JSONL.test(dirent.name)) continue;
+          if (!dirent.isFile()) {
+            // Anything else named `*.jsonl` — a symbolic link, FIFO, socket
+            // or device — stands where a session file could have been but is
+            // refused before its authority can be inspected. Publish the
+            // refusal rather than dropping the candidate without a trace.
+            markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
+            continue;
+          }
           files += 1;
           if (files > boundedLimits.maxFiles) {
-            addDiagnostic("AIR_SESSION_FILE_LIMIT");
-            truncated = true;
+            markIncomplete("AIR_SESSION_FILE_LIMIT");
             queue.length = 0;
             break;
           }
@@ -919,7 +937,7 @@ export function createSessionRegistry({
             "file",
           );
           if (accepted === null) {
-            addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+            markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
             continue;
           }
           const { info } = accepted;
@@ -979,7 +997,7 @@ export function createSessionRegistry({
           candidate,
         ) === null
       ) {
-        addDiagnostic("AIR_SESSION_ROOT_UNAVAILABLE");
+        markIncomplete("AIR_SESSION_ROOT_UNAVAILABLE");
         continue;
       }
       publishableCandidates.push(candidate);
@@ -995,8 +1013,7 @@ export function createSessionRegistry({
     );
     if (candidates.length > retainedCatalogLimit) {
       candidates.length = retainedCatalogLimit;
-      addDiagnostic("AIR_SESSION_CATALOG_LIMIT");
-      truncated = true;
+      markIncomplete("AIR_SESSION_CATALOG_LIMIT");
     }
     const retainedPrivateKeys = new Set(
       candidates.map(({ privateKey }) => privateKey),
