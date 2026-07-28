@@ -11,6 +11,48 @@ const TAP_RESULT_FIELDS = [
   "todo",
 ];
 
+// Lowest runtime the component suite is measured green on. A release claim is
+// only reproducible when the runtime that produced it is known and supported,
+// so the gate refuses to certify anything below this floor and records the
+// exact running version in its evidence.
+export const SUPPORTED_NODE_FLOOR = "22.22.0";
+
+export function assertSupportedRuntime(version = process.versions.node) {
+  const parsed = parseRuntimeVersion(version);
+  assert(
+    parsed,
+    `Unrecognized Node.js version "${version}"; the release gate requires at least ${SUPPORTED_NODE_FLOOR}.`,
+  );
+  const floor = parseRuntimeVersion(SUPPORTED_NODE_FLOOR);
+  const ordered = [
+    [parsed.major, floor.major],
+    [parsed.minor, floor.minor],
+    [parsed.patch, floor.patch],
+  ];
+  for (const [actual, required] of ordered) {
+    if (actual > required) return parsed;
+    if (actual < required) {
+      assert.fail(
+        `Node.js ${version} is below the supported release floor ${SUPPORTED_NODE_FLOOR}; ` +
+        "a gate run on an unsupported runtime cannot certify a release.",
+      );
+    }
+  }
+  return parsed;
+}
+
+function parseRuntimeVersion(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(String(version ?? ""));
+  if (!match) return null;
+  const [, major, minor, patch] = match;
+  return {
+    version: `${major}.${minor}.${patch}`,
+    major: Number(major),
+    minor: Number(minor),
+    patch: Number(patch),
+  };
+}
+
 export async function assertConfiguredBrowserModule(
   configuredModule,
   { cwd = process.cwd() } = {},

@@ -15,9 +15,11 @@ import { fileURLToPath } from "node:url";
 import {
   assertBrowserTapSummary,
   assertConfiguredBrowserModule,
+  assertSupportedRuntime,
   assertTapFileInventory,
   assertTapSummary,
   fixedNodeTestEnvironment,
+  SUPPORTED_NODE_FLOOR,
 } from "../scripts/release-gate.mjs";
 import { verifyPrivacySurfaces } from "../scripts/verify-release.mjs";
 
@@ -427,4 +429,44 @@ test("omitted and compensated tests fail fixed per-file TAP accounting", () => {
       todo: 0,
     },
   );
+});
+
+test("the release gate certifies only a known supported runtime", () => {
+  const floor = SUPPORTED_NODE_FLOOR.split(".").map(Number);
+  const [major, minor, patch] = floor;
+
+  assert.deepEqual(assertSupportedRuntime(SUPPORTED_NODE_FLOOR), {
+    version: SUPPORTED_NODE_FLOOR,
+    major,
+    minor,
+    patch,
+  });
+  assert.equal(assertSupportedRuntime(`${major + 4}.0.0`).major, major + 4);
+  assert.equal(
+    assertSupportedRuntime(`${major}.${minor}.${patch + 1}`).patch,
+    patch + 1,
+  );
+
+  const belowFloor = [
+    `${major - 1}.99.99`,
+    minor > 0 ? `${major}.${minor - 1}.99` : null,
+    patch > 0 ? `${major}.${minor}.${patch - 1}` : null,
+  ].filter(Boolean);
+  assert.ok(belowFloor.length > 0, "the floor must have a representable predecessor.");
+  for (const unsupported of belowFloor) {
+    assert.throws(
+      () => assertSupportedRuntime(unsupported),
+      /below the supported release floor/,
+      `${unsupported} must not certify a release.`,
+    );
+  }
+
+  for (const malformed of ["", "v22.22.0", "22.22", "22.22.0.1", null]) {
+    assert.throws(
+      () => assertSupportedRuntime(malformed),
+      /Unrecognized Node\.js version/,
+    );
+  }
+
+  assert.equal(assertSupportedRuntime().version, process.versions.node);
 });

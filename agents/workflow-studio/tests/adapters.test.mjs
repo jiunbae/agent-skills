@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -365,7 +366,7 @@ test("approval freezes a cwd alias to its canonical target before execution", as
   assert.equal(prepareAdapter(approved).cwd, canonical);
   assert.ok(prepareAdapter(approved).argv.includes(canonical));
 
-  rmSync(alias);
+  unlinkSync(alias);
   symlinkSync(retargeted, alias, "dir");
 
   const auditPath = join(canonical, "alias-audit.json");

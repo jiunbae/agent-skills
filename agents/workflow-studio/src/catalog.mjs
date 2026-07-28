@@ -1446,6 +1446,9 @@ async function maybeReadSkillDirectoryLink(
     target = await beforeDeadline(realpath(linkPath), state);
     const info = await beforeDeadline(stat(linkPath), state);
     if (!info.isDirectory()) {
+      // A refused candidate leaves this root short of a complete observation,
+      // exactly as candidateError treats the same code.
+      state.authorityComplete = false;
       rootDiagnostic(
         root.rootState,
         "AIR_CATALOG_FILE_SYMLINK",
@@ -1468,6 +1471,10 @@ async function maybeReadSkillDirectoryLink(
     isContained(candidate.physical, target)
   ));
   if (!targetRoot) {
+    // Refusing to follow the link means whatever it holds is unobserved; a
+    // later generation that resolves differently must not read the gap as a
+    // deletion.
+    state.authorityComplete = false;
     rootDiagnostic(
       root.rootState,
       "AIR_CATALOG_SYMLINK_OUTSIDE_ROOTS",
@@ -1584,7 +1591,21 @@ async function walkRoot(root, allRoots, state) {
         continue;
       }
       if (entry.isSymbolicLink()) {
-        if (root.grouped === true) continue;
+        if (root.grouped === true) {
+          // Grouped roots never resolve links. Only a link standing where a
+          // Skill directory or SKILL.md would be read could have carried a
+          // record, so only those leave the observation incomplete; deeper
+          // links (node_modules and friends) could never have been published.
+          if (entry.name === "SKILL.md" || current.depth === 1) {
+            state.authorityComplete = false;
+            rootDiagnostic(
+              root.rootState,
+              "AIR_CATALOG_SYMLINK_REFUSED",
+              "A symbolic link inside a grouped root was refused.",
+            );
+          }
+          continue;
+        }
         const linked = await maybeReadSkillDirectoryLink(
           path,
           root,
@@ -1950,7 +1971,7 @@ async function scanCatalog({
   if (!priorAuthoritiesRemainCovered(priorItems, availableRoots)) {
     state.authorityComplete = false;
   }
-  for (const root of availableRoots) {
+  for (const [index, root] of availableRoots.entries()) {
     if (!canContinue(state)) break;
     const recordStart = state.records.length;
     await walkRoot(root, availableRoots, state);
@@ -1968,7 +1989,13 @@ async function scanCatalog({
         markRootAuthorityPartial(root.rootState, state);
       }
     }
-    if (state.records.length >= limits.maxRecords) break;
+    if (state.records.length >= limits.maxRecords) {
+      // Roots left unwalked by this bound are unobserved, not empty.
+      if (index < availableRoots.length - 1) {
+        markTruncated(state, "AIR_CATALOG_RECORD_LIMIT");
+      }
+      break;
+    }
   }
   const { items, internals } = buildItems(
     state,

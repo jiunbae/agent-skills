@@ -32,8 +32,10 @@ import { fileURLToPath } from "node:url";
 import {
   assertBrowserTapSummary,
   assertConfiguredBrowserModule,
+  assertSupportedRuntime,
   assertTapFileInventory,
   fixedNodeTestEnvironment,
+  SUPPORTED_NODE_FLOOR,
 } from "./release-gate.mjs";
 
 const COMPONENT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,14 +55,14 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "air-cli-server.test.mjs": 12,
   "air-spec.test.mjs": 2,
   "air.test.mjs": 19,
-  "catalog.test.mjs": 21,
+  "catalog.test.mjs": 22,
   "cli.test.mjs": 16,
   "core.test.mjs": 31,
   "editor.test.mjs": 49,
   "identity.test.mjs": 4,
   "package-notices.test.mjs": 1,
   "r3-integration.test.mjs": 7,
-  "release-gate.test.mjs": 5,
+  "release-gate.test.mjs": 6,
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
   "session-api.test.mjs": 13,
@@ -137,6 +139,10 @@ async function main() {
   }
 
   try {
+    assertSupportedRuntime();
+    announce(
+      `Runtime Node.js ${process.versions.node} (supported floor ${SUPPORTED_NODE_FLOOR})`,
+    );
     await verifyPackageAndSource();
     await verifyCopiedInstall();
     verifyPrivacySurfaces();

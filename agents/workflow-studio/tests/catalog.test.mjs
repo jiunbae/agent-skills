@@ -1861,3 +1861,124 @@ test("actual repository Skill smoke returns aggregates and a synthetic locator o
   assert.equal(source.sourcePath.includes(ROOT), false);
   assert.equal(JSON.stringify(snapshot).includes(ROOT), false);
 });
+
+test("refused and unresolved entries leave lineage authority incomplete", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-refusal-authority-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // A SKILL.md symbolic link is refused, so the scan never observed whatever
+  // it stands for and must not read any gap as a replacement.
+  const fileLinkRoot = join(directory, "file-link");
+  const fileLinkSkill = join(fileLinkRoot, "alpha", "SKILL.md");
+  await put(fileLinkSkill, skill("alpha", "Before"));
+  await put(join(directory, "outside", "note.txt"), Buffer.from("x", "utf8"));
+  const fileLink = createSkillCatalog({
+    roots: [{ label: "file-link", path: fileLinkRoot }],
+    randomIdBytes: ids(),
+  });
+  const fileLinkBefore = await fileLink.initialize();
+  assert.equal(fileLinkBefore.items.length, 1);
+  await writeFile(fileLinkSkill, skill("alpha", "After"));
+  await symlink(
+    join(directory, "outside", "note.txt"),
+    join(fileLinkRoot, "beta"),
+  );
+  const fileLinkAfter = await fileLink.refresh();
+  const fileLinkItem = fileLinkAfter.items.find((item) => item.name === "alpha");
+  assert.notEqual(fileLinkItem.id, fileLinkBefore.items[0].id);
+  assert.equal("replaces_id" in fileLinkItem, false);
+
+  // A directory link pointing outside every configured root is refused for the
+  // same reason.
+  const outsideRoot = join(directory, "outside-link");
+  const outsideSkill = join(outsideRoot, "alpha", "SKILL.md");
+  await put(outsideSkill, skill("alpha", "Before"));
+  await put(join(directory, "elsewhere", "gamma", "SKILL.md"), skill("gamma", "G"));
+  const outside = createSkillCatalog({
+    roots: [{ label: "outside-link", path: outsideRoot }],
+    randomIdBytes: ids(),
+  });
+  const outsideBefore = await outside.initialize();
+  await writeFile(outsideSkill, skill("alpha", "After"));
+  await symlink(join(directory, "elsewhere", "gamma"), join(outsideRoot, "beta"));
+  const outsideAfter = await outside.refresh();
+  const outsideItem = outsideAfter.items.find((item) => item.name === "alpha");
+  assert.notEqual(outsideItem.id, outsideBefore.items[0].id);
+  assert.equal("replaces_id" in outsideItem, false);
+
+  // A grouped root refuses links standing where a SKILL.md would be read.
+  const groupedRoot = join(directory, "grouped");
+  const groupedSkill = join(groupedRoot, "agents", "alpha", "SKILL.md");
+  await put(groupedSkill, skill("alpha", "Before"));
+  await put(join(directory, "linked-skill", "SKILL.md"), skill("linked", "L"));
+  const grouped = createSkillCatalog({
+    roots: [{
+      label: "grouped",
+      path: groupedRoot,
+      kind: "repository",
+      grouped: true,
+    }],
+    randomIdBytes: ids(),
+  });
+  const groupedBefore = await grouped.initialize();
+  assert.equal(groupedBefore.items.length, 1);
+  await writeFile(groupedSkill, skill("alpha", "After"));
+  await mkdir(join(groupedRoot, "agents", "beta"), { recursive: true });
+  await symlink(
+    join(directory, "linked-skill", "SKILL.md"),
+    join(groupedRoot, "agents", "beta", "SKILL.md"),
+  );
+  const groupedAfter = await grouped.refresh();
+  const groupedItem = groupedAfter.items.find((item) => item.name === "alpha");
+  assert.notEqual(groupedItem.id, groupedBefore.items[0].id);
+  assert.equal("replaces_id" in groupedItem, false);
+
+  // An ordinary link that could never have carried a record must not suppress
+  // a real adjacent-generation relation.
+  const toleratedRoot = join(directory, "tolerated");
+  const toleratedSkill = join(toleratedRoot, "agents", "alpha", "SKILL.md");
+  await put(toleratedSkill, skill("alpha", "Before"));
+  await symlink(
+    join(directory, "elsewhere"),
+    join(toleratedRoot, "agents", "alpha", "node_modules"),
+  );
+  const tolerated = createSkillCatalog({
+    roots: [{
+      label: "tolerated",
+      path: toleratedRoot,
+      kind: "repository",
+      grouped: true,
+    }],
+    randomIdBytes: ids(),
+  });
+  const toleratedBefore = await tolerated.initialize();
+  assert.equal(toleratedBefore.items.length, 1);
+  await writeFile(toleratedSkill, skill("alpha", "After"));
+  const toleratedAfter = await tolerated.refresh();
+  assert.equal(
+    toleratedAfter.items[0].replaces_id,
+    toleratedBefore.items[0].id,
+  );
+
+  // A record bound that leaves later roots unwalked is a published limit, and
+  // unwalked roots never look like deletions.
+  const boundedFirst = join(directory, "bounded-a");
+  const boundedSecond = join(directory, "bounded-b");
+  await put(join(boundedFirst, "one", "SKILL.md"), skill("one", "Before"));
+  await put(join(boundedSecond, "two", "SKILL.md"), skill("two", "Before"));
+  const bounded = createSkillCatalog({
+    roots: [
+      { label: "bounded-a", path: boundedFirst },
+      { label: "bounded-b", path: boundedSecond },
+    ],
+    limits: { maxRecords: 1 },
+    randomIdBytes: ids(),
+  });
+  const boundedBefore = await bounded.initialize();
+  assert.equal(boundedBefore.truncated, true);
+  assert.ok(boundedBefore.limit_codes.includes("AIR_CATALOG_RECORD_LIMIT"));
+  await writeFile(join(boundedFirst, "one", "SKILL.md"), skill("one", "After"));
+  const boundedAfter = await bounded.refresh();
+  assert.equal(boundedAfter.truncated, true);
+  assert.ok(boundedAfter.items.every((item) => !("replaces_id" in item)));
+});
