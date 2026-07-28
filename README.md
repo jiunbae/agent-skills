@@ -602,7 +602,8 @@ For CLI tool contributions, see [open330/agt](https://github.com/open330/agt).
 
 ## License
 
-MIT License.
+MIT License. See [LICENSE](LICENSE), which also records the third-party work
+some skills are adapted from.
 
 ---
 

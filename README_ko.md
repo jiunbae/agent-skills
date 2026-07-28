@@ -313,7 +313,8 @@ CLI 도구 기여는 [open330/agt](https://github.com/open330/agt)를 참고하�
 
 ## 라이선스
 
-MIT License.
+MIT License. 일부 스킬이 어떤 제3자 작업에서 파생됐는지도 함께 기록한
+[LICENSE](LICENSE)를 참고하세요.
 
 ---
 
