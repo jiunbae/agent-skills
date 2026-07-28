@@ -1982,3 +1982,144 @@ test("refused and unresolved entries leave lineage authority incomplete", async 
   assert.equal(boundedAfter.truncated, true);
   assert.ok(boundedAfter.items.every((item) => !("replaces_id" in item)));
 });
+
+test("a grouped depth-0 group link leaves lineage authority incomplete", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-group-link-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // A symbolic link standing where a whole repository group would be read
+  // hides every Skill that group held, so the scan never observed them and
+  // must not read the gap as a replacement.
+  const root = join(directory, "grouped");
+  const alphaSkill = join(root, "agents", "alpha", "SKILL.md");
+  await put(alphaSkill, skill("alpha", "Before"));
+  await put(join(root, "security", "beta", "SKILL.md"), skill("beta", "B"));
+  await put(join(directory, "hidden", "gamma", "SKILL.md"), skill("gamma", "G"));
+  const catalog = createSkillCatalog({
+    roots: [{
+      label: "grouped",
+      path: root,
+      kind: "repository",
+      grouped: true,
+    }],
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.deepEqual(before.items.map((item) => item.name), ["alpha", "beta"]);
+
+  await writeFile(alphaSkill, skill("alpha", "After"));
+  await rm(join(root, "security"), { recursive: true, force: true });
+  await symlink(join(directory, "hidden"), join(root, "security"));
+  const after = await catalog.refresh();
+  const alpha = after.items.find((item) => item.name === "alpha");
+  assert.notEqual(alpha.id, before.items[0].id);
+  assert.equal("replaces_id" in alpha, false);
+  assert.ok(
+    after.roots[0].diagnostics.some(
+      (item) => item.code === "AIR_CATALOG_SYMLINK_REFUSED",
+    ),
+  );
+});
+
+test("a grouped depth-0 entry that is not a group keeps real lineage", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-nongroup-link-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // A depth-0 name that is not a repository group could never have carried a
+  // record, so it stays tolerated exactly like a deep node_modules link.
+  const root = join(directory, "grouped");
+  const alphaSkill = join(root, "agents", "alpha", "SKILL.md");
+  await put(alphaSkill, skill("alpha", "Before"));
+  await put(join(directory, "hidden", "gamma", "SKILL.md"), skill("gamma", "G"));
+  const catalog = createSkillCatalog({
+    roots: [{
+      label: "grouped",
+      path: root,
+      kind: "repository",
+      grouped: true,
+    }],
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.items.length, 1);
+
+  await writeFile(alphaSkill, skill("alpha", "After"));
+  await symlink(join(directory, "hidden"), join(root, "scratch"));
+  await writeFile(join(root, "notes.md"), Buffer.from("x", "utf8"));
+  const after = await catalog.refresh();
+  assert.equal(after.items[0].replaces_id, before.items[0].id);
+  assert.deepEqual(after.roots[0].diagnostics, []);
+  assert.equal(after.roots[0].status, "ready");
+});
+
+test("a directory link inside its own root keeps lineage and stays silent", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-self-root-link-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // The link target is walked directly by this same root, so nothing is
+  // unobserved: authority must survive and no outside-roots diagnostic may be
+  // published.
+  const root = join(directory, "self-link");
+  const alphaSkill = join(root, "alpha", "SKILL.md");
+  await put(alphaSkill, skill("alpha", "Before"));
+  const catalog = createSkillCatalog({
+    roots: [{ label: "self-link", path: root }],
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.items.length, 1);
+
+  await writeFile(alphaSkill, skill("alpha", "After"));
+  await symlink(join(root, "alpha"), join(root, "mirror"));
+  const after = await catalog.refresh();
+  const alpha = after.items.find((item) => item.name === "alpha");
+  assert.equal(alpha.replaces_id, before.items[0].id);
+  assert.equal(after.items.length, 1);
+  assert.deepEqual(after.roots[0].diagnostics, []);
+  assert.equal(after.roots[0].status, "ready");
+
+  // A link at the root itself resolves inside the root too and is equally
+  // observed.
+  const selfTop = join(directory, "self-top");
+  const topSkill = join(selfTop, "alpha", "SKILL.md");
+  await put(topSkill, skill("alpha", "Before"));
+  const top = createSkillCatalog({
+    roots: [{ label: "self-top", path: selfTop }],
+    randomIdBytes: ids(),
+  });
+  const topBefore = await top.initialize();
+  await writeFile(topSkill, skill("alpha", "After"));
+  await symlink(selfTop, join(selfTop, "loop"));
+  const topAfter = await top.refresh();
+  assert.equal(topAfter.items[0].replaces_id, topBefore.items[0].id);
+  assert.deepEqual(topAfter.roots[0].diagnostics, []);
+});
+
+test("a directory link outside every root still settles authority", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-outside-root-link-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // The counter-control for the scoping above: a target no configured root
+  // contains is genuinely unobserved and must keep clearing authority.
+  const root = join(directory, "outward");
+  const alphaSkill = join(root, "alpha", "SKILL.md");
+  await put(alphaSkill, skill("alpha", "Before"));
+  await put(join(directory, "elsewhere", "gamma", "SKILL.md"), skill("gamma", "G"));
+  const catalog = createSkillCatalog({
+    roots: [{ label: "outward", path: root }],
+    randomIdBytes: ids(),
+  });
+  const before = await catalog.initialize();
+  assert.equal(before.items.length, 1);
+
+  await writeFile(alphaSkill, skill("alpha", "After"));
+  await symlink(join(directory, "elsewhere"), join(root, "beta"));
+  const after = await catalog.refresh();
+  const alpha = after.items.find((item) => item.name === "alpha");
+  assert.notEqual(alpha.id, before.items[0].id);
+  assert.equal("replaces_id" in alpha, false);
+  assert.deepEqual(
+    after.roots[0].diagnostics.map((item) => item.code),
+    ["AIR_CATALOG_SYMLINK_OUTSIDE_ROOTS"],
+  );
+});

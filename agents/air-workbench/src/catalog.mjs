@@ -1471,6 +1471,16 @@ async function maybeReadSkillDirectoryLink(
     isContained(candidate.physical, target)
   ));
   if (!targetRoot) {
+    if (isContained(root.physical, target)) {
+      // The link resolves inside the root that holds it, so this same walk
+      // reaches the target directly and everything under it is already
+      // observed and published. The link stays refused: following it would
+      // open a second traversal path into a subtree already queued and would
+      // cycle whenever the target is an ancestor of the link. But refusing it
+      // costs no observation, so claiming the subtree is unobserved would
+      // suppress real lineage and publish a diagnostic whose message is false.
+      return null;
+    }
     // Refusing to follow the link means whatever it holds is unobserved; a
     // later generation that resolves differently must not read the gap as a
     // deletion.
@@ -1583,20 +1593,30 @@ async function walkRoot(root, allRoots, state) {
         return;
       }
       const path = join(current.path, entry.name);
-      if (
-        root.grouped === true &&
-        current.depth === 0 &&
-        (!entry.isDirectory() || !REPOSITORY_SKILL_GROUPS.has(entry.name))
-      ) {
-        continue;
+      if (root.grouped === true && current.depth === 0) {
+        // A Dirent for a symbolic link reports isDirectory() === false, so a
+        // link named after a real group stands exactly where a whole group
+        // subtree would have been read. It must reach the symbolic-link guard
+        // below instead of being discarded here; every other depth-0 entry
+        // could never have carried a record and stays silently excluded.
+        const standsForAGroup = (
+          (entry.isDirectory() || entry.isSymbolicLink()) &&
+          REPOSITORY_SKILL_GROUPS.has(entry.name)
+        );
+        if (!standsForAGroup) continue;
       }
       if (entry.isSymbolicLink()) {
         if (root.grouped === true) {
           // Grouped roots never resolve links. Only a link standing where a
-          // Skill directory or SKILL.md would be read could have carried a
-          // record, so only those leave the observation incomplete; deeper
-          // links (node_modules and friends) could never have been published.
-          if (entry.name === "SKILL.md" || current.depth === 1) {
+          // group, a Skill directory or a SKILL.md would be read could have
+          // carried a record, so only those leave the observation incomplete;
+          // deeper links (node_modules and friends) could never have been
+          // published.
+          if (
+            entry.name === "SKILL.md" ||
+            current.depth === 1 ||
+            (current.depth === 0 && REPOSITORY_SKILL_GROUPS.has(entry.name))
+          ) {
             state.authorityComplete = false;
             rootDiagnostic(
               root.rootState,
@@ -1991,6 +2011,9 @@ async function scanCatalog({
     }
     if (state.records.length >= limits.maxRecords) {
       // Roots left unwalked by this bound are unobserved, not empty.
+      // Defensive only (R39): both record pushes already markTruncated the same
+      // code before returning and maxRecords is validated >= 1, so this branch
+      // cannot be the first signal. Its passing test is not coverage.
       if (index < availableRoots.length - 1) {
         markTruncated(state, "AIR_CATALOG_RECORD_LIMIT");
       }
