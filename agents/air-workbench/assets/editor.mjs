@@ -1724,8 +1724,12 @@ function skillCatalogIsIncomplete(catalog) {
   return (
     Boolean(catalog?.truncated) ||
     (Array.isArray(catalog?.roots) &&
-      catalog.roots.some((root) =>
-        ["invalid", "partial", "unreadable"].includes(root?.status)))
+      catalog.roots.some(
+        (root) =>
+          ["invalid", "partial", "unreadable"].includes(root?.status) ||
+          (Array.isArray(root?.diagnostics) && root.diagnostics.length > 0) ||
+          Number(root?.omitted_diagnostic_count) > 0,
+      ))
   );
 }
 

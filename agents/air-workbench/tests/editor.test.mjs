@@ -257,6 +257,69 @@ async function readIfPresent(path) {
   }
 }
 
+async function browserCatalogFunctions(names) {
+  const source = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  const declarations = names.map((name) => {
+    const opening = source.indexOf(`\nfunction ${name}(`);
+    if (opening < 0) throw new Error(`Missing browser function: ${name}`);
+    const closing = source.indexOf("\n}\n", opening);
+    if (closing < 0) throw new Error(`Unterminated browser function: ${name}`);
+    return source.slice(opening + 1, closing + 3);
+  });
+  return new Function(
+    "documents",
+    `${declarations.join("\n")}\nreturn { ${names.join(", ")} };`,
+  );
+}
+
+function refusedSubtreeCatalog({ diagnostics, omitted, items = [] }) {
+  return {
+    generation: 2,
+    truncated: false,
+    limit_codes: [],
+    roots: [
+      {
+        source_label: "project",
+        source_kind: "project",
+        status: "ready",
+        record_count: items.length,
+        diagnostics,
+        omitted_diagnostic_count: omitted,
+      },
+    ],
+    items,
+  };
+}
+
+function symlinkRefusalDiagnostic() {
+  return {
+    severity: "warning",
+    code: "AIR_CATALOG_SYMLINK_OUTSIDE_ROOTS",
+    message: "A directory symlink resolves outside every configured root.",
+  };
+}
+
+function catalogSkillItem(id, name) {
+  return {
+    id,
+    name,
+    description: "",
+    content_hash: createHash("sha256").update(id, "utf8").digest("hex"),
+    byte_count: 16,
+    workflow_node_count: 0,
+    workflow_edge_count: 0,
+    source_labels: [
+      { label: "project", kind: "project", locations: 1, linked_locations: 0 },
+    ],
+    location_count: 1,
+    exact_copy: false,
+    name_conflict: false,
+    stale: false,
+    diagnostics: [],
+    omitted_diagnostic_count: 0,
+  };
+}
+
 test("no-op candidate keeps the exact imported bytes", () => {
   const artifact = workflowArtifact();
   const state = createEditorState(artifact);
@@ -2435,4 +2498,120 @@ test("custom focus color exceeds 3:1 against adjacent editor surfaces", async ()
   assert.ok(contrast(focus, "#f5f3ec") >= 3);
   assert.match(css, /outline:\s*3px solid var\(--focus\)/);
   assert.match(css, /stroke:\s*var\(--focus\)/);
+});
+
+test("root diagnostics alone make a ready untruncated catalog incomplete", async () => {
+  const build = await browserCatalogFunctions(["skillCatalogIsIncomplete"]);
+  const { skillCatalogIsIncomplete } = build(new Map());
+  const catalog = refusedSubtreeCatalog({
+    diagnostics: [symlinkRefusalDiagnostic()],
+    omitted: 0,
+    items: [catalogSkillItem("skill_AAAAAAAAAAAAAAAAAAAAAA", "kept")],
+  });
+  assert.equal(catalog.truncated, false);
+  assert.deepEqual(catalog.limit_codes, []);
+  assert.equal(catalog.roots[0].status, "ready");
+  assert.equal(
+    skillCatalogIsIncomplete(catalog),
+    true,
+    "a refused subtree reported only through root diagnostics must read incomplete",
+  );
+});
+
+test("omitted root diagnostics alone make a catalog incomplete", async () => {
+  const build = await browserCatalogFunctions(["skillCatalogIsIncomplete"]);
+  const { skillCatalogIsIncomplete } = build(new Map());
+  const catalog = refusedSubtreeCatalog({
+    diagnostics: [],
+    omitted: 3,
+    items: [catalogSkillItem("skill_AAAAAAAAAAAAAAAAAAAAAA", "kept")],
+  });
+  assert.equal(
+    skillCatalogIsIncomplete(catalog),
+    true,
+    "omitted root diagnostics must read incomplete even with an empty diagnostics array",
+  );
+});
+
+test("a clean catalog with no diagnostics stays complete", async () => {
+  const build = await browserCatalogFunctions(["skillCatalogIsIncomplete"]);
+  const { skillCatalogIsIncomplete } = build(new Map());
+  const catalog = refusedSubtreeCatalog({
+    diagnostics: [],
+    omitted: 0,
+    items: [catalogSkillItem("skill_AAAAAAAAAAAAAAAAAAAAAA", "kept")],
+  });
+  assert.equal(skillCatalogIsIncomplete(catalog), false);
+  assert.equal(skillCatalogIsIncomplete({ items: [] }), false);
+  assert.equal(skillCatalogIsIncomplete(undefined), false);
+});
+
+test("a refused subtree retains open Skills instead of reporting deletions", async () => {
+  const documents = new Map();
+  const build = await browserCatalogFunctions([
+    "resourceKey",
+    "resourceSourceKind",
+    "normalizeSkillResources",
+    "skillCatalogIsIncomplete",
+    "withoutReplacementClaim",
+    "mergeIncompleteSkillResources",
+    "markChangedDocuments",
+  ]);
+  const {
+    resourceKey,
+    normalizeSkillResources,
+    skillCatalogIsIncomplete,
+    withoutReplacementClaim,
+    mergeIncompleteSkillResources,
+    markChangedDocuments,
+  } = build(documents);
+
+  const observed = catalogSkillItem("skill_AAAAAAAAAAAAAAAAAAAAAA", "observed");
+  const unobserved = catalogSkillItem(
+    "skill_BBBBBBBBBBBBBBBBBBBBBB",
+    "behind-the-refused-symlink",
+  );
+  const previousResources = normalizeSkillResources({
+    items: [observed, unobserved],
+  });
+  for (const resource of previousResources) {
+    documents.set(resourceKey(resource), {
+      resource,
+      stale: false,
+      removed: false,
+      loadedContentHash: resource.item.content_hash,
+    });
+  }
+
+  const refused = refusedSubtreeCatalog({
+    diagnostics: [symlinkRefusalDiagnostic()],
+    omitted: 0,
+    items: [observed],
+  });
+  const incoming = normalizeSkillResources(refused);
+  const incomplete = skillCatalogIsIncomplete(refused);
+  const nextResources = incomplete
+    ? mergeIncompleteSkillResources(previousResources, incoming)
+    : incoming;
+  markChangedDocuments(nextResources);
+
+  const unobservedKey = resourceKey({ type: "skill", id: unobserved.id });
+  assert.equal(
+    incomplete,
+    true,
+    "the retention branch must be taken for a refused subtree",
+  );
+  assert.ok(
+    nextResources.some(
+      (resource) => resourceKey(resource) === unobservedKey,
+    ),
+    "the unobserved Skill must be retained rather than wholesale replaced",
+  );
+  assert.equal(
+    documents.get(unobservedKey).removed,
+    false,
+    "a Skill that was merely not looked at must never be reported as deleted",
+  );
+  assert.equal(documents.get(unobservedKey).stale, false);
+  assert.equal(typeof withoutReplacementClaim, "function");
 });
