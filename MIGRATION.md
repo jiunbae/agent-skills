@@ -44,6 +44,28 @@ ln -s ~/workspace/agent-skills ~/.agent-skills
 `agt` resolves `~/.agent-skills` before legacy `~/.agt` and `~/agt` fallbacks.
 Remove old duplicate skill checkouts after confirming the canonical checkout.
 
+## AIR Workbench Package Directory Rename
+
+The AIR Workbench package directory was renamed from `agents/workflow-studio`
+to `agents/air-workbench`, matching the name both READMEs already list. Install
+it with the documented path:
+
+```bash
+./install.sh agents/air-workbench
+```
+
+If you installed it under the old path before this change, remove the orphaned
+copy once:
+
+```bash
+./install.sh --uninstall agents/workflow-studio
+```
+
+Marker, error-code, environment-variable and legacy hash spellings, the
+`schemas/workflow-ir.schema.json` `$id`, and the `scripts/workflow-studio.mjs`
+compatibility entry point intentionally keep the historical `workflow-studio`
+name so existing artifacts stay valid. No artifact migration is required.
+
 ## Maintainer Rule
 
 - Skill changes are committed only to `jiunbae/agent-skills`.

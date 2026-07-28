@@ -1025,6 +1025,11 @@ uninstall_codex_skill_link() {
     [[ -L "$target_path" ]] || continue
     local resolved_target=""
     resolved_target=$(cd "$target_path" 2>/dev/null && pwd -P) || true
+    if [[ -z "$resolved_target" ]]; then
+      # 원본이 사라진 끊어진 링크는 cd 로 해석되지 않습니다.
+      # 링크가 기록한 경로를 그대로 비교해 우리가 만든 링크만 제거합니다.
+      resolved_target=$(readlink "$target_path" 2>/dev/null) || true
+    fi
     [[ "$resolved_target" == "$source_path" ]] || continue
 
     if [[ "$DRY_RUN" == "true" ]]; then

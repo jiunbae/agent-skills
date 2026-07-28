@@ -7,7 +7,7 @@
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
   <img src="https://img.shields.io/badge/skills-31-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
-  <img src="https://img.shields.io/badge/personas-7-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
+  <img src="https://img.shields.io/badge/personas-20-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#quickstart-for-agents">Quickstart</a> •
   <a href="#skills-catalog">Skills</a> •
@@ -607,6 +607,6 @@ MIT License.
 ---
 
 <p align="center">
-  <sub><strong>31</strong> skills | <strong>7</strong> personas | <strong>2</strong> hooks</sub><br>
+  <sub><strong>31</strong> skills | <strong>20</strong> personas | <strong>2</strong> hooks</sub><br>
   <sub>CLI tool: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

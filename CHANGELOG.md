@@ -40,6 +40,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Safe remote installer for the `agent-skills` repository.
 - `install.sh --core`: core skills only option
 
+### Changed
+- The AIR Workbench session catalog now reports `truncated: true` whenever the
+  listing is not a complete observation of every configured root — not only
+  when a size or time bound was reached, but also when a root, directory or
+  entry could not be authorized. Previously an unreadable or unauthorized
+  session root published as a complete catalog. The Workbench therefore shows
+  its "partial catalog. Refresh to retry." banner in cases where it used to
+  claim completeness; the diagnostic code still distinguishes a bound from an
+  authority failure. No response field or diagnostic code was added.
+
+### Fixed
+- Release notes now count only real `<group>/<skill>/SKILL.md` skills, so the
+  published total is 31 instead of 32 — the previous expression also counted a
+  bundled example fixture nested inside a skill. The `common` group row was
+  missing from the generated skill table and is now included, and the changelog
+  link points at this repository instead of a different project.
+- `./install.sh --uninstall` now removes a Codex skill symlink whose source
+  directory no longer exists. The link was previously resolved only with `cd`,
+  which fails on a broken link, so the one-time `agents/workflow-studio`
+  cleanup above silently left an orphaned Codex link behind. The literal link
+  target is now compared as a fallback, so only links this installer created
+  are removed.
+
 ### Core Skills
 - `development/git-commit-pr`
 - `context/context-manager`

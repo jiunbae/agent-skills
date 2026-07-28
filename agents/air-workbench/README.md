@@ -125,7 +125,8 @@ evidence remains asymmetric and may be `unknown`.
 
 ## Legacy compatibility
 
-The physical package path remains `agents/air-workbench/`. The current
+The physical package path is `agents/air-workbench/`; it was renamed from
+`agents/workflow-studio/` (see the repository `CHANGELOG.md`). The current
 executable entry, Workflow IR `1.0`, exact `workflow-studio:v1` Markdown
 metadata, and tokenized `/api/artifact` route remain supported compatibility
 boundaries:
@@ -146,7 +147,9 @@ node scripts/air.mjs migrate legacy-workflow.json \
 
 ## Requirements
 
-- macOS and Node.js 26 (V1 tested with Node 26.5.0)
+- macOS and Node.js 22.22.0 or later (V1 verified on Node 22.22.1 and
+  24.13.0; `scripts/release-gate.mjs` refuses to certify a runtime below the
+  `SUPPORTED_NODE_FLOOR` of 22.22.0)
 - Codex CLI or Claude Code CLI only when running a plan
 
 Run commands from this directory, or use the absolute compatibility script
@@ -391,5 +394,6 @@ listens. Browser exports are local client downloads.
 - V1 session discovery supports Codex rollout streams and Claude main/subagent
   streams; native execution supports the installed Codex and Claude CLIs.
 - No global install, remote execution, shared server, or managed orchestration.
-- V1 was tested on macOS with Node 26.5.0, Codex CLI 0.144.6, and Claude Code
-  2.1.218. Other platforms and Node releases need separate validation.
+- V1 was tested on macOS with Node 22.22.1 and 24.13.0, Codex CLI 0.144.6, and
+  Claude Code 2.1.218. The supported runtime floor is Node 22.22.0. Other
+  platforms and Node releases need separate validation.
