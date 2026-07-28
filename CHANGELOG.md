@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Renamed the AIR Workbench package directory from `agents/workflow-studio` to
+  `agents/air-workbench`, matching the name both READMEs already list. The
+  documented `./install.sh agents/air-workbench` now works; previously only
+  the undocumented `agents/workflow-studio` existed and installed under a name
+  no document mentioned. **If you installed it before this release, remove the
+  orphaned copy once:** `./install.sh --uninstall agents/workflow-studio`, or
+  delete `workflow-studio` from your skills directory. Marker, error-code,
+  environment-variable and legacy hash spellings intentionally keep the
+  historical `workflow-studio` name so existing artifacts stay valid.
 - Established `jiunbae/agent-skills` as the single source of truth for skills,
   personas, hooks, profiles, and static context.
 - Updated `setup.sh` to download this repository from `main` and preserve
