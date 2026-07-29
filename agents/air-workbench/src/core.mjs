@@ -684,6 +684,61 @@ function deriveCandidates(headings, byteLength, options = {}) {
   return withoutNestedCandidates(resolved);
 }
 
+// RPF-170: every fallback rung is gated on `candidates.length === 0`, and that
+// gate is exactly what keeps the already-recognized Skills byte-stable, so it
+// must not change. What must change is the silence. An author who numbered a
+// heading declared a step; when a higher rung has already matched, such a
+// heading outside the matched span is dropped into opaque source without a
+// word. Name it instead, so the reader can see what the ladder passed over.
+function skippedStepTitles(headings, candidates, options) {
+  const { lines = [], frontmatterEnd = 0, byteLength = 0 } = options;
+  const claimed = candidates.map(({ heading, end }) => ({
+    start: heading.start,
+    end,
+  }));
+  const unclaimed = (start) =>
+    !claimed.some((span) => start >= span.start && start < span.end);
+  const skipped = [];
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index];
+    // An explicitly numbered H2 or H3 the winning rung did not claim.
+    if (
+      (heading.level === 2 || heading.level === 3) &&
+      NUMBERED_STEP.test(heading.text) &&
+      unclaimed(heading.start)
+    ) {
+      const title = usableStepTitle(heading.text);
+      if (title !== null) skipped.push({ start: heading.start, title });
+    }
+    // A declared ordered step list under an exact `## Workflow` heading with no
+    // H3 children — rung 3's shape. These items are list lines, not headings,
+    // so a heading-only scan cannot see them, and a winning rung 1 or rung 2
+    // can leave every one of them unclaimed.
+    if (
+      heading.level !== 2 ||
+      !EXACT_WORKFLOW_HEADING.test(heading.text.trim()) ||
+      hasChildHeadingLevel(headings, index, 3)
+    ) {
+      continue;
+    }
+    const items = orderedListItems(
+      lines,
+      frontmatterEnd,
+      heading.bodyStart,
+      headingEnd(headings, index, byteLength),
+    );
+    if (items.length < 2) continue;
+    for (const item of items) {
+      if (!unclaimed(item.start)) continue;
+      const title = usableStepTitle(item.text);
+      if (title !== null) skipped.push({ start: item.start, title });
+    }
+  }
+  return skipped
+    .sort((left, right) => left.start - right.start)
+    .map(({ title }) => title);
+}
+
 function candidateSourceMap(candidate) {
   const heading = candidate.heading;
   const semanticTitle = cleanTitle(heading.text);
@@ -716,14 +771,34 @@ function scanWorkflowCandidates(bytes, diagnostics = [], options = {}) {
   const lines = lineTable(bytes);
   const frontmatter = parseFrontmatter(lines, diagnostics);
   const headings = scanHeadings(lines, frontmatter.endByte);
-  return {
-    frontmatter,
-    candidates: deriveCandidates(headings, trailingManagedStart(bytes), {
-      lines,
-      frontmatterEnd: frontmatter.endByte,
-      inferSectionOrder,
-    }),
-  };
+  const candidates = deriveCandidates(headings, trailingManagedStart(bytes), {
+    lines,
+    frontmatterEnd: frontmatter.endByte,
+    inferSectionOrder,
+  });
+  // When nothing matched, `workflow.none` already says the whole document is
+  // opaque, so a second diagnostic would only repeat it.
+  const skipped =
+    candidates.length === 0
+      ? []
+      : skippedStepTitles(headings, candidates, {
+          lines,
+          frontmatterEnd: frontmatter.endByte,
+          byteLength: trailingManagedStart(bytes),
+        });
+  if (skipped.length > 0) {
+    const named = skipped.slice(0, 10);
+    diagnostics.push({
+      severity: "warning",
+      code: "workflow.steps-skipped",
+      message:
+        `An earlier recognition rule already matched, so ${skipped.length} ` +
+        `explicitly numbered step${skipped.length === 1 ? "" : "s"} outside ` +
+        "it stayed opaque source instead of becoming nodes: " +
+        `${named.join(", ")}${skipped.length > named.length ? ", …" : ""}.`,
+    });
+  }
+  return { frontmatter, candidates };
 }
 
 function titleFingerprint(title) {

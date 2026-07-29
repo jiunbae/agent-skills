@@ -353,6 +353,14 @@ contains the word `parallel` yields a `parallel` step and a `parallel` incoming
 edge instead of a `sequence` one. Candidates nested inside another candidate's
 span are dropped, so a section and its own subsections cannot both become steps.
 
+Because the ladder stops at the first rung that matches, a document can hold
+declared steps that the winning rung does not claim — a stray `## 2. Deploy`
+alongside an `## Workflow` section, or an ordered step list that a single
+numbered `##` heading outranks. Those steps stay in the file as opaque source,
+and the import says so with one `workflow.steps-skipped` warning naming each of
+them. Renumber or move the outliers into the section the winning rung matched to
+turn them into nodes.
+
 ### Declared versus inferred
 
 Rungs 1-5 read structure the source **declares**. Rung 6 does not: it is a guess

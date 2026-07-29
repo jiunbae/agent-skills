@@ -1783,6 +1783,136 @@ Body three.
   assert.deepEqual(renderWorkflow(workflow), bytes);
 });
 
+test("a numbered heading the ladder passed over is named in a diagnostic", () => {
+  const bytes = ladderFixture(
+    "skipped-steps-ladder",
+    `## Workflow
+
+### Prepare the branch
+
+Body one.
+
+### Build the artifact
+
+Body two.
+
+## 2. Deploy the artifact
+
+Body three.
+
+## Notes
+
+### 3. Verify the deploy
+
+Body four.
+`,
+  );
+  const workflow = importSkillBytes(bytes, { sourcePath: "skipped.md" });
+  // Rung 1 matched, so the gate on `candidates.length === 0` correctly keeps
+  // every later rung off — the recognized shape must not change. What must not
+  // happen is losing the author's two explicitly numbered steps in silence.
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Prepare the branch", "Build the artifact"],
+  );
+  assert.equal(workflow.graph.nodes[0].confidence.rule_id, "workflow.children");
+  const skipped = workflow.diagnostics.filter(
+    ({ code }) => code === "workflow.steps-skipped",
+  );
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].severity, "warning");
+  assert.match(skipped[0].message, /Deploy the artifact/u);
+  assert.match(skipped[0].message, /Verify the deploy/u);
+  assert.match(skipped[0].message, /\b2 explicitly numbered steps\b/u);
+  // The skipped headings stay in the byte partition as opaque source.
+  assert.deepEqual(renderWorkflow(workflow), bytes);
+});
+
+test("a declared ordered step list the ladder passed over is named too", () => {
+  const bytes = ladderFixture(
+    "skipped-ordered-list-ladder",
+    `## Workflow
+
+1. Prepare the branch
+2. Build the artifact
+
+## 2. Deploy the artifact
+
+Body.
+`,
+  );
+  const workflow = importSkillBytes(bytes, { sourcePath: "skipped-list.md" });
+  // Rung 2 outranks rung 3, so a single stray numbered H2 wins and the two
+  // declared ordered steps are lost. They are list lines, not headings, so a
+  // heading-only scan cannot see them — the diagnostic must still name them.
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Deploy the artifact"],
+  );
+  assert.equal(workflow.graph.nodes[0].confidence.rule_id, "numbered.h2");
+  const skipped = workflow.diagnostics.filter(
+    ({ code }) => code === "workflow.steps-skipped",
+  );
+  assert.equal(skipped.length, 1);
+  assert.match(
+    skipped[0].message,
+    /2 explicitly numbered steps[^:]*: Prepare the branch, Build the artifact\./u,
+  );
+  assert.deepEqual(renderWorkflow(workflow), bytes);
+});
+
+test("the skipped-step diagnostic stays silent when nothing was passed over", () => {
+  for (const [name, body] of [
+    ["recognized-only", `## Workflow
+
+### Prepare
+
+Body one.
+
+### Build
+
+Body two.
+`],
+    ["numbered-h2-only", `## 1. Prepare
+
+Body one.
+
+## 2. Deploy
+
+Body two.
+`],
+    ["ordered-list-only", `## Workflow
+
+1. Prepare
+2. Build
+`],
+  ]) {
+    const workflow = importSkillBytes(ladderFixture(name, body), {
+      sourcePath: `${name}.md`,
+    });
+    assert.equal(
+      workflow.diagnostics.some(
+        ({ code }) => code === "workflow.steps-skipped",
+      ),
+      false,
+      name,
+    );
+  }
+  // Nothing recognized at all already says so with `workflow.none`; a second
+  // diagnostic would only repeat it.
+  const opaque = importSkillBytes(
+    ladderFixture(
+      "nothing-recognized",
+      "## Purpose\n\nBody.\n\n## Notes\n\nMore body.\n",
+    ),
+    { sourcePath: "prose.md", inferSectionOrder: false },
+  );
+  assert.deepEqual(
+    opaque.diagnostics.map(({ code }) => code),
+    ["workflow.none"],
+  );
+});
+
 test("section order is inferred with heuristic confidence while declared rungs stay explicit-source", () => {
   const proseBytes = ladderFixture(
     "section-order-ladder",
