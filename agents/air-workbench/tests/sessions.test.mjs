@@ -1355,6 +1355,87 @@ test("oversized newline records advance in bounded chunks and emit one omission"
   assert.equal(validateAirArtifact(second.artifact), true);
 });
 
+test("an oversized omission dropped by the event cap is not a complete prefix", async (t) => {
+  const dirs = await fixture(t);
+  const source = join(dirs.codex, "capped-oversized.jsonl");
+  // The retained-event cap is min(30_000, floor(maxArtifactBytes / 1_200)),
+  // so 8_399 bytes caps retention at exactly six events.
+  const limits = {
+    ...SESSION_LIMITS,
+    maxLineBytes: 1_024,
+    maxReadBytesPerRefresh: 4_096,
+    maxArtifactBytes: 8_399,
+  };
+  const leading = Buffer.concat(
+    Array.from({ length: 6 }, (_, slot) => fixedRecord("event_msg", slot)),
+  );
+  const oversized = Buffer.concat([
+    Buffer.alloc(5_000, 0x78),
+    Buffer.from("\n"),
+  ]);
+  await writeFile(source, Buffer.concat([leading, oversized]));
+  const registry = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex" }],
+    randomBytes: deterministicRandom(),
+    limits,
+  });
+
+  let catalog = await registry.catalog({ refresh: true });
+  const first = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+  });
+  assert.equal(first.artifact.body.events.length, 6);
+
+  catalog = await registry.catalog({ refresh: true });
+  const second = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: first.snapshot_id,
+  });
+  assert.equal(second.artifact.body.capture.completeness, "truncated");
+
+  catalog = await registry.catalog({ refresh: true });
+  const third = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: second.snapshot_id,
+  });
+  // The cursor has advanced past the discarded record, and the retained-event
+  // cap kept the `record.oversized-omitted` event — the only carrier of the
+  // hole's byte range and commitment — out of the artifact. The snapshot
+  // therefore covers a measured hole it cannot describe.
+  assert.equal(
+    third.artifact.body.capture.snapshot_cursor.byte_offset,
+    leading.byteLength + oversized.byteLength,
+  );
+  assert.equal(third.artifact.body.events.length, 6);
+  assert.equal(
+    third.artifact.body.events.some(
+      ({ type }) => type === "record.oversized-omitted",
+    ),
+    false,
+  );
+  assert.equal(
+    third.artifact.body.diagnostics.some(
+      ({ code }) => code === "AIR_SESSION_OVERSIZED_RECORD_OMITTED",
+    ),
+    true,
+  );
+  assert.equal(third.artifact.body.capture.completeness, "truncated");
+  assert.equal(validateAirArtifact(third.artifact), true);
+
+  // The hole does not heal: a later refresh over the same retained state keeps
+  // the truthful label rather than reverting to `complete-prefix`.
+  catalog = await registry.catalog({ refresh: true });
+  const fourth = await registry.snapshot({
+    sessionId: catalog.items[0].id,
+    generation: catalog.generation,
+    priorSnapshotId: third.snapshot_id,
+  });
+  assert.equal(fourth.artifact.body.capture.completeness, "truncated");
+});
+
 test("known provider records and declared parents become closed graph evidence", async (t) => {
   const dirs = await fixture(t);
   const codexLines =

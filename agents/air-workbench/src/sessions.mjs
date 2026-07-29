@@ -1426,6 +1426,14 @@ export function createSessionRegistry({
         30_000,
         Math.floor(boundedLimits.maxArtifactBytes / 1_200),
       );
+      // RPF-149: the cursor has already advanced past a discarded oversized
+      // record. The `record.oversized-omitted` event below is the only carrier
+      // of that hole's byte range and commitment, so when the retained-event
+      // cap keeps it out of the artifact the snapshot covers a measured hole it
+      // cannot describe and `completeness` must not claim `complete-prefix`.
+      // Carried in the retained state because the hole does not heal on a later
+      // refresh, exactly as `oversizedOmitted` is carried.
+      let oversizedEventDropped = prior?.oversizedEventDropped ?? false;
       if (
         completedOversized &&
         Number.isSafeInteger(completedOversized.startByte) &&
@@ -1470,6 +1478,12 @@ export function createSessionRegistry({
           });
           retainedEventIds.add(eventId);
         }
+      } else if (
+        completedOversized &&
+        Number.isSafeInteger(completedOversized.startByte) &&
+        Buffer.isBuffer(completedOversized.rawDigest)
+      ) {
+        oversizedEventDropped = true;
       }
       let recordCount = 0;
       while (
@@ -1666,7 +1680,8 @@ export function createSessionRegistry({
         hitReadLimit ||
         hitRecordLimit ||
         hitArtifactLimit ||
-        discardingOversized
+        discardingOversized ||
+        oversizedEventDropped
         ? "truncated"
         : hasTornTail
           ? "partial-prefix"
@@ -1901,6 +1916,7 @@ export function createSessionRegistry({
         providerLinks,
         discardingOversized,
         oversizedOmitted,
+        oversizedEventDropped,
         oversizedStart,
         oversizedHasher,
       });
