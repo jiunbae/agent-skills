@@ -66,7 +66,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
   "session-api.test.mjs": 13,
-  "sessions.test.mjs": 47,
+  "sessions.test.mjs": 48,
 });
 const NON_TEXT_EXTENSIONS = new Set([
   ".7z",

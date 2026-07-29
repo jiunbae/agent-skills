@@ -291,7 +291,16 @@ function publicDiagnostic(code, count = 1) {
   });
 }
 
-function normalizeRoot(root) {
+// RPF-160: optionality belongs to the four internal probe locations alone. A
+// caller that could set it would buy back exactly the absent-root fail-open
+// RPF-141 and RPF-147 closed — an unobserved configured root publishing as a
+// complete observation of nothing. Membership is proved by identity, not by a
+// forgeable field: only records this module produced for a probe location are
+// admitted, so re-normalizing `resolveSessionRoots()` output stays idempotent
+// while a caller-authored `optional` is refused.
+const PROBE_ROOTS = new WeakSet();
+
+function normalizeRoot(root, probed = false) {
   if (
     root === null ||
     typeof root !== "object" ||
@@ -303,7 +312,13 @@ function normalizeRoot(root) {
       "Session roots require an absolute path and codex or claude provider.",
     );
   }
-  return Object.freeze({
+  const mayBeOptional = probed === true || PROBE_ROOTS.has(root);
+  if (!mayBeOptional && root.optional !== undefined) {
+    throw new TypeError(
+      "Session root optional is not caller-settable; only the probe locations from resolveSessionRoots() are optional.",
+    );
+  }
+  const normalized = Object.freeze({
     path: resolve(root.path),
     provider: root.provider,
     label: root.label === "project" ? "project" : "user",
@@ -311,8 +326,10 @@ function normalizeRoot(root) {
     // presence can be re-observed on every scan instead of being frozen into
     // the root set at construction. An explicitly configured root is never
     // optional and always settles incomplete when it cannot be observed.
-    optional: root.optional === true,
+    optional: mayBeOptional && root.optional === true,
   });
+  if (normalized.optional) PROBE_ROOTS.add(normalized);
+  return normalized;
 }
 
 function defaultRootIsPresent(path) {
@@ -357,7 +374,7 @@ export function resolveSessionRoots({
   const seen = new Set();
   return Object.freeze(
     roots
-      .map(normalizeRoot)
+      .map((root) => normalizeRoot(root, true))
       .filter((root) => {
         const key = `${root.provider}\0${root.path}`;
         if (seen.has(key)) return false;
@@ -685,7 +702,7 @@ export function createSessionRegistry({
   const normalizedRoots = Object.freeze(
     roots
       .slice(0, boundedLimits.maxRoots)
-      .map(normalizeRoot)
+      .map((root) => normalizeRoot(root))
       .filter((root) => {
         const key = `${root.provider}\0${root.path}`;
         if (normalizedRootKeys.has(key)) return false;

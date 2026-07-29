@@ -2362,6 +2362,42 @@ test("an explicitly configured absent root still settles incomplete on every sca
   }
 });
 
+test("a caller cannot mark a configured session root optional", async (t) => {
+  const dirs = await fixture(t);
+  const absent = join(dirs.root, "configured-but-absent-optional");
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  // Optionality belongs to the four internal probe locations alone. If a caller
+  // can set it, it can buy back exactly the absent-root fail-open RPF-141 and
+  // RPF-147 closed: an unobserved configured root publishing as a complete
+  // observation of nothing.
+  assert.throws(
+    () =>
+      createSessionRegistry({
+        roots: [
+          { path: dirs.codex, provider: "codex" },
+          { path: absent, provider: "claude", optional: true },
+        ],
+        randomBytes: deterministicRandom(),
+      }),
+    (error) =>
+      error instanceof TypeError &&
+      /optional/u.test(error.message),
+  );
+
+  // `resolveSessionRoots` still produces the four optional probe roots, and
+  // feeding its own output back in is accepted unchanged.
+  const probes = resolveSessionRoots({ cwd: dirs.root, home: dirs.root });
+  assert.equal(probes.every((root) => root.optional === true), true);
+  const registry = createSessionRegistry({
+    roots: probes,
+    randomBytes: deterministicRandom(),
+  });
+  const catalog = await registry.catalog({ refresh: true });
+  assert.equal(catalog.truncated, false);
+  assert.deepEqual(catalog.diagnostics, []);
+});
+
 test("a default session root hidden by a non-ENOENT error still settles incomplete", {
   skip: PERMISSIONS_ARE_ENFORCED
     ? false
