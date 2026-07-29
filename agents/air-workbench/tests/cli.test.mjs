@@ -885,6 +885,14 @@ test("missing, unknown, and unsafe arguments fail with JSON diagnostics", async 
   failure(await invoke(["import"]), "INVALID_ARGUMENT");
   failure(await invoke(["import", "SKILL.md"]), "MISSING_OPTION");
   failure(await invoke(["diff", "missing.json", "--force", "yes"]), "UNKNOWN_OPTION");
+  const unknownAirFlag = failure(await invoke(["air", "--nope", "x"]), "UNKNOWN_OPTION");
+  assert.match(unknownAirFlag.message, /--nope/u);
+  const missingInput = failure(
+    await invoke(["air", "import", "/nope/SKILL.md", "--out", "/nope/out.air.json"]),
+    "INPUT_NOT_FOUND",
+  );
+  assert.match(missingInput.message, /\/nope\/SKILL\.md/u);
+  assert.doesNotMatch(missingInput.message, /lstat/u);
   failure(
     await invoke(["studio", "missing.json", "--host", "192.168.32.55"]),
     "INVALID_HOST",
@@ -894,6 +902,82 @@ test("missing, unknown, and unsafe arguments fail with JSON diagnostics", async 
   assert.match(help, /workflow-studio run APPROVED --trace TRACE/u);
   assert.match(help, /0\.0\.0\.0/u);
   assert.doesNotMatch(help, /dangerously|bypass-approvals/u);
+});
+
+test("air import reports graph size and names the reason a graph is empty", async (t) => {
+  const item = await fixture(t);
+  const recognizedPath = join(item.directory, "recognized.air.json");
+  const recognized = JSON.parse(
+    success(await invoke(["air", "import", item.skill, "--out", recognizedPath])).stdout,
+  );
+  const stored = JSON.parse(await readFile(recognizedPath, "utf8"));
+  assert.equal(recognized.ok, true);
+  assert.equal(recognized.command, "air import");
+  assert.equal(recognized.kind, "workflow");
+  assert.equal(recognized.artifact, recognizedPath);
+  assert.equal(recognized.artifact_id, stored.artifact_id);
+  assert.equal(recognized.nodes, stored.body.graph.nodes.length);
+  assert.equal(recognized.edges, stored.body.graph.edges.length);
+  assert.equal(recognized.diagnostics, stored.body.diagnostics.length);
+  assert.ok(recognized.nodes > 0);
+
+  const opaqueSkill = join(item.directory, "OPAQUE.md");
+  await writeFile(
+    opaqueSkill,
+    `---
+name: opaque-fixture
+description: A Skill with no recognized workflow structure
+---
+
+Prose only. There is nothing structural to recognize here.
+`,
+    "utf8",
+  );
+  const opaquePath = join(item.directory, "opaque.air.json");
+  const opaque = JSON.parse(
+    success(await invoke(["air", "import", opaqueSkill, "--out", opaquePath])).stdout,
+  );
+  const opaqueStored = JSON.parse(await readFile(opaquePath, "utf8"));
+  assert.equal(opaque.ok, true);
+  assert.equal(opaque.nodes, 0);
+  assert.equal(opaque.edges, 0);
+  assert.equal(opaque.diagnostics, opaqueStored.body.diagnostics.length);
+  assert.ok(opaque.diagnostics > 0);
+  assert.deepEqual(
+    opaque.warnings,
+    opaqueStored.body.diagnostics
+      .filter((entry) => entry.severity === "warning")
+      .map((entry) => ({ code: entry.code, message: entry.message })),
+  );
+  assert.ok(opaque.warnings.some((entry) => entry.code === "WORKFLOW_NONE"));
+  assert.equal(opaque.errors, undefined);
+});
+
+test("air import refuses to report unqualified success for an error diagnostic", async (t) => {
+  const item = await fixture(t);
+  const notSkill = join(item.directory, "not-a-skill.json");
+  await writeFile(notSkill, `${JSON.stringify({ name: "demo" }, null, 2)}\n`, "utf8");
+  const outputPath = join(item.directory, "not-a-skill.air.json");
+  const run = await invoke(["air", "import", notSkill, "--out", outputPath]);
+  const diagnostic = failure(run, "AIR_IMPORT_DIAGNOSTIC_ERROR");
+  assert.equal(run.stdout, "");
+
+  const stored = JSON.parse(await readFile(outputPath, "utf8"));
+  assert.equal(diagnostic.details.artifact, outputPath);
+  assert.equal(diagnostic.details.artifact_id, stored.artifact_id);
+  assert.equal(diagnostic.details.kind, "workflow");
+  assert.equal(diagnostic.details.nodes, 0);
+  assert.equal(diagnostic.details.edges, 0);
+  assert.equal(diagnostic.details.diagnostics, stored.body.diagnostics.length);
+  assert.deepEqual(
+    diagnostic.details.errors,
+    stored.body.diagnostics
+      .filter((entry) => entry.severity === "error")
+      .map((entry) => ({ code: entry.code, message: entry.message })),
+  );
+  assert.ok(diagnostic.details.errors.length > 0);
+  assert.match(diagnostic.message, /FRONTMATTER_MISSING/u);
+  assert.match(diagnostic.message, /air validate/u);
 });
 
 function get(url) {

@@ -182,13 +182,40 @@ function option(parsed, name) {
   return parsed.options.get(name);
 }
 
+function assertHelpOnlyOptions(parsed, label) {
+  for (const name of parsed.options.keys()) {
+    if (name === "help") continue;
+    throw cliError(
+      "UNKNOWN_OPTION",
+      `Unknown option for ${label}: --${name}. Run "${label} --help" for the supported commands.`,
+    );
+  }
+}
+
 function result(value) {
   process.stdout.write(`${JSON.stringify({ ok: true, ...value })}\n`);
 }
 
 async function assertInputFile(path) {
   const absolute = resolve(path);
-  const info = await lstat(absolute);
+  let info;
+  try {
+    info = await lstat(absolute);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw cliError(
+        "INPUT_NOT_FOUND",
+        `Input path does not exist: ${absolute}. Check the spelling and the working directory, then pass an existing file.`,
+      );
+    }
+    if (error?.code === "ENOTDIR") {
+      throw cliError(
+        "INVALID_PATH",
+        `Input path traverses a non-directory: ${absolute}. A parent segment of that path is a file.`,
+      );
+    }
+    throw error;
+  }
   if (info.isSymbolicLink()) {
     throw cliError("SYMLINK_REFUSED", `Refusing symbolic-link input: ${path}`);
   }
@@ -387,6 +414,50 @@ async function publishAir(path, artifact, options = {}) {
   };
 }
 
+const REPORTED_DIAGNOSTICS = 5;
+const REPORTED_DIAGNOSTIC_MESSAGE = 300;
+
+function reportedDiagnostic(diagnostic) {
+  const code = typeof diagnostic?.code === "string"
+    ? diagnostic.code
+    : "UNKNOWN_DIAGNOSTIC";
+  const raw = typeof diagnostic?.message === "string" ? diagnostic.message : "";
+  const message = raw.length > REPORTED_DIAGNOSTIC_MESSAGE
+    ? `${raw.slice(0, REPORTED_DIAGNOSTIC_MESSAGE - 1)}…`
+    : raw;
+  return { code, message };
+}
+
+function importSummary(artifact) {
+  const graph = artifact?.body?.graph ?? {};
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph.edges) ? graph.edges : [];
+  const all = Array.isArray(artifact?.body?.diagnostics)
+    ? artifact.body.diagnostics
+    : [];
+  const errors = all.filter((item) => item?.severity === "error");
+  const warnings = all.filter((item) => item?.severity === "warning");
+  const confidence = {};
+  for (const element of [...nodes, ...edges]) {
+    const level = element?.confidence?.level;
+    if (typeof level !== "string") continue;
+    confidence[level] = (confidence[level] ?? 0) + 1;
+  }
+  const summary = {
+    nodes: nodes.length,
+    edges: edges.length,
+    diagnostics: all.length,
+  };
+  if (Object.keys(confidence).length > 0) summary.confidence = confidence;
+  if (errors.length > 0) {
+    summary.errors = errors.slice(0, REPORTED_DIAGNOSTICS).map(reportedDiagnostic);
+  }
+  if (warnings.length > 0) {
+    summary.warnings = warnings.slice(0, REPORTED_DIAGNOSTICS).map(reportedDiagnostic);
+  }
+  return { ...summary, error_count: errors.length };
+}
+
 async function airImportCommand(parsed) {
   assertShape(parsed, { positionals: 1, required: ["out"] });
   if (airExtension(parsed.positionals[0]) !== null) {
@@ -399,12 +470,24 @@ async function airImportCommand(parsed) {
   const written = await publishAir(option(parsed, "out"), artifact, {
     jsonOnly: true,
   });
-  result({
+  const { error_count: errorCount, ...summary } = importSummary(artifact);
+  const identity = {
     command: "air import",
     artifact: written.path,
     kind: artifact.kind,
     artifact_id: artifact.artifact_id,
-  });
+  };
+  if (errorCount > 0) {
+    const first = summary.errors[0];
+    throw cliError(
+      "AIR_IMPORT_DIAGNOSTIC_ERROR",
+      `The artifact was written, but the import recorded ${errorCount} error diagnostic${
+        errorCount === 1 ? "" : "s"
+      }: ${first.code}: ${first.message} "air import" expects a Skill Markdown file with YAML frontmatter; correct the source, or inspect the saved artifact with "air validate ${written.path}".`,
+      { ...identity, ...summary },
+    );
+  }
+  result({ ...identity, ...summary });
 }
 
 async function airValidateCommand(parsed) {
@@ -1036,6 +1119,7 @@ async function promoteCommand(parsed) {
 async function airCommand(parsed) {
   const [subcommand, ...positionals] = parsed.positionals;
   if (!subcommand || subcommand === "help") {
+    assertHelpOnlyOptions(parsed, "air");
     process.stdout.write(HELP);
     return;
   }
@@ -1065,6 +1149,7 @@ async function main(argv) {
     return;
   }
   if (parsed.options.has("help")) {
+    assertHelpOnlyOptions(parsed, parsed.command);
     process.stdout.write(HELP);
     return;
   }
