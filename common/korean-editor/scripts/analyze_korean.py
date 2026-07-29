@@ -9,10 +9,16 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from korean_text import mask_prose  # noqa: E402
+
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RULES = SKILL_ROOT / "references" / "editing-rules.json"
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3}
+LOCALIZED_MAX_FINDINGS = 3
+LOCALIZED_MAX_DENSITY = 6.0
 
 
 def read_input(path: str) -> str:
@@ -32,13 +38,30 @@ def excerpt(text: str, start: int, end: int, radius: int = 35) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def scope_hint(finding_count: int, weighted: int, prose_characters: int) -> str:
+    """Map signal density, not raw counts, to an editing scope.
+
+    A long document naturally accumulates more matches, so an absolute
+    threshold would push every long draft toward a wider rewrite.
+    """
+    if finding_count == 0:
+        return "none"
+    density = weighted / max(prose_characters, 1) * 1000
+    if finding_count <= LOCALIZED_MAX_FINDINGS and density <= LOCALIZED_MAX_DENSITY:
+        return "localized"
+    return "standard"
+
+
 def analyze(text: str, rules_data: dict) -> dict:
     findings = []
     weighted_signal_count = 0
+    # Offsets survive masking, so line numbers and excerpts come from the
+    # original text while matching only sees prose.
+    prose = mask_prose(text)
 
     for rule in rules_data["rules"]:
         regex = re.compile(rule["pattern"], re.MULTILINE | re.IGNORECASE)
-        matches = list(regex.finditer(text))
+        matches = list(regex.finditer(prose))
         minimum = int(rule.get("minimum_occurrences", 1))
         if len(matches) < minimum:
             continue
@@ -50,7 +73,7 @@ def analyze(text: str, rules_data: dict) -> dict:
                 {
                     "line": line,
                     "column": column,
-                    "match": match.group(0),
+                    "match": text[match.start() : match.end()],
                     "context": excerpt(text, match.start(), match.end()),
                 }
             )
@@ -64,18 +87,15 @@ def analyze(text: str, rules_data: dict) -> dict:
                 "count": len(matches),
                 "cue": rule["cue"],
                 "guidance": rule["guidance"],
+                # Carried into the report so the editor sees when to leave a
+                # match alone without opening the rulebook separately.
+                "exceptions": rule["exceptions"],
                 "examples": examples,
             }
         )
 
     findings.sort(key=lambda item: (-SEVERITY_WEIGHT[item["severity"]], item["id"]))
-    if not findings:
-        hint = "none"
-    elif len(findings) <= 2 and weighted_signal_count <= 5:
-        hint = "localized"
-    else:
-        hint = "standard"
-
+    prose_characters = sum(1 for char in prose if char != "\x00")
     paragraphs = [part for part in re.split(r"\n\s*\n", text) if part.strip()]
     sentences = [part for part in re.split(r"(?<=[.!?。！？])\s+|\n+", text) if part.strip()]
     return {
@@ -83,10 +103,11 @@ def analyze(text: str, rules_data: dict) -> dict:
         "disclaimer": "Advisory editing cues only; not an AI-authorship score.",
         "statistics": {
             "characters": len(text),
+            "prose_characters": prose_characters,
             "paragraphs": len(paragraphs),
             "sentences": len(sentences),
         },
-        "edit_scope_hint": hint,
+        "edit_scope_hint": scope_hint(len(findings), weighted_signal_count, prose_characters),
         "weighted_signal_count": weighted_signal_count,
         "findings": findings,
     }

@@ -31,13 +31,15 @@ tags: [korean, writing, editing]
 
 ### 2. 원문 보호하기
 
-파일을 편집하거나 긴 글·정밀 편집을 처리할 때 원문을 별도로 유지한다. 수치, URL, 링크 목적지, 코드, 인용과 마크다운 구조를 보호 대상으로 삼는다.
+파일을 편집하거나 긴 글·정밀 편집을 처리할 때 원문을 별도로 유지한다. 수치·날짜·버전, URL, 링크 목적지, 코드, 직접 인용, 인용 블록, 체크박스 상태, 각주, 마크다운 구조와 문체 등급을 보호 대상으로 삼는다.
 
 ```bash
 python3 scripts/analyze_korean.py INPUT --json
 ```
 
 분석 결과는 편집 후보를 찾는 참고 자료다. `edit_scope_hint`를 품질 점수나 AI 판정으로 표현하지 않는다. 짧거나 명확한 요청은 분석 스크립트 없이 바로 보수적으로 편집해도 된다.
+
+코드 블록, 인라인 코드, URL, 링크 목적지, 프런트매터는 분석에서 제외되므로 그 안의 표현은 신호로 잡히지 않는다. 각 신호에는 `exceptions`가 함께 실린다. 예외에 해당하면 고치지 않는다.
 
 ### 3. 필요한 부분만 편집하기
 
@@ -62,6 +64,8 @@ python3 scripts/verify_fidelity.py BEFORE AFTER
 - 변경률 30% 초과: 과윤문 가능성을 경고한다.
 - 200자 이상에서 변경률 50% 초과: 사용자가 적극적 재작성을 요구하지 않았다면 중단하고 더 보수적으로 고친다.
 - 요약 요청이 아닌 한 수치나 직접 인용의 삭제도 실패로 취급한다.
+- `speech_level` 실패는 합니다체·해요체·한다체가 바뀌었다는 뜻이다. 사용자가 문체 전환을 명시적으로 요청한 경우에만 허용하고, 그 사실을 결과에 밝힌다.
+- `latin_terms` 경고는 제품명이나 API 이름이 번역·변형됐을 수 있다는 뜻이다. 원문 표기를 되돌린다.
 
 ### 5. 결과 전달하기
 
@@ -74,6 +78,9 @@ python3 scripts/verify_fidelity.py BEFORE AFTER
 ```bash
 python3 scripts/build_runtime_rules.py
 python3 scripts/build_runtime_rules.py --check
+python3 -m unittest discover -s tests
 ```
+
+새 규칙은 정규식, 최소 발생 횟수, 예외를 함께 정한다. 최소 발생 횟수는 한 번 등장해도 어색한 표현에만 1로 둔다. 문맥에 따라 자연스러운 표현은 2회 이상 반복될 때만 신호로 삼는다.
 
 원본 프로젝트에서 배운 설계와 라이선스 고지는 [references/attribution.md](references/attribution.md)를 참조한다.

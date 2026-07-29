@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python skill tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run skill test suites
+        run: |
+          # A skill owns its tests at <group>/<skill>/tests/test_*.py. Each
+          # suite runs from its own skill root so relative script paths resolve.
+          set -e
+          FOUND=0
+          while IFS= read -r dir; do
+            FOUND=1
+            echo "::group::${dir}"
+            (cd "${dir}" && python -m unittest discover -s tests -v)
+            echo "::endgroup::"
+          done < <(find . -mindepth 3 -maxdepth 3 -type d -name tests -not -path "./.git/*" \
+                     -exec sh -c 'ls "$1"/test_*.py >/dev/null 2>&1' _ {} \; -print | sed 's|/tests$||' | sort)
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "no python skill tests found" >&2
+            exit 1
+          fi
+
+      - name: Check generated files are current
+        run: |
+          # Generated rulebooks drift silently when the canonical source
+          # changes without a rebuild, so the check gates every push.
+          python common/korean-editor/scripts/build_runtime_rules.py --check

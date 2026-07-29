@@ -19,6 +19,16 @@ empty `[Unreleased]` section above it.
 ### Added
 - Safe remote installer for the `agent-skills` repository.
 - `install.sh --core`: core skills only option
+- `Tests` workflow: runs every `<group>/<skill>/tests/test_*.py` suite from its
+  own skill root and gates generated-file drift on push and pull request.
+- korean-editor: 14 editorial rules covering the officialese and translationese
+  the previous set missed — `~에 대한`, `~와 관련하여`, `~로 인해`, `~고 있다`,
+  `~함에 따라`, `것으로 나타났다`, `다음과 같다`, `~라고 할 수 있다`,
+  `~를 진행하다`, `요구되다`, `~측면에서`, plus emoji headings, repeated
+  horizontal rules, and `**항목**:` bullet lead-ins.
+- korean-editor: `verify_fidelity.py` now also protects speech level
+  (합니다체·해요체·한다체), task checkbox states, blockquote blocks, and
+  footnotes, and warns when a Latin-script product or API name changes.
 
 ### Changed
 - Renamed the AIR Workbench package directory from `agents/workflow-studio` to
@@ -61,6 +71,20 @@ empty `[Unreleased]` section above it.
   publish the `@open330/agt` npm package.
 
 ### Fixed
+- korean-editor: `analyze_korean.py` no longer reports editorial signals from
+  code fences, inline code, URLs, link destinations, or front matter. A Python
+  comment reading `# 결론적으로 이 코드는 되어진다` previously produced two
+  findings. Masking preserves offsets, so reported line numbers still point at
+  the original text.
+- korean-editor: findings now carry each rule's `exceptions`, so the exception
+  is visible where the fix is proposed rather than only in the separate
+  rulebook that principle 4 depends on.
+- korean-editor: `edit_scope_hint` scales with signal density per 1,000 prose
+  characters instead of an absolute count, so a long clean draft with one
+  localized problem no longer escalates to a document-wide rewrite.
+- korean-editor: `verify_fidelity.py` tokenizes dates, versions, and clock
+  times before bare numbers. A failure on `2026-07-29` now names the date
+  rather than reporting three unrelated numbers.
 - `agents/air-workbench/README.md` now documents that `SKILL.md` import coverage
   is partial and shape-based, which no document previously stated anywhere. A new
   "What the importer recognizes" section lists the six recognizer rungs and their

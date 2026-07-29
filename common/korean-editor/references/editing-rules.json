@@ -4,7 +4,7 @@
     "purpose": "Advisory cues for conservative Korean editing; never an AI-authorship classifier.",
     "source_inspiration": "https://github.com/epoko77-ai/im-not-ai",
     "license": "MIT",
-    "version": 1
+    "version": 2
   },
   "categories": {
     "translationese": "번역투와 불필요한 피동",
@@ -66,10 +66,60 @@
       "exceptions": "실제로 손에 들거나 보유한다는 의미가 중요하면 유지한다."
     },
     {
+      "id": "TR-06",
+      "category": "translationese",
+      "severity": "low",
+      "pattern": "에\\s+대(?:한(?!민국)|해서?|하여)",
+      "minimum_occurrences": 2,
+      "cue": "'~에 대한/대해'가 목적어 관계를 늘려 쓸 수 있음",
+      "guidance": "목적격 조사나 구체적인 동사로 줄인다. '~에 대한 검토'는 '~를 검토'로 쓴다.",
+      "exceptions": "대상 범위를 한정하거나 여러 대상 중 하나를 지목해야 하는 문장에서는 유지한다."
+    },
+    {
+      "id": "TR-07",
+      "category": "translationese",
+      "severity": "low",
+      "pattern": "(?:와|과)\\s+관련(?:하여|해서?|된|한)",
+      "minimum_occurrences": 1,
+      "cue": "'~와 관련하여'가 관계를 흐리게 표현할 수 있음",
+      "guidance": "실제 관계를 나타내는 조사나 동사로 바꾼다. 무엇이 어떻게 관련되는지 밝힌다.",
+      "exceptions": "공문·계약처럼 관련 범위를 포괄적으로 지시해야 하는 문서에서는 유지한다."
+    },
+    {
+      "id": "TR-08",
+      "category": "translationese",
+      "severity": "medium",
+      "pattern": "(?:으로|로)\\s+인(?:해서?|하여|한)",
+      "minimum_occurrences": 2,
+      "cue": "'~로 인해'가 인과를 무겁게 표현할 수 있음",
+      "guidance": "'~라서', '~때문에' 또는 원인을 주어로 세운 능동문을 검토한다.",
+      "exceptions": "여러 원인 중 하나를 정확히 지목하거나 법적 인과를 명시할 때는 유지한다."
+    },
+    {
+      "id": "TR-09",
+      "category": "translationese",
+      "severity": "low",
+      "pattern": "고\\s+있(?:다|습니다|으며|는|었|지)",
+      "minimum_occurrences": 4,
+      "cue": "영어 진행형에 가까운 '~고 있다'가 반복될 수 있음",
+      "guidance": "상태나 사실을 말하는 문장이면 단순 시제로 줄인다.",
+      "exceptions": "실제로 진행 중인 동작이나 완료와 대비되는 상태에서는 유지한다."
+    },
+    {
+      "id": "TR-10",
+      "category": "translationese",
+      "severity": "low",
+      "pattern": "(?:함|됨|음)에\\s+따라",
+      "minimum_occurrences": 2,
+      "cue": "명사화된 인과 표현이 반복될 수 있음",
+      "guidance": "'~하자', '~해서'처럼 동사를 살린 연결로 검토한다.",
+      "exceptions": "규정 변경이나 조건 충족을 근거로 제시하는 공식 문서에서는 유지한다."
+    },
+    {
       "id": "TP-01",
       "category": "template",
       "severity": "medium",
-      "pattern": "결론적으로",
+      "pattern": "(?:결론적으로|요약하자면|정리하자면|한마디로\\s+말(?:해|하면))",
       "minimum_occurrences": 1,
       "cue": "결론 표지가 내용 없이 문장을 예고할 수 있음",
       "guidance": "삭제하거나 결론 내용을 바로 말한다.",
@@ -106,6 +156,26 @@
       "exceptions": "절차, 요구사항, 비교 기준처럼 명시적 열거가 필요한 문서에서는 유지한다."
     },
     {
+      "id": "TP-05",
+      "category": "template",
+      "severity": "medium",
+      "pattern": "것으로\\s+(?:나타났|드러났|조사되|집계되)",
+      "minimum_occurrences": 1,
+      "cue": "출처 없는 기사·보고서 인용투일 수 있음",
+      "guidance": "관찰 주체와 근거가 원문에 있으면 밝히고, 없으면 관찰한 사실을 그대로 쓴다.",
+      "exceptions": "실제 조사·통계 결과를 인용하며 출처가 함께 제시된 문장에서는 유지한다."
+    },
+    {
+      "id": "TP-06",
+      "category": "template",
+      "severity": "low",
+      "pattern": "다음과\\s+같(?:다|습니다|은|이)",
+      "minimum_occurrences": 3,
+      "cue": "예고 문구가 반복돼 본문 진입이 늦어질 수 있음",
+      "guidance": "이어지는 목록이나 표가 스스로 설명하면 예고 문장을 덜어낸다.",
+      "exceptions": "명세, 절차, API 문서처럼 예고와 본문의 구분이 필요한 문서에서는 유지한다."
+    },
+    {
       "id": "HG-01",
       "category": "hedging",
       "severity": "high",
@@ -134,6 +204,16 @@
       "cue": "같은 추측 종결이 반복됨",
       "guidance": "문장별 근거 수준을 확인하고 확정·가능·추측을 구분한다.",
       "exceptions": "분석 보고서에서 일관된 확률적 판단을 표현하면 유지한다."
+    },
+    {
+      "id": "HG-04",
+      "category": "hedging",
+      "severity": "medium",
+      "pattern": "(?:라고|다고)\\s+(?:할|볼)\\s+수\\s+있",
+      "minimum_occurrences": 1,
+      "cue": "'~라고 할 수 있다'가 주장을 흐릴 수 있음",
+      "guidance": "근거가 있으면 단정하고, 없으면 문장 자체가 필요한지 확인한다.",
+      "exceptions": "여러 해석이 가능함을 밝히거나 다른 견해를 소개하는 문장에서는 유지한다."
     },
     {
       "id": "CN-01",
@@ -176,6 +256,36 @@
       "exceptions": "의무와 필요를 법적으로 구분해야 하는 문장에서는 유지한다."
     },
     {
+      "id": "VB-04",
+      "category": "verbosity",
+      "severity": "low",
+      "pattern": "(?:을|를)\\s+(?:진행|실시|수행)(?:하|합|했|해)",
+      "minimum_occurrences": 1,
+      "cue": "'검토를 진행하다'처럼 동사를 명사와 대체 동사로 나눠 쓸 수 있음",
+      "guidance": "'검토하다'처럼 하나의 동사로 줄인다.",
+      "exceptions": "이미 정해진 절차나 행사를 집행한다는 뜻이 중요하면 유지한다."
+    },
+    {
+      "id": "VB-05",
+      "category": "verbosity",
+      "severity": "low",
+      "pattern": "(?:요구(?:되|돼|됩|된)|필요로\\s+하)",
+      "minimum_occurrences": 1,
+      "cue": "행위자가 빠진 당위 표현일 수 있음",
+      "guidance": "누가 무엇을 해야 하는지 드러나는 능동문을 검토한다.",
+      "exceptions": "요구 주체를 밝힐 수 없거나 규정이 요구 주체인 문장에서는 유지한다."
+    },
+    {
+      "id": "VB-06",
+      "category": "verbosity",
+      "severity": "low",
+      "pattern": "(?:관점|측면|차원)에서",
+      "minimum_occurrences": 2,
+      "cue": "관점 표현이 반복돼 문장이 추상적으로 흐를 수 있음",
+      "guidance": "무엇을 기준으로 판단하는지 구체적으로 쓰거나 표현을 덜어낸다.",
+      "exceptions": "여러 기준을 실제로 대비하는 분석 문서에서는 유지한다."
+    },
+    {
       "id": "FM-01",
       "category": "formatting",
       "severity": "low",
@@ -194,6 +304,36 @@
       "cue": "짧은 불릿이 과도하게 이어질 수 있음",
       "guidance": "실제 병렬 항목은 유지하고 설명성 항목은 문단으로 묶는 것을 검토한다.",
       "exceptions": "체크리스트, 요구사항, 릴리스 노트에서는 불릿 구조를 유지한다."
+    },
+    {
+      "id": "FM-03",
+      "category": "formatting",
+      "severity": "low",
+      "pattern": "^#{1,6}\\s*[←-⇿⌀-➿⬀-⯿🀀-🫿]",
+      "minimum_occurrences": 1,
+      "cue": "제목 앞 이모지가 문서 격식과 어긋날 수 있음",
+      "guidance": "문서의 기존 제목 관례를 따른다. 다른 제목에 이모지가 없으면 덜어낸다.",
+      "exceptions": "릴리스 노트나 팀 관례처럼 이미 이모지를 쓰는 문서에서는 유지한다."
+    },
+    {
+      "id": "FM-04",
+      "category": "formatting",
+      "severity": "low",
+      "pattern": "^\\s*(?:---|\\*\\*\\*|___)\\s*$",
+      "minimum_occurrences": 3,
+      "cue": "구분선이 잦아 문단 흐름이 끊길 수 있음",
+      "guidance": "제목 위계로 구분되는 곳에서는 구분선을 덜어낸다.",
+      "exceptions": "슬라이드 원본이나 구분선이 의미를 갖는 형식에서는 유지한다."
+    },
+    {
+      "id": "FM-05",
+      "category": "formatting",
+      "severity": "low",
+      "pattern": "^\\s*[-*+]\\s+\\*\\*[^*\\n]+\\*\\*\\s*[:：]",
+      "minimum_occurrences": 3,
+      "cue": "'**항목**:' 형태의 불릿이 반복돼 기계적으로 보일 수 있음",
+      "guidance": "설명이 길면 문단으로 풀고, 짧으면 볼드 없이 항목만 남기는 것을 검토한다.",
+      "exceptions": "용어 정의 목록이나 정형 템플릿에서는 유지한다."
     }
   ]
 }

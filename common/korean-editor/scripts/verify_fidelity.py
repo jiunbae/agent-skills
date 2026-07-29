@@ -12,16 +12,21 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-URL_RE = re.compile(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
-LINK_DEST_RE = re.compile(r"!?\[[^\]\n]*\]\(([^)\s]+)(?:\s+['\"][^'\"]*['\"])?\)")
-FENCE_RE = re.compile(r"^(?:```|~~~)[^\n]*\n.*?^(?:```|~~~)\s*$", re.MULTILINE | re.DOTALL)
-INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+from korean_text import FENCE_RE, INLINE_CODE_RE, LINK_DEST_RE, URL_RE, mask_span, strip_code  # noqa: E402
+
+
 QUOTE_RES = [
     re.compile(r"“[^”\n]+”"),
     re.compile(r"‘[^’\n]+’"),
     re.compile(r'"[^"\n]+"'),
 ]
+DATE_RE = re.compile(
+    r"\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{4}\s*년\s*\d{1,2}\s*월(?:\s*\d{1,2}\s*일)?"
+)
+VERSION_RE = re.compile(r"(?<![0-9A-Za-z_.])v\d+(?:\.\d+)+|(?<![0-9A-Za-z_.])\d+(?:\.\d+){2,}")
+TIME_RE = re.compile(r"(?<![0-9:])\d{1,2}:\d{2}(?::\d{2})?(?![0-9:])")
 NUMBER_RE = re.compile(
     r"(?<![0-9A-Za-z_])(?P<number>[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
     r"(?:\s*(?P<unit>%|퍼센트|원|달러|명|개|건|회|초|분|시간|일|주|개월|년|배|GB|MB|KB|ms))?"
@@ -29,6 +34,14 @@ NUMBER_RE = re.compile(
     re.IGNORECASE,
 )
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+TASK_ITEM_RE = re.compile(r"^\s*[-*+]\s+\[([ xX])\]", re.MULTILINE)
+BLOCKQUOTE_LINE_RE = re.compile(r"^\s*>", re.MULTILINE)
+FOOTNOTE_RE = re.compile(r"\[\^[^\]\s]+\]")
+LATIN_TERM_RE = re.compile(r"(?<![0-9A-Za-z_])[A-Z][A-Za-z0-9]{2,}(?![0-9A-Za-z_])")
+FORMAL_RE = re.compile(r"(?:습니다|입니다|습니까|십시오|ㅂ니다)")
+POLITE_RE = re.compile(r"(?:아요|어요|에요|예요|세요|네요|죠|고요)(?=[\s.!?…\"”』」)]|$)", re.MULTILINE)
+# '습니다.' also ends in '다', so the plain form excludes the formal ending.
+PLAIN_RE = re.compile(r"(?<!니)다(?=[.!?…]|$)", re.MULTILINE)
 
 
 def read_text(path: str) -> str:
@@ -53,7 +66,7 @@ def extract_fenced_code(text: str) -> list[str]:
 
 def extract_inline_code(text: str) -> list[str]:
     without_fences = FENCE_RE.sub("", text)
-    return [match.group(1) for match in INLINE_CODE_RE.finditer(without_fences)]
+    return [match.group(2) for match in INLINE_CODE_RE.finditer(without_fences)]
 
 
 def extract_quotes(text: str) -> list[str]:
@@ -64,6 +77,58 @@ def extract_quotes(text: str) -> list[str]:
     return values
 
 
+def extract_task_states(text: str) -> list[str]:
+    return [match.group(1).strip().lower() or "open" for match in TASK_ITEM_RE.finditer(text)]
+
+
+def extract_footnotes(text: str) -> list[str]:
+    return [match.group(0) for match in FOOTNOTE_RE.finditer(strip_code(text))]
+
+
+def extract_latin_terms(text: str) -> list[str]:
+    body = LINK_DEST_RE.sub(" ", URL_RE.sub(" ", strip_code(text)))
+    return [match.group(0) for match in LATIN_TERM_RE.finditer(body)]
+
+
+def blockquote_signature(text: str) -> list[int]:
+    """Count the lines in each run of blockquote lines.
+
+    Runs rather than a single total, so moving a quote between blocks is
+    visible while re-wrapping inside one block is not.
+    """
+    signature: list[int] = []
+    run = 0
+    for line in FENCE_RE.sub("", text).splitlines():
+        if BLOCKQUOTE_LINE_RE.match(line):
+            run += 1
+        elif run:
+            signature.append(run)
+            run = 0
+    if run:
+        signature.append(run)
+    return signature
+
+
+def speech_level_profile(text: str) -> Counter[str]:
+    """Count sentence endings by politeness level."""
+    body = strip_code(text)
+    return Counter(
+        {
+            "formal": len(FORMAL_RE.findall(body)),
+            "polite": len(POLITE_RE.findall(body)),
+            "plain": len(PLAIN_RE.findall(body)),
+        }
+    )
+
+
+def dominant_speech_level(profile: Counter[str]) -> str | None:
+    total = sum(profile.values())
+    if total < 3:
+        return None
+    level, count = profile.most_common(1)[0]
+    return level if count / total >= 0.5 else None
+
+
 def normalize_number(value: str) -> str:
     value = value.replace(",", "")
     if "." in value:
@@ -71,9 +136,29 @@ def normalize_number(value: str) -> str:
     return value
 
 
+def normalize_date(value: str) -> str:
+    parts = re.findall(r"\d+", value)
+    return "-".join(part.zfill(2) if index else part for index, part in enumerate(parts))
+
+
 def extract_numbers(text: str) -> list[str]:
-    values = []
-    for match in NUMBER_RE.finditer(text):
+    """Tokenize dates, versions, and clock times before bare numbers.
+
+    Splitting '2026-07-29' into three numbers still compares correctly, but a
+    failure report that names the whole date is the one a human can act on.
+    """
+    values: list[str] = []
+    remainder = text
+    for kind, regex, normalize in (
+        ("date", DATE_RE, normalize_date),
+        ("version", VERSION_RE, lambda value: value.lstrip("vV")),
+        ("time", TIME_RE, lambda value: value),
+    ):
+        for match in list(regex.finditer(remainder)):
+            values.append(f"{kind}|{normalize(match.group(0))}")
+            remainder = mask_span(remainder, match.start(), match.end())
+
+    for match in NUMBER_RE.finditer(remainder):
         number = normalize_number(match.group("number"))
         unit = (match.group("unit") or "").lower()
         values.append(f"{number}|{unit}")
@@ -128,6 +213,8 @@ def verify(before: str, after: str) -> dict:
         ("fenced_code", extract_fenced_code),
         ("inline_code", extract_inline_code),
         ("direct_quotes", extract_quotes),
+        ("task_states", extract_task_states),
+        ("footnotes", extract_footnotes),
     ]
     for kind, extractor in protected:
         removed, added = counter_delta(extractor(before), extractor(after))
@@ -169,6 +256,57 @@ def verify(before: str, after: str) -> dict:
                 "message": "Markdown table row or column structure changed",
                 "before": before_tables,
                 "after": after_tables,
+            }
+        )
+
+    before_quotes = blockquote_signature(before)
+    after_quotes = blockquote_signature(after)
+    if len(before_quotes) != len(after_quotes):
+        errors.append(
+            {
+                "kind": "blockquote_structure",
+                "message": "number of blockquote blocks changed",
+                "before": before_quotes,
+                "after": after_quotes,
+            }
+        )
+    elif before_quotes != after_quotes:
+        warnings.append(
+            {
+                "kind": "blockquote_lines",
+                "message": "blockquote line counts changed; confirm that no quoted line was dropped",
+            }
+        )
+
+    before_speech = speech_level_profile(before)
+    after_speech = speech_level_profile(after)
+    before_level = dominant_speech_level(before_speech)
+    after_level = dominant_speech_level(after_speech)
+    if before_level and after_level and before_level != after_level:
+        errors.append(
+            {
+                "kind": "speech_level",
+                "message": f"dominant speech level changed from {before_level} to {after_level}",
+                "before": dict(before_speech),
+                "after": dict(after_speech),
+            }
+        )
+    elif before_speech["polite"] == 0 and after_speech["polite"] > 0:
+        warnings.append(
+            {
+                "kind": "speech_level_mixed",
+                "message": "casual polite endings appeared where the draft had none",
+            }
+        )
+
+    removed_terms, added_terms = counter_delta(extract_latin_terms(before), extract_latin_terms(after))
+    if removed_terms or added_terms:
+        warnings.append(
+            {
+                "kind": "latin_terms",
+                "message": "Latin-script terms changed; confirm that no product or API name was translated",
+                "removed": compact(removed_terms),
+                "added": compact(added_terms),
             }
         )
 
@@ -215,14 +353,13 @@ def verify(before: str, after: str) -> dict:
 def print_human(report: dict) -> None:
     stats = report["statistics"]
     print(f"status={report['status']} change_rate={stats['change_rate']:.1%}")
-    for item in report["errors"]:
-        print(f"ERROR [{item['kind']}] {item['message']}")
-        if item.get("removed"):
-            print(f"  removed: {item['removed']}")
-        if item.get("added"):
-            print(f"  added: {item['added']}")
-    for item in report["warnings"]:
-        print(f"WARN  [{item['kind']}] {item['message']}")
+    for label, items in (("ERROR", report["errors"]), ("WARN ", report["warnings"])):
+        for item in items:
+            print(f"{label} [{item['kind']}] {item['message']}")
+            if item.get("removed"):
+                print(f"  removed: {item['removed']}")
+            if item.get("added"):
+                print(f"  added: {item['added']}")
 
 
 def main() -> int:
