@@ -3208,7 +3208,7 @@ test("Skill search matches the path and source label, not only the name", async 
         skillSource("repository-source", "repository"),
       ]),
       description: "Provides Playwright-based browser automation.",
-      path: "development/playwright/SKILL.md",
+      relative_path: "development/playwright",
     },
   };
 
@@ -3232,7 +3232,12 @@ test("Skill search matches the path and source label, not only the name", async 
   );
   assert.equal(resourceMatchesQuery(filed, ""), true);
   assert.equal(resourceMatchesQuery(filed, "no-such-skill"), false);
-  assert.match(resourceSearchText(filed), /development\/playwright\/SKILL\.md/u);
+  assert.match(resourceSearchText(filed), /development\/playwright/u);
+  assert.doesNotMatch(
+    resourceSearchText(filed),
+    /SKILL\.md/u,
+    "the published label is the directory form, not a file locator",
+  );
 
   // The label index must not depend on a name conflict having been detected.
   assert.equal(filed.item.name_conflict, false);

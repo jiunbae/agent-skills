@@ -52,7 +52,7 @@ const PRIVACY_TOTAL_BYTES = 64 * 1024 * 1024;
 const PRIVACY_TIME_MS = 5_000;
 const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
-  "air-cli-server.test.mjs": 12,
+  "air-cli-server.test.mjs": 13,
   "air-spec.test.mjs": 2,
   "air.test.mjs": 19,
   "catalog.test.mjs": 45,

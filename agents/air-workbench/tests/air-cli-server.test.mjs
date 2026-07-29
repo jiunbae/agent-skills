@@ -1028,3 +1028,58 @@ test("AIR Workbench handles immediate shutdown signals under bounded parallel lo
     })),
   );
 });
+
+test("the display label is identical on loopback and on an explicit 0.0.0.0 bind", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-bind-label-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "checkout");
+  await put(join(root, "development", "playwright", "SKILL.md"), SKILL);
+  await put(join(root, "SKILL.md"), Buffer.from(
+    "---\nname: at-root\ndescription: Synthetic root-level fixture\n---\n\n" +
+    "## Workflow\n\n### Step 1: Inspect\nInspect safely.\n",
+  ));
+  const catalog = createSkillCatalog({
+    roots: [{ path: root, label: "bind-root", kind: "explicit" }],
+  });
+  await catalog.initialize();
+
+  // One catalog, two binds. The label is computed with no access to the server,
+  // so an explicit plaintext-LAN consent must not add, remove, or reshape it.
+  const servers = [];
+  const bodies = [];
+  for (const host of ["127.0.0.1", "0.0.0.0"]) {
+    const studio = createStudioServer({
+      artifact: importSkillBytes(SKILL, { sourcePath: "bootstrap/SKILL.md" }),
+      assetsDir: ASSETS,
+      schemasDir: SCHEMAS,
+      catalog,
+      host,
+      port: 0,
+    });
+    const bound = await studio.listen();
+    servers.push(studio);
+    t.after(() => studio.close());
+    const response = await http(
+      { address: "127.0.0.1", port: bound.port },
+      `/air/v1/skills?token=${encodeURIComponent(studio.token)}`,
+    );
+    assert.equal(response.status, 200);
+    bodies.push(JSON.parse(response.body));
+  }
+  assert.equal(servers.length, 2);
+
+  const [loopback, wildcard] = bodies;
+  assert.equal(loopback.version, "1.2.0");
+  assert.deepEqual(
+    loopback.items.map((item) => [item.name, item.relative_path]),
+    wildcard.items.map((item) => [item.name, item.relative_path]),
+  );
+  const labelled = loopback.items.find((item) => item.name === "air-cli-test");
+  assert.equal(labelled.relative_path, "development/playwright");
+  const atRoot = loopback.items.find((item) => item.name === "at-root");
+  assert.equal(Object.hasOwn(atRoot, "relative_path"), false);
+  for (const body of bodies) {
+    assert.equal(JSON.stringify(body).includes(directory), false);
+    assert.doesNotMatch(JSON.stringify(body), /"relative_path":"\//u);
+  }
+});

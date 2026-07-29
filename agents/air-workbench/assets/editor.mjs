@@ -1284,6 +1284,12 @@ function resourceButton(resource) {
         create("span", "resource-badge", `${item.location_count} exact copies`),
       );
     }
+    // Display only: the server publishes a label relative to the root that
+    // observed the Skill, so a reader can see the directory they searched for.
+    // It is never a locator the client may submit back.
+    if (typeof item.relative_path === "string" && item.relative_path.length) {
+      badges.append(create("span", "resource-badge", item.relative_path));
+    }
     const open = documents.get(resourceKey(resource));
     if (open?.stale) {
       badges.append(
