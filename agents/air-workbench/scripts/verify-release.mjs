@@ -257,7 +257,7 @@ async function verifyPackageAndSource() {
   });
   accessSync(browserEnvironment.executable, fsConstants.X_OK);
   for (const [name, expectedTests] of [
-    ["browser-air-workbench.mjs", 4],
+    ["browser-air-workbench.mjs", 5],
     ["browser-r10.mjs", 1],
     ["browser-exact-bound.mjs", 1],
   ]) {

@@ -2701,3 +2701,108 @@ test("AIR Workbench resource roving model remains bounded at 1,000 rows", async 
     await studio.close();
   }
 });
+
+test("AIR Workbench finds a Skill by the directory label the catalog discloses", async (t) => {
+  const runtime = await browserRuntime();
+  if (runtime.skip) {
+    t.skip(runtime.skip);
+    return;
+  }
+  const { catalog, first, sessionRegistry, controls } = await fixtures();
+  // The real repository Skill at development/playwright is filed under the
+  // frontmatter name "automating-browser". Neither the name, the description,
+  // nor any source label carries the substring a reader actually types, so
+  // only the published relative_path can satisfy this query.
+  controls.setSkillCatalog([
+    {
+      ...skillItem(SKILL_A, "a".repeat(64), "repository"),
+      name: "automating-browser",
+      description: "Drives a real browser for end-to-end checks.",
+      name_conflict: false,
+      relative_path: "development/playwright",
+    },
+    {
+      ...skillItem(SKILL_B, "b".repeat(64), "repository"),
+      name: "background-implementer",
+      description: "Runs bounded parallel implementation.",
+      name_conflict: false,
+      relative_path: "agents/background-implementer",
+    },
+  ], 1);
+  const studio = createStudioServer({
+    artifact: migrateLegacyToAir(first),
+    assetsDir: ASSETS_DIR,
+    schemasDir: SCHEMAS_DIR,
+    catalog,
+    sessionRegistry,
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await studio.listen();
+  const instance = await runtime.chromium.launch({
+    executablePath: runtime.executablePath,
+    headless: true,
+  });
+  const context = await instance.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(`console: ${message.text()}`);
+  });
+  try {
+    await page.goto(
+      `http://127.0.0.1:${address.port}/?token=${
+        encodeURIComponent(studio.token)
+      }`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page.locator(".react-flow.air-flow-ready").waitFor({ state: "visible" });
+    const workspaceRows = page.locator("#workspaceSkillList .resource-row");
+    await page.waitForFunction(
+      () => document.querySelectorAll("#workspaceSkillList .resource-row")
+        .length === 2,
+    );
+
+    await page.locator("#resourceSearch").fill("playwright");
+    assert.equal(await workspaceRows.count(), 1);
+    assert.equal(
+      await workspaceRows.first().getAttribute("data-resource-key"),
+      `skill:${SKILL_A}`,
+    );
+    assert.match(
+      (await workspaceRows.first().textContent()) ?? "",
+      /automating-browser/u,
+      "the row still identifies the Skill by its frontmatter name",
+    );
+    assert.match(
+      (await workspaceRows.first().textContent()) ?? "",
+      /development\/playwright/u,
+      "the disclosed label is shown, so the match is explicable",
+    );
+
+    await page.locator("#quickOpen").click();
+    await page.locator("#quickOpenSearch").fill("playwright");
+    assert.equal(await page.locator("#quickOpenList .resource-row").count(), 1);
+    assert.equal(
+      await page.locator("#quickOpenList .resource-row")
+        .first().getAttribute("data-resource-key"),
+      `skill:${SKILL_A}`,
+    );
+    await page.keyboard.press("Escape");
+
+    // Widened disclosure is still bounded disclosure: nothing absolute, and
+    // nothing above the observing root, ever reaches the document.
+    const rendered = (await page.locator(".resource-tree").innerText()) ?? "";
+    assert.doesNotMatch(rendered, /(^|\s)\/(Users|home|tmp|var|private)\//u);
+    assert.doesNotMatch(rendered, /\.\.\//u);
+    assert.equal(await page.locator("img").count(), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+    await instance.close();
+    await studio.close();
+  }
+});
