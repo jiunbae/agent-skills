@@ -1965,6 +1965,142 @@ What it returns.
   }
 });
 
+test("an ordinary edit cannot launder an inferred node into a declared one", () => {
+  // RPF-173: one `edit-node` plus save plus reimport used to rewrite a rung-6
+  // node from `heuristic · section.order` to `explicit · managed.v1`, because
+  // the managed payload persisted the edge's inference marker but had no
+  // node-level equivalent. The edge kept its marker; the node's last trace of
+  // inference was destroyed.
+  const proseBytes = ladderFixture(
+    "launder-inferred-node",
+    "## Purpose\n\nWhy.\n\n## Inputs\n\nWhat.\n\n## Outputs\n\nWhen.\n",
+  );
+  const inferred = importSkillBytes(proseBytes, { sourcePath: "prose.md" });
+  for (const node of inferred.graph.nodes) {
+    assert.equal(node.confidence.level, "heuristic");
+    assert.equal(node.source_provenance, "inferred");
+  }
+
+  const edited = applyOperation(inferred, {
+    type: "edit-node",
+    node_id: inferred.graph.nodes[0].id,
+    title: "Renamed Purpose",
+  });
+  const reimported = importSkillBytes(renderWorkflow(edited), {
+    sourcePath: "prose.md",
+  });
+
+  // The node still says it was inferred, exactly as the edge beside it does.
+  for (const node of reimported.graph.nodes) {
+    assert.notEqual(node.confidence.level, "explicit");
+    assert.equal(node.confidence.level, "heuristic");
+    assert.equal(node.confidence.rule_id, "managed.inferred.v1");
+    assert.equal(node.provenance, "inferred");
+    assert.equal(node.source_provenance, "inferred");
+    assert.equal(typeof node.source_confidence, "number");
+  }
+  for (const edge of reimported.graph.edges) {
+    assert.equal(edge.source_provenance, "inferred");
+    assert.notEqual(edge.confidence.level, "explicit");
+  }
+
+  // No over-correction: a declared workflow's node is still restored as an
+  // explicit managed identity, not silently downgraded to heuristic.
+  const declared = importSkillBytes(
+    ladderFixture(
+      "declared-node-stays-explicit",
+      "## Workflow\n\n### Step 1: One\n\nFirst.\n\n### Step 2: Two\n\nSecond.\n",
+    ),
+    { sourcePath: "declared.md" },
+  );
+  for (const node of declared.graph.nodes) {
+    assert.equal(Object.hasOwn(node, "source_provenance"), false);
+    assert.equal(Object.hasOwn(node, "source_confidence"), false);
+  }
+  const declaredEdited = applyOperation(declared, {
+    type: "edit-node",
+    node_id: declared.graph.nodes[0].id,
+    title: "Step 1: Renamed",
+  });
+  const declaredBack = importSkillBytes(renderWorkflow(declaredEdited), {
+    sourcePath: "declared.md",
+  });
+  for (const node of declaredBack.graph.nodes) {
+    assert.equal(node.confidence.level, "explicit");
+    assert.equal(node.confidence.rule_id, "managed.v1");
+    assert.equal(node.provenance, "managed");
+    assert.equal(Object.hasOwn(node, "source_provenance"), false);
+  }
+});
+
+test("forged node inference markers in managed metadata are rejected as one unit", () => {
+  // RPF-173: the node marker is validated exactly as strictly as the edge's,
+  // so hostile managed metadata can neither forge one nor half-declare it.
+  const proseBytes = ladderFixture(
+    "forged-node-marker",
+    "## Purpose\n\nWhy.\n\n## Inputs\n\nWhat.\n\n## Outputs\n\nWhen.\n",
+  );
+  const inferred = importSkillBytes(proseBytes, { sourcePath: "prose.md" });
+  const edited = applyOperation(inferred, {
+    type: "edit-node",
+    node_id: inferred.graph.nodes[0].id,
+    title: "Renamed Purpose",
+  });
+  const rendered = renderWorkflow(edited).toString("utf8");
+  const marker = /<!-- workflow-studio:v1 ([A-Za-z0-9_-]+) -->/u.exec(rendered);
+  assert.ok(marker, "fixture must carry a managed marker");
+  const payload = JSON.parse(
+    Buffer.from(marker[1], "base64url").toString("utf8"),
+  );
+  assert.equal(payload.nodes[0].source_provenance, "inferred");
+  assert.equal(typeof payload.nodes[0].source_confidence, "number");
+
+  const forgeries = {
+    // A provenance value the closed enum does not permit.
+    "declared provenance": (node) => {
+      node.source_provenance = "declared";
+    },
+    // A confidence outside the unit interval.
+    "out-of-range confidence": (node) => {
+      node.source_confidence = 1.5;
+    },
+    // A marker declared on only one of the two paired fields.
+    "half-declared marker": (node) => {
+      delete node.source_confidence;
+    },
+    // A confidence that is not a number at all.
+    "non-numeric confidence": (node) => {
+      node.source_confidence = "0.5";
+    },
+  };
+  for (const [label, forge] of Object.entries(forgeries)) {
+    const copy = JSON.parse(JSON.stringify(payload));
+    forge(copy.nodes[0]);
+    const reencoded = Buffer.from(JSON.stringify(copy), "utf8").toString(
+      "base64url",
+    );
+    const forged = importSkillBytes(
+      Buffer.from(
+        rendered.replace(marker[1], reencoded.replace(/=+$/u, "")),
+        "utf8",
+      ),
+      { sourcePath: "prose.md" },
+    );
+    // The whole managed payload is refused, not silently half-applied.
+    assert.ok(
+      forged.diagnostics.some(
+        (diagnostic) => diagnostic.code === "managed.invalid",
+      ),
+      `forgery "${label}" must be diagnosed as managed.invalid`,
+    );
+    // And the graph falls back to the honest inferred reading, never to a
+    // forged declared one.
+    for (const node of forged.graph.nodes) {
+      assert.notEqual(node.confidence.level, "explicit");
+    }
+  }
+});
+
 test("inferSectionOrder can be disabled and then a prose-only document has no workflow", () => {
   const proseBytes = ladderFixture(
     "prose-only",

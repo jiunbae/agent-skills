@@ -90,7 +90,17 @@
         },
         "body": { "type": "string" },
         "source_map": { "type": ["object", "null"] },
-        "confidence": { "$ref": "#/$defs/confidence" }
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "source_provenance": { "const": "inferred" },
+        "source_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "dependentRequired": {
+        "source_provenance": ["source_confidence"],
+        "source_confidence": ["source_provenance"]
       },
       "additionalProperties": true
     },

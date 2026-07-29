@@ -831,6 +831,11 @@ function managedPayloadGraph(payload) {
   const ids = new Set();
   const orders = new Set();
   for (const node of nodes) {
+    // RPF-173: validate the node's inference marker exactly as strictly as the
+    // edge's is validated below, so hostile managed metadata cannot forge one
+    // or half-declare it.
+    const hasNodeProvenance = Object.hasOwn(node ?? {}, "source_provenance");
+    const hasNodeConfidence = Object.hasOwn(node ?? {}, "source_confidence");
     if (
       !node ||
       typeof node !== "object" ||
@@ -843,6 +848,12 @@ function managedPayloadGraph(payload) {
       node.order >= nodes.length ||
       typeof node.title_sha256 !== "string" ||
       !/^[a-f0-9]{64}$/u.test(node.title_sha256) ||
+      hasNodeProvenance !== hasNodeConfidence ||
+      (hasNodeProvenance &&
+        (node.source_provenance !== "inferred" ||
+          typeof node.source_confidence !== "number" ||
+          node.source_confidence < 0 ||
+          node.source_confidence > 1)) ||
       ids.has(node.id) ||
       orders.has(node.order)
     ) {
@@ -925,16 +936,34 @@ function applyManagedGraph(nodes, edges, managed, diagnostics) {
     });
     return { nodes, edges, trusted: false };
   }
-  const replaced = nodes.map((node, index) => ({
-    ...node,
-    id: String(managedNodes[index].id ?? node.id),
-    confidence: confidence(
-      "explicit",
-      "managed.v1",
-      "Stable identity restored from Workflow Studio metadata.",
-    ),
-    provenance: "managed",
-  }));
+  const replaced = nodes.map((node, index) => {
+    const managedNode = managedNodes[index];
+    const inferred = managedNode.source_provenance === "inferred";
+    return {
+      ...node,
+      id: String(managedNode.id ?? node.id),
+      // RPF-173: an inferred node keeps saying it was inferred. Restoring a
+      // stable identity is not evidence that the author declared the step.
+      confidence: inferred
+        ? confidence(
+            "heuristic",
+            "managed.inferred.v1",
+            `Inferred node restored from Workflow Studio metadata with source confidence ${managedNode.source_confidence}.`,
+          )
+        : confidence(
+            "explicit",
+            "managed.v1",
+            "Stable identity restored from Workflow Studio metadata.",
+          ),
+      provenance: inferred ? "inferred" : "managed",
+      ...(inferred
+        ? {
+            source_provenance: "inferred",
+            source_confidence: managedNode.source_confidence,
+          }
+        : {}),
+    };
+  });
   const ids = new Set(replaced.map((node) => node.id));
   const restoredEdges = managedEdges.map((edge) => ({
     id: edge.id,
@@ -1057,7 +1086,14 @@ function buildWorkflow(input, sourcePath, options = {}) {
             candidate.rule,
             "Mapped from a fence-aware workflow heading.",
           ),
-      provenance: "imported",
+      provenance: candidate.inferred ? "inferred" : "imported",
+      // RPF-173: an inferred node carries the same durable inference marker the
+      // inferred edge beside it already carried. Without it, `managedPayload`
+      // has nothing node-level to persist, and one `edit-node` plus save plus
+      // reimport silently rewrites the node to `explicit · managed.v1`.
+      ...(candidate.inferred
+        ? { source_provenance: "inferred", source_confidence: 0.5 }
+        : {}),
       editable_fields: ["title", "body"],
       added: false,
     };
@@ -2553,6 +2589,15 @@ function managedPayload(workflow) {
       id: node.id,
       order,
       title_sha256: titleFingerprint(node.title),
+      // RPF-173: persist the node's inference marker exactly as the edge's is
+      // persisted below, so an ordinary edit cannot launder an inferred node
+      // into a declared one on the next reimport.
+      ...(node.source_provenance === "inferred"
+        ? {
+            source_provenance: "inferred",
+            source_confidence: node.source_confidence,
+          }
+        : {}),
     })),
     edges: workflow.graph.edges.map((edge) => ({
       id: edge.id,
