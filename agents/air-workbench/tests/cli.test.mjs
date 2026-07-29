@@ -845,12 +845,13 @@ test("run maps SIGINT and SIGTERM to AbortSignal cancellation and saves traces",
     const approvedPath = await approvedPlan(item);
     const tracePath = join(item.directory, `${signal}-cancelled-trace.json`);
     const env = await fakeAgentEnv(item, "codex", "cancel");
+    const readyPath = join(item.directory, `${signal}-agent-ready`);
     const child = spawn(
       process.execPath,
       [CLI, "run", approvedPath, "--trace", tracePath],
       {
         cwd: ROOT,
-        env: { ...process.env, ...env },
+        env: { ...process.env, ...env, FAKE_AGENT_READY_FILE: readyPath },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -858,7 +859,22 @@ test("run maps SIGINT and SIGTERM to AbortSignal cancellation and saves traces",
     const stderr = [];
     child.stdout.on("data", (chunk) => stdout.push(chunk));
     child.stderr.on("data", (chunk) => stderr.push(chunk));
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 180));
+    // The wrapper installs its signal handlers before it spawns the agent, so
+    // the agent's own start is proof the handlers are in place. A fixed sleep
+    // here was a guess that lost under load: the signal arrived at its default
+    // disposition and the child died on `SIGINT` instead of exiting cleanly,
+    // which flaked the release gate.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      try {
+        await readFile(readyPath);
+        break;
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        assert.ok(Date.now() < deadline, `${signal} agent never started`);
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+      }
+    }
     child.kill(signal);
     const ended = await new Promise((resolvePromise, rejectPromise) => {
       const timer = setTimeout(

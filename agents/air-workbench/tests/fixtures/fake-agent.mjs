@@ -44,6 +44,13 @@ if (process.env.FAKE_AGENT_AUDIT) {
 }
 
 if (scenario === "cancel") {
+  // The cancellation test has to signal the wrapper only after the wrapper has
+  // installed its SIGINT/SIGTERM handlers, and this process is not started
+  // until it has. Announcing our own start is therefore the exact readiness
+  // evidence that test needs; a fixed sleep is a guess that loses under load.
+  if (process.env.FAKE_AGENT_READY_FILE) {
+    writeFileSync(process.env.FAKE_AGENT_READY_FILE, "ready", { mode: 0o600 });
+  }
   setInterval(() => {
     process.stdout.write('{"type":"thread.started"}\n');
   }, 25);
