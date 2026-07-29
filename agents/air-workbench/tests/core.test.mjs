@@ -1626,3 +1626,354 @@ test("stableStringify is key-order independent", () => {
     stableStringify({ a: { c: 3, d: 2 }, z: 1 }),
   );
 });
+
+function ladderFixture(name, body) {
+  return Buffer.from(`---
+name: ${name}
+description: recognition ladder fixture
+---
+
+${body}`);
+}
+
+test("an ordered step list under a Workflow heading is a declared workflow", () => {
+  const bytes = ladderFixture(
+    "ordered-list-ladder",
+    `## Overview
+
+Prose that is not a step.
+
+## Workflow
+
+1. Identify the source
+   Continuation prose for the first step.
+2. Collect the evidence
+
+\`\`\`bash
+1. this fenced line is not a step
+\`\`\`
+
+3. Report the finding
+
+## Boundaries
+
+Closing prose.
+`,
+  );
+  const workflow = importSkillBytes(bytes, { sourcePath: "ordered.md" });
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Identify the source", "Collect the evidence", "Report the finding"],
+    "each top-level ordered item under Workflow becomes one node",
+  );
+  assert.equal(workflow.graph.edges.length, 2);
+  for (const node of workflow.graph.nodes) {
+    assert.equal(node.confidence.rule_id, "workflow.ordered-list");
+    assert.equal(node.confidence.level, "structural");
+  }
+  const first = workflow.graph.nodes[0];
+  assert.equal(
+    bytes.subarray(
+      first.source_map.title.start_byte,
+      first.source_map.title.end_byte,
+    ).toString("utf8"),
+    "Identify the source",
+    "the title span excludes the ordered-list marker",
+  );
+  assert.equal(
+    bytes.subarray(
+      first.source_map.title.start_byte - Buffer.byteLength("1. "),
+      first.source_map.title.start_byte,
+    ).toString("utf8"),
+    "1. ",
+    "the ordered-list marker stays opaque in the node body region",
+  );
+  assert.ok(
+    first.body.includes("Continuation prose for the first step."),
+    "continuation lines belong to the item body",
+  );
+  assert.ok(
+    workflow.graph.nodes[1].body.includes("1. this fenced line is not a step"),
+    "fenced ordered lines are not scanned as steps",
+  );
+  assert.deepEqual(renderWorkflow(workflow), bytes);
+});
+
+test("a single ordered item under a Workflow heading is not a step sequence", () => {
+  const workflow = importSkillBytes(
+    ladderFixture("one-item", "## Workflow\n\n1. Do the only thing\n"),
+    { sourcePath: "one.md" },
+  );
+  assert.equal(workflow.graph.nodes.length, 0);
+});
+
+test("a workflow-labelled heading with numbered H3 children is a declared workflow", () => {
+  const bytes = ladderFixture(
+    "titled-children-ladder",
+    `## Review Process
+
+### 1. Gather the diff
+
+Body one.
+
+### 2. Judge the diff
+
+Body two.
+
+## Notes
+
+Trailing prose.
+`,
+  );
+  const workflow = importSkillBytes(bytes, { sourcePath: "titled.md" });
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Gather the diff", "Judge the diff"],
+  );
+  assert.equal(workflow.graph.edges.length, 1);
+  assert.equal(
+    workflow.graph.nodes[0].confidence.rule_id,
+    "workflow.titled.children",
+  );
+  assert.equal(workflow.graph.nodes[0].confidence.level, "structural");
+  assert.deepEqual(renderWorkflow(workflow), bytes);
+});
+
+test("a workflow-labelled heading with unnumbered H3 children does not use the titled rung", () => {
+  const workflow = importSkillBytes(
+    ladderFixture(
+      "unnumbered-children",
+      "## Review Process\n\n### Gather\n\nOne.\n\n### Judge\n\nTwo.\n",
+    ),
+    { sourcePath: "unnumbered.md" },
+  );
+  assert.notEqual(
+    workflow.graph.nodes[0]?.confidence.rule_id,
+    "workflow.titled.children",
+    "every H3 child must be step-numbered for the titled rung to fire",
+  );
+});
+
+test("numbered H3 headings outside any workflow section are recognized as steps", () => {
+  const bytes = ladderFixture(
+    "numbered-h3-ladder",
+    `## Guidance
+
+### Step 1. Read the brief
+
+Body one.
+
+### Step 2. Draft the answer
+
+Body two.
+
+### Step 3. Ship it
+
+Body three.
+`,
+  );
+  const workflow = importSkillBytes(bytes, { sourcePath: "h3.md" });
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Read the brief", "Draft the answer", "Ship it"],
+  );
+  assert.equal(workflow.graph.edges.length, 2);
+  assert.equal(workflow.graph.nodes[0].confidence.rule_id, "numbered.h3");
+  assert.equal(workflow.graph.nodes[0].confidence.level, "structural");
+  assert.deepEqual(renderWorkflow(workflow), bytes);
+});
+
+test("section order is inferred with heuristic confidence while declared rungs stay explicit-source", () => {
+  const proseBytes = ladderFixture(
+    "section-order-ladder",
+    `## Purpose
+
+Why this skill exists.
+
+## Inputs
+
+What it needs.
+
+## Outputs
+
+What it returns.
+`,
+  );
+  const inferred = importSkillBytes(proseBytes, { sourcePath: "prose.md" });
+  assert.deepEqual(
+    inferred.graph.nodes.map((node) => node.title),
+    ["Purpose", "Inputs", "Outputs"],
+  );
+  assert.equal(inferred.graph.edges.length, 2);
+  for (const node of inferred.graph.nodes) {
+    assert.equal(node.confidence.rule_id, "section.order");
+    assert.equal(node.confidence.level, "heuristic");
+  }
+  for (const edge of inferred.graph.edges) {
+    assert.equal(edge.provenance, "inferred");
+    assert.equal(edge.source_provenance, "inferred");
+    assert.equal(typeof edge.source_confidence, "number");
+    assert.ok(edge.source_confidence >= 0 && edge.source_confidence <= 1);
+    assert.notEqual(edge.confidence.level, "explicit");
+    assert.equal(edge.confidence.rule_id, "section.order");
+  }
+  assert.deepEqual(renderWorkflow(inferred), proseBytes);
+
+  const declared = importSkillBytes(
+    ladderFixture(
+      "declared-not-inferred",
+      "## Workflow\n\n1. First thing\n2. Second thing\n",
+    ),
+    { sourcePath: "declared.md" },
+  );
+  assert.equal(declared.graph.edges.length, 1);
+  for (const edge of declared.graph.edges) {
+    assert.equal(edge.provenance, "imported");
+    assert.equal(Object.hasOwn(edge, "source_provenance"), false);
+    assert.equal(Object.hasOwn(edge, "source_confidence"), false);
+    assert.equal(edge.confidence.level, "structural");
+  }
+});
+
+test("inferSectionOrder can be disabled and then a prose-only document has no workflow", () => {
+  const proseBytes = ladderFixture(
+    "prose-only",
+    "## Purpose\n\nWhy.\n\n## Inputs\n\nWhat.\n\n## Outputs\n\nWhen.\n",
+  );
+  assert.equal(
+    importSkillBytes(proseBytes, { sourcePath: "prose.md" }).graph.nodes.length,
+    3,
+    "section order is on by default",
+  );
+  const disabled = importSkillBytes(proseBytes, {
+    sourcePath: "prose.md",
+    inferSectionOrder: false,
+  });
+  assert.equal(disabled.graph.nodes.length, 0);
+  assert.equal(disabled.graph.edges.length, 0);
+  assert.equal(disabled.extensions.infer_section_order, false);
+  assert.ok(
+    disabled.diagnostics.some(
+      (diagnostic) => diagnostic.code === "workflow.none",
+    ),
+  );
+  validateArtifact(disabled);
+  assert.deepEqual(renderWorkflow(disabled), proseBytes);
+
+  const declaredBytes = ladderFixture(
+    "declared-unaffected",
+    "## Workflow\n\n### Alpha\n\nOne.\n\n### Beta\n\nTwo.\n",
+  );
+  assert.equal(
+    importSkillBytes(declaredBytes, {
+      sourcePath: "declared.md",
+      inferSectionOrder: false,
+    }).graph.nodes.length,
+    2,
+    "disabling inference never suppresses a declared workflow",
+  );
+});
+
+test("the recognition ladder never emits a heading alongside its own children", () => {
+  const bytes = ladderFixture(
+    "nesting-guard",
+    "## Workflow\n\n### Alpha\n\nOne.\n\n### Beta\n\nTwo.\n\n## Notes\n\nEnd.\n",
+  );
+  const workflow = importSkillBytes(bytes, { sourcePath: "nesting.md" });
+  const spans = workflow.graph.nodes.map((node) => node.source_map.span);
+  for (const outer of spans) {
+    for (const inner of spans) {
+      if (outer === inner) continue;
+      assert.equal(
+        inner.start_byte >= outer.start_byte && inner.end_byte <= outer.end_byte,
+        false,
+        "no mapped node span may contain another",
+      );
+    }
+  }
+  assert.deepEqual(
+    workflow.graph.nodes.map((node) => node.title),
+    ["Alpha", "Beta"],
+  );
+});
+
+const RECOGNIZED_SKILL_SHAPES = [
+  ["agents/air-workbench/SKILL.md", 7, 6, "numbered.h2"],
+  ["agents/air-workbench/examples/hello-agent/SKILL.md", 2, 1, "workflow.children"],
+  ["agents/background-implementer/SKILL.md", 5, 4, "numbered.h2"],
+  ["agents/background-planner/SKILL.md", 5, 4, "numbered.h2"],
+  ["agents/background-reviewer/SKILL.md", 6, 5, "numbered.h2"],
+  ["business/bm-analyzer/SKILL.md", 3, 2, "workflow.children"],
+  ["business/proposal-analyzer/SKILL.md", 3, 2, "workflow.children"],
+  ["context/context-manager/SKILL.md", 4, 3, "workflow.children"],
+  ["development/appstore-screenshots/SKILL.md", 7, 6, "numbered.h2"],
+  ["development/context-worktree/SKILL.md", 3, 2, "workflow.children"],
+  ["integrations/notion-summary/SKILL.md", 3, 2, "workflow.children"],
+  ["integrations/obsidian-tasks/SKILL.md", 4, 3, "workflow.children"],
+  ["integrations/service-manager/SKILL.md", 3, 0, "workflows.children"],
+  ["ml/audio-processor/SKILL.md", 3, 2, "workflow.children"],
+  ["security/security-auditor/SKILL.md", 4, 3, "workflow.children"],
+];
+
+test("previously recognized Skills keep their exact imported shape and firing rule", async () => {
+  for (const [relative, nodes, edges, rule] of RECOGNIZED_SKILL_SHAPES) {
+    const workflow = await importSkillFile(join(ROOT, relative));
+    assert.equal(workflow.graph.nodes.length, nodes, `${relative} node count`);
+    assert.equal(workflow.graph.edges.length, edges, `${relative} edge count`);
+    assert.deepEqual(
+      [...new Set(workflow.graph.nodes.map((node) => node.confidence.rule_id))],
+      [rule],
+      `${relative} firing rule`,
+    );
+    for (const node of workflow.graph.nodes) {
+      assert.equal(node.confidence.level, "structural", `${relative} stays declared`);
+    }
+    for (const edge of workflow.graph.edges) {
+      assert.equal(edge.provenance, "imported", `${relative} edges stay imported`);
+    }
+  }
+  const security = await importSkillFile(
+    join(ROOT, "security/security-auditor/SKILL.md"),
+  );
+  assert.deepEqual(security.graph.nodes.map((node) => node.id), [
+    "step-2b9f90db3114a836",
+    "step-53942b2e6a14ba91",
+    "step-39ecb760f494af75",
+    "step-f88f895145a4d939",
+  ]);
+});
+
+test("the recognition ladder covers every repository Skill and round-trips byte for byte", async () => {
+  const { readdirSync, statSync } = await import("node:fs");
+  const skills = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === ".git" || name === ".claude") continue;
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (name === "SKILL.md") skills.push(path);
+    }
+  };
+  walk(ROOT);
+  assert.ok(skills.length >= 32, "the repository must expose the full Skill corpus");
+  const unrecognized = [];
+  for (const path of skills.sort()) {
+    const bytes = await readFile(path);
+    const workflow = importSkillBytes(bytes, { sourcePath: path });
+    if (workflow.graph.nodes.length === 0) unrecognized.push(path);
+    assert.deepEqual(renderWorkflow(workflow), bytes, `${path} round-trip`);
+    const spans = [
+      ...workflow.graph.nodes
+        .filter((node) => node.source_map)
+        .map((node) => node.source_map.span),
+      ...workflow.opaque_spans,
+    ].sort((left, right) => left.start_byte - right.start_byte);
+    let cursor = 0;
+    for (const span of spans) {
+      assert.equal(span.start_byte, cursor, `${path} partition gap or overlap`);
+      cursor = span.end_byte;
+    }
+    assert.equal(cursor, bytes.length, `${path} partition coverage`);
+  }
+  assert.deepEqual(unrecognized, [], "every repository Skill imports to a workflow");
+});

@@ -470,18 +470,95 @@ function confidence(level, ruleId, reason) {
   return { level, rule_id: ruleId, reason };
 }
 
-function deriveCandidates(headings, byteLength) {
+const EXACT_WORKFLOW_HEADING = /^Workflows?$/iu;
+const WORKFLOW_LABEL =
+  /^[A-Za-z][A-Za-z0-9 '\/-]{0,40}\b(?:workflow|workflows|process|procedure|pipeline)$/iu;
+const NUMBERED_STEP = /^(?:(?:Step|Phase)\s+)?\d+\s*[.):-]\s+\S/iu;
+const ORDERED_ITEM = /^(\d+\.[ \t]+)(\S.*)$/u;
+
+function usableStepTitle(text) {
+  const title = cleanTitle(text);
+  if (title.length === 0) return null;
+  if (title !== title.trim()) return null;
+  if (/[\r\n]/u.test(title)) return null;
+  if (/[ \t]+#+$/u.test(title)) return null;
+  return title;
+}
+
+// Fence-aware scan for top-level ordered-list items inside [from, to).
+// Each item is shaped exactly like an `atxHeading` result so that
+// `candidateSourceMap` can consume it without special cases.
+function orderedListItems(lines, frontmatterEnd, from, to) {
+  const items = [];
+  let fence = null;
+  for (const line of lines) {
+    if (line.start < frontmatterEnd) continue;
+    const transition = advanceFence(fence, line.text);
+    if (transition.boundary) {
+      fence = transition.fence;
+      continue;
+    }
+    if (fence) continue;
+    if (line.start < from || line.start >= to) continue;
+    const match = ORDERED_ITEM.exec(line.text);
+    if (!match) continue;
+    const text = match[2].replace(/[ \t]+$/u, "");
+    if (usableStepTitle(text) === null) continue;
+    const markerBytes = Buffer.byteLength(match[1], "utf8");
+    items.push({
+      level: 3,
+      text,
+      start: line.start,
+      headingEnd: line.contentEnd,
+      titleStart: line.start + markerBytes,
+      titleEnd: line.start + markerBytes + Buffer.byteLength(text, "utf8"),
+      bodyStart: line.end,
+    });
+  }
+  return items;
+}
+
+function hasChildHeadingLevel(headings, rootIndex, level) {
+  const root = headings[rootIndex];
+  for (let index = rootIndex + 1; index < headings.length; index += 1) {
+    const heading = headings[index];
+    if (heading.level <= root.level) return false;
+    if (heading.level === level) return true;
+  }
+  return false;
+}
+
+// Structural overlap guard. A candidate whose span strictly contains another
+// candidate's span would nest source-map ranges and break the exact byte
+// partition, so the outer candidate is dropped in favour of the inner ones.
+function withoutNestedCandidates(candidates) {
+  return candidates.filter(
+    (candidate, index) =>
+      !candidates.some((other, otherIndex) => {
+        if (otherIndex === index) return false;
+        const inside =
+          other.heading.start >= candidate.heading.start &&
+          other.end <= candidate.end;
+        const strict =
+          other.heading.start > candidate.heading.start ||
+          other.end < candidate.end;
+        return inside && strict;
+      }),
+  );
+}
+
+function deriveCandidates(headings, byteLength, options = {}) {
+  const { lines = [], frontmatterEnd = 0, inferSectionOrder = true } = options;
   const candidates = [];
-  const consumed = new Set();
+  // Rung 1: `## Workflow` / `## Workflows` with H3 children.
   for (let index = 0; index < headings.length; index += 1) {
     const root = headings[index];
-    if (root.level !== 2 || !/^Workflows?$/iu.test(root.text.trim())) continue;
+    if (root.level !== 2 || !EXACT_WORKFLOW_HEADING.test(root.text.trim())) continue;
     const plural = /^Workflows$/iu.test(root.text.trim());
     for (let child = index + 1; child < headings.length; child += 1) {
       const heading = headings[child];
       if (heading.level <= root.level) break;
       if (heading.level !== root.level + 1) continue;
-      consumed.add(child);
       candidates.push({
         heading,
         headingIndex: child,
@@ -491,13 +568,11 @@ function deriveCandidates(headings, byteLength) {
       });
     }
   }
+  // Rung 2: numbered H2 steps.
   if (candidates.length === 0) {
     for (let index = 0; index < headings.length; index += 1) {
       const heading = headings[index];
-      if (
-        heading.level === 2 &&
-        /^(?:(?:Step|Phase)\s+)?\d+\s*[.):-]\s+\S/iu.test(heading.text)
-      ) {
+      if (heading.level === 2 && NUMBERED_STEP.test(heading.text)) {
         candidates.push({
           heading,
           headingIndex: index,
@@ -508,12 +583,105 @@ function deriveCandidates(headings, byteLength) {
       }
     }
   }
-  return candidates
+  // Rung 3: `## Workflow` with no H3 children but a declared ordered step list.
+  if (candidates.length === 0) {
+    for (let index = 0; index < headings.length; index += 1) {
+      const root = headings[index];
+      if (root.level !== 2 || !EXACT_WORKFLOW_HEADING.test(root.text.trim())) continue;
+      if (hasChildHeadingLevel(headings, index, 3)) continue;
+      const sectionEnd = headingEnd(headings, index, byteLength);
+      const items = orderedListItems(
+        lines,
+        frontmatterEnd,
+        root.bodyStart,
+        sectionEnd,
+      );
+      if (items.length < 2) continue;
+      for (let item = 0; item < items.length; item += 1) {
+        candidates.push({
+          heading: items[item],
+          headingIndex: -1,
+          end: items[item + 1] ? items[item + 1].start : sectionEnd,
+          group: `ordered-${root.start}`,
+          connect: true,
+          rule: "workflow.ordered-list",
+        });
+      }
+    }
+  }
+  // Rung 4: workflow-labelled H2 whose H3 children are explicitly step-numbered.
+  if (candidates.length === 0) {
+    for (let index = 0; index < headings.length; index += 1) {
+      const root = headings[index];
+      if (root.level !== 2) continue;
+      if (!WORKFLOW_LABEL.test(cleanTitle(root.text))) continue;
+      const children = [];
+      for (let child = index + 1; child < headings.length; child += 1) {
+        const heading = headings[child];
+        if (heading.level <= root.level) break;
+        if (heading.level !== root.level + 1) continue;
+        if (!NUMBERED_STEP.test(heading.text)) {
+          children.length = 0;
+          break;
+        }
+        children.push({ heading, headingIndex: child });
+      }
+      if (children.length < 2) continue;
+      for (const child of children) {
+        candidates.push({
+          ...child,
+          group: `titled-${root.start}`,
+          connect: true,
+          rule: "workflow.titled.children",
+        });
+      }
+    }
+  }
+  // Rung 5: numbered H3 headings anywhere in the document.
+  if (candidates.length === 0) {
+    for (let index = 0; index < headings.length; index += 1) {
+      const heading = headings[index];
+      if (heading.level === 3 && NUMBERED_STEP.test(heading.text)) {
+        candidates.push({
+          heading,
+          headingIndex: index,
+          group: "numbered-h3",
+          connect: true,
+          rule: "numbered.h3",
+        });
+      }
+    }
+  }
+  // Rung 6: inferred document order over ordinary top-level sections.
+  if (candidates.length === 0 && inferSectionOrder) {
+    const sections = [];
+    for (let index = 0; index < headings.length; index += 1) {
+      if (headings[index].level !== 2) continue;
+      if (usableStepTitle(headings[index].text) === null) continue;
+      sections.push(index);
+    }
+    if (sections.length >= 2) {
+      for (const index of sections) {
+        candidates.push({
+          heading: headings[index],
+          headingIndex: index,
+          group: "section-order",
+          connect: true,
+          rule: "section.order",
+          inferred: true,
+        });
+      }
+    }
+  }
+  const resolved = candidates
     .sort((left, right) => left.heading.start - right.heading.start)
     .map((candidate) => ({
       ...candidate,
-      end: headingEnd(headings, candidate.headingIndex, byteLength),
+      end:
+        candidate.end ??
+        headingEnd(headings, candidate.headingIndex, byteLength),
     }));
+  return withoutNestedCandidates(resolved);
 }
 
 function candidateSourceMap(candidate) {
@@ -543,13 +711,18 @@ function candidateSourceMap(candidate) {
   };
 }
 
-function scanWorkflowCandidates(bytes, diagnostics = []) {
+function scanWorkflowCandidates(bytes, diagnostics = [], options = {}) {
+  const { inferSectionOrder = true } = options;
   const lines = lineTable(bytes);
   const frontmatter = parseFrontmatter(lines, diagnostics);
   const headings = scanHeadings(lines, frontmatter.endByte);
   return {
     frontmatter,
-    candidates: deriveCandidates(headings, trailingManagedStart(bytes)),
+    candidates: deriveCandidates(headings, trailingManagedStart(bytes), {
+      lines,
+      frontmatterEnd: frontmatter.endByte,
+      inferSectionOrder,
+    }),
   };
 }
 
@@ -774,11 +947,14 @@ function newlineStyle(bytes) {
   return "lf";
 }
 
-function buildWorkflow(input, sourcePath) {
+function buildWorkflow(input, sourcePath, options = {}) {
+  const { inferSectionOrder = true } = options;
   const bytes = Buffer.isBuffer(input) ? Buffer.from(input) : Buffer.from(input);
   decodeUtf8(bytes);
   const diagnostics = [];
-  const { frontmatter, candidates } = scanWorkflowCandidates(bytes, diagnostics);
+  const { frontmatter, candidates } = scanWorkflowCandidates(bytes, diagnostics, {
+    inferSectionOrder,
+  });
   let nodes = candidates.map((candidate, index) => {
     const heading = candidate.heading;
     const title = cleanTitle(heading.text);
@@ -795,11 +971,17 @@ function buildWorkflow(input, sourcePath) {
       mode: /\bparallel\b/iu.test(heading.text) ? "parallel" : "sequence",
       order: index,
       source_map: candidateSourceMap(candidate),
-      confidence: confidence(
-        "structural",
-        candidate.rule,
-        "Mapped from a fence-aware workflow heading.",
-      ),
+      confidence: candidate.inferred
+        ? confidence(
+            "heuristic",
+            candidate.rule,
+            "Inferred from an ordinary top-level section; the source declares no workflow.",
+          )
+        : confidence(
+            "structural",
+            candidate.rule,
+            "Mapped from a fence-aware workflow heading.",
+          ),
       provenance: "imported",
       editable_fields: ["title", "body"],
       added: false,
@@ -815,12 +997,21 @@ function buildWorkflow(input, sourcePath) {
       from: nodes[index - 1].id,
       to: nodes[index].id,
       kind: nodes[index].mode === "parallel" ? "parallel" : "sequence",
-      confidence: confidence(
-        "structural",
-        current.rule,
-        "Heading order within the same workflow region.",
-      ),
-      provenance: "imported",
+      confidence: current.inferred
+        ? confidence(
+            "heuristic",
+            current.rule,
+            "Inferred from document order; the source declares no dependency.",
+          )
+        : confidence(
+            "structural",
+            current.rule,
+            "Heading order within the same workflow region.",
+          ),
+      provenance: current.inferred ? "inferred" : "imported",
+      ...(current.inferred
+        ? { source_provenance: "inferred", source_confidence: 0.5 }
+        : {}),
       editable: true,
     });
   }
@@ -886,18 +1077,26 @@ function buildWorkflow(input, sourcePath) {
     extensions: {
       frontmatter: frontmatter.values,
       managed_metadata: managed ? managed.format : null,
+      // Only recorded when the non-default opt-out is used, so that default
+      // artifacts keep their historical shape and digests byte for byte.
+      ...(inferSectionOrder ? {} : { infer_section_order: false }),
     },
   };
   return workflow;
 }
 
-export function importSkillBytes(input, { sourcePath = "SKILL.md" } = {}) {
-  const workflow = buildWorkflow(input, String(sourcePath));
+export function importSkillBytes(
+  input,
+  { sourcePath = "SKILL.md", inferSectionOrder = true } = {},
+) {
+  const workflow = buildWorkflow(input, String(sourcePath), {
+    inferSectionOrder,
+  });
   validateArtifact(workflow);
   return workflow;
 }
 
-export async function importSkillFile(path) {
+export async function importSkillFile(path, { inferSectionOrder = true } = {}) {
   const absolute = resolve(path);
   const info = await lstat(absolute);
   if (info.isSymbolicLink()) {
@@ -906,7 +1105,10 @@ export async function importSkillFile(path) {
   if (!info.isFile()) {
     throw workflowError("INVALID_SKILL", `Skill path is not a file: ${path}`);
   }
-  return importSkillBytes(await readFile(absolute), { sourcePath: absolute });
+  return importSkillBytes(await readFile(absolute), {
+    sourcePath: absolute,
+    inferSectionOrder,
+  });
 }
 
 function validateVersion(artifact) {
@@ -1464,7 +1666,10 @@ function validateWorkflow(artifact) {
     }
     validateWritableGrammar(artifact);
   }
-  const sourceWorkflow = buildWorkflow(bytes, artifact.source.path);
+  const inferSectionOrder = artifact.extensions?.infer_section_order !== false;
+  const sourceWorkflow = buildWorkflow(bytes, artifact.source.path, {
+    inferSectionOrder,
+  });
   if (!artifact.revision.dirty) {
     if (
       !sameCanonical(
@@ -1491,7 +1696,9 @@ function validateWorkflow(artifact) {
       );
     }
     const rendered = renderWorkflowCandidate(artifact);
-    const reimported = buildWorkflow(rendered, artifact.source.path);
+    const reimported = buildWorkflow(rendered, artifact.source.path, {
+      inferSectionOrder,
+    });
     if (
       !sameCanonical(
         graphSemantics(artifact),
