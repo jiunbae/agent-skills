@@ -1931,13 +1931,18 @@ function normalizeSessionResources(catalog) {
 function skillCatalogIsIncomplete(catalog) {
   if (Boolean(catalog?.truncated)) return true;
   // `roots` is a required field of a published SkillCatalog, so its absence
-  // means this is not a published observation — a synthesized stub, a capability
-  // the server declined, or nothing at all. Reading that as a clean complete
-  // scan is the fail-open shape: it lets an empty synthesized answer replace the
-  // resource list wholesale and mark every open Skill removed. Absence of
-  // evidence is not evidence of completeness, and its sibling
-  // `incompleteSkillCatalogScope` already refuses to attribute this same input.
-  if (!Array.isArray(catalog?.roots) || catalog.roots.length === 0) return true;
+  // means this is not a published observation — the capability-unavailable stub
+  // this file substitutes for a declined `skills.catalog.read` is exactly that
+  // shape, a fulfilled `{ items: [], generation: 0 }`. Reading it as a clean
+  // complete scan is the fail-open shape: an empty synthesized answer replaces
+  // the resource list wholesale and marks every open Skill removed. Absence of
+  // evidence is not evidence of completeness.
+  //
+  // A published `roots: []`, on the other hand, is a complete observation of
+  // nothing: the server was configured with no roots and says so. Treating that
+  // as incomplete would repeat the RPF-141 over-correction — incompleteness
+  // requires that something observable was not observed.
+  if (!Array.isArray(catalog?.roots)) return true;
   return catalog.roots.some(skillCatalogRootIsIncomplete);
 }
 

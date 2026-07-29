@@ -2636,7 +2636,6 @@ test("a clean catalog with no diagnostics stays complete", async () => {
   // otherwise a synthesized empty answer replaces the resource list wholesale
   // and marks every open Skill removed.
   assert.equal(skillCatalogIsIncomplete({ items: [] }), true);
-  assert.equal(skillCatalogIsIncomplete({ items: [], roots: [] }), true);
   assert.equal(skillCatalogIsIncomplete(undefined), true);
   // The capability-unavailable stub the Workbench substitutes when
   // `skills.catalog.read` is not available is exactly that shape.
@@ -2644,6 +2643,10 @@ test("a clean catalog with no diagnostics stays complete", async () => {
     skillCatalogIsIncomplete({ items: [], generation: 0 }),
     true,
   );
+  // A published `roots: []` is the opposite case: the server was configured
+  // with no roots and observed all of them. Calling that incomplete would
+  // repeat the RPF-141 over-correction.
+  assert.equal(skillCatalogIsIncomplete({ items: [], roots: [] }), false);
 });
 
 test("a refused subtree retains open Skills instead of reporting deletions", async () => {
