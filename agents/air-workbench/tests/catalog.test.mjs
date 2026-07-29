@@ -305,7 +305,15 @@ test("enabled-plugin marker absence, invalidity, bounds, and recovery remain dis
     randomIdBytes: ids(),
   });
   const partial = await resolvingCatalog.initialize();
-  assert.equal(partial.truncated, true);
+  // RPF-153: the refusal is published on the plugin authority's own root, not
+  // as a catalog-wide bound.
+  assert.equal(partial.truncated, false);
+  assert.deepEqual([...partial.limit_codes], []);
+  assert.equal(
+    partial.roots.find((state) => state.source_label === "enabled-plugins")
+      ?.status,
+    "partial",
+  );
   assert.equal(partial.item_count, 0);
 
   await writeFile(markerPath, "x".repeat(65));
@@ -438,7 +446,15 @@ test("enabled-plugin authority ignores multiline TOML content and recovers from 
     randomIdBytes: ids(),
   });
   const partialCatalog = await resolvingCatalog.initialize();
-  assert.equal(partialCatalog.truncated, true);
+  // RPF-153: refused plugin authority is published on its own root, not as a
+  // catalog-wide bound.
+  assert.equal(partialCatalog.truncated, false);
+  assert.deepEqual([...partialCatalog.limit_codes], []);
+  assert.equal(
+    partialCatalog.roots.find((state) =>
+      state.source_label === "enabled-plugins")?.status,
+    "partial",
+  );
   assert.equal(partialCatalog.item_count, 0);
   assert.equal(JSON.stringify(partialCatalog).includes(directory), false);
 
@@ -1607,11 +1623,14 @@ test("bounded partial scans publish typed limits and failed refresh retains the 
     randomIdBytes: ids(),
   });
   const pluginPartial = await resolving.initialize();
-  assert.equal(pluginPartial.truncated, true);
-  assert.ok(
+  // RPF-153: an authority refusal is not a hit bound. The code survives with
+  // its exact spelling on the synthetic root's diagnostics, below.
+  assert.equal(pluginPartial.truncated, false);
+  assert.equal(
     pluginPartial.limit_codes.includes(
       "AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL",
     ),
+    false,
   );
   assert.deepEqual(
     pluginPartial.roots.find((state) =>
@@ -2915,4 +2934,86 @@ test("absent roots and published bounds record no evidence and cost no authority
     }
     assert.equal(JSON.stringify(snapshot).includes(directory), false, label);
   }
+});
+
+// RPF-153. `AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL` answers "was every configured
+// plugin authority resolved", not "was a published bound hit". Publishing it in
+// `limit_codes` (and pinning `truncated`) types a permanent, attributable disk
+// condition as a catalog-wide bound, which forces every consumer back to
+// catalog-wide retention. The signal must stay on the roots' diagnostics
+// channel, where it is attributable, and it must still clear authority.
+test("partial plugin discovery clears authority without publishing a bound", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-plugin-channel-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "roots");
+  const alpha = join(root, "alpha", "SKILL.md");
+  await put(alpha, skill("alpha", "Alpha", "First body.\n"));
+
+  let pluginStatus = "partial";
+  const catalog = createSkillCatalog({
+    rootResolver: async () => ({
+      roots: [{ label: "resolved", kind: "explicit", path: root }],
+      status: pluginStatus,
+    }),
+    randomIdBytes: ids(),
+  });
+
+  const first = await catalog.initialize();
+  // Bounds channel stays clean: nothing published was exceeded.
+  assert.equal(first.truncated, false);
+  assert.deepEqual([...first.limit_codes], []);
+  assert.equal(first.item_count, 1);
+  // Authority channel keeps the signal, attributably, on its own root.
+  assert.deepEqual(
+    first.roots.find((state) => state.source_label === "enabled-plugins"),
+    {
+      source_label: "enabled-plugins",
+      source_kind: "enabled-plugin",
+      status: "partial",
+      record_count: 0,
+      diagnostics: [{
+        severity: "warning",
+        code: "AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL",
+        message:
+          "Enabled plugin discovery was incomplete; uncertain plugin roots were omitted.",
+      }],
+      omitted_diagnostic_count: 0,
+    },
+  );
+  // The root that WAS fully observed publishes as complete, so a consumer can
+  // scope retention to the plugin authority instead of the whole catalog.
+  assert.deepEqual(
+    first.roots.find((state) => state.source_label === "resolved"),
+    {
+      source_label: "resolved",
+      source_kind: "explicit",
+      status: "ready",
+      record_count: 1,
+      diagnostics: [],
+      omitted_diagnostic_count: 0,
+    },
+  );
+  assert.equal(JSON.stringify(first).includes(directory), false);
+
+  // Not fail-open: authority is still incomplete, so lineage stays omitted for
+  // as long as either generation was published under partial discovery.
+  await put(alpha, skill("alpha", "Alpha", "Second body.\n"));
+  const second = await catalog.refresh();
+  assert.equal(second.truncated, false);
+  assert.equal(second.items[0].replaces_id, undefined);
+
+  pluginStatus = "ready";
+  await put(alpha, skill("alpha", "Alpha", "Third body.\n"));
+  const third = await catalog.refresh();
+  assert.equal(
+    third.roots.some((state) => state.source_label === "enabled-plugins"),
+    false,
+  );
+  // Prior generation was still partial, so this one may not claim lineage.
+  assert.equal(third.items[0].replaces_id, undefined);
+
+  await put(alpha, skill("alpha", "Alpha", "Fourth body.\n"));
+  const fourth = await catalog.refresh();
+  assert.equal(fourth.truncated, false);
+  assert.equal(fourth.items[0].replaces_id, third.items[0].id);
 });

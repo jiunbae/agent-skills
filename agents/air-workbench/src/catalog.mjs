@@ -2033,11 +2033,21 @@ async function scanCatalog({
           records: 0,
         }]
       : [],
-    truncated: pluginPartial,
+    // RPF-153. Partial plugin discovery is an AUTHORITY answer, not a bound:
+    // nothing published was exceeded, a configured authority could not be
+    // resolved. It therefore clears `authorityComplete` — which is what keeps
+    // `replaces_id` omitted — and rides the synthetic root's `diagnostics`
+    // above, where it is attributable to the plugin authority that failed. It
+    // must NOT enter `truncated`/`limit_codes`: those mean "these published
+    // bounds were hit", they are catalog-wide and unattributable, and a
+    // consumer that scopes retention by root has to fall back to retaining the
+    // whole catalog when they are set. Plugin discovery failing is usually a
+    // static disk condition, so pinning them here pins it forever. Every other
+    // root-level authority refusal already behaves this way (`rootDiagnostic`
+    // clears authority and leaves `truncated` alone); this was the one outlier.
+    truncated: false,
     authorityComplete: !pluginPartial,
-    limitCodes: new Set(
-      pluginPartial ? [PLUGIN_DISCOVERY_DIAGNOSTIC.code] : [],
-    ),
+    limitCodes: new Set(),
   };
   const normalized = roots.map(normalizeRoot);
   const availableRoots = await canonicalRoots(normalized, state);
