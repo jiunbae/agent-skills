@@ -1929,16 +1929,16 @@ function normalizeSessionResources(catalog) {
 }
 
 function skillCatalogIsIncomplete(catalog) {
-  return (
-    Boolean(catalog?.truncated) ||
-    (Array.isArray(catalog?.roots) &&
-      catalog.roots.some(
-        (root) =>
-          ["invalid", "partial", "unreadable"].includes(root?.status) ||
-          (Array.isArray(root?.diagnostics) && root.diagnostics.length > 0) ||
-          Number(root?.omitted_diagnostic_count) > 0,
-      ))
-  );
+  if (Boolean(catalog?.truncated)) return true;
+  // `roots` is a required field of a published SkillCatalog, so its absence
+  // means this is not a published observation — a synthesized stub, a capability
+  // the server declined, or nothing at all. Reading that as a clean complete
+  // scan is the fail-open shape: it lets an empty synthesized answer replace the
+  // resource list wholesale and mark every open Skill removed. Absence of
+  // evidence is not evidence of completeness, and its sibling
+  // `incompleteSkillCatalogScope` already refuses to attribute this same input.
+  if (!Array.isArray(catalog?.roots) || catalog.roots.length === 0) return true;
+  return catalog.roots.some(skillCatalogRootIsIncomplete);
 }
 
 function withoutReplacementClaim(resource) {

@@ -2581,7 +2581,10 @@ test("custom focus color exceeds 3:1 against adjacent editor surfaces", async ()
 });
 
 test("root diagnostics alone make a ready untruncated catalog incomplete", async () => {
-  const build = await browserCatalogFunctions(["skillCatalogIsIncomplete"]);
+  const build = await browserCatalogFunctions([
+    "skillCatalogRootIsIncomplete",
+    "skillCatalogIsIncomplete",
+  ]);
   const { skillCatalogIsIncomplete } = build(new Map());
   const catalog = refusedSubtreeCatalog({
     diagnostics: [symlinkRefusalDiagnostic()],
@@ -2599,7 +2602,10 @@ test("root diagnostics alone make a ready untruncated catalog incomplete", async
 });
 
 test("omitted root diagnostics alone make a catalog incomplete", async () => {
-  const build = await browserCatalogFunctions(["skillCatalogIsIncomplete"]);
+  const build = await browserCatalogFunctions([
+    "skillCatalogRootIsIncomplete",
+    "skillCatalogIsIncomplete",
+  ]);
   const { skillCatalogIsIncomplete } = build(new Map());
   const catalog = refusedSubtreeCatalog({
     diagnostics: [],
@@ -2614,7 +2620,10 @@ test("omitted root diagnostics alone make a catalog incomplete", async () => {
 });
 
 test("a clean catalog with no diagnostics stays complete", async () => {
-  const build = await browserCatalogFunctions(["skillCatalogIsIncomplete"]);
+  const build = await browserCatalogFunctions([
+    "skillCatalogRootIsIncomplete",
+    "skillCatalogIsIncomplete",
+  ]);
   const { skillCatalogIsIncomplete } = build(new Map());
   const catalog = refusedSubtreeCatalog({
     diagnostics: [],
@@ -2622,8 +2631,19 @@ test("a clean catalog with no diagnostics stays complete", async () => {
     items: [catalogSkillItem("skill_AAAAAAAAAAAAAAAAAAAAAA", "kept")],
   });
   assert.equal(skillCatalogIsIncomplete(catalog), false);
-  assert.equal(skillCatalogIsIncomplete({ items: [] }), false);
-  assert.equal(skillCatalogIsIncomplete(undefined), false);
+  // A published SkillCatalog always carries `roots`. Anything without it is not
+  // a published observation, so it must not read as a clean complete scan —
+  // otherwise a synthesized empty answer replaces the resource list wholesale
+  // and marks every open Skill removed.
+  assert.equal(skillCatalogIsIncomplete({ items: [] }), true);
+  assert.equal(skillCatalogIsIncomplete({ items: [], roots: [] }), true);
+  assert.equal(skillCatalogIsIncomplete(undefined), true);
+  // The capability-unavailable stub the Workbench substitutes when
+  // `skills.catalog.read` is not available is exactly that shape.
+  assert.equal(
+    skillCatalogIsIncomplete({ items: [], generation: 0 }),
+    true,
+  );
 });
 
 test("a refused subtree retains open Skills instead of reporting deletions", async () => {
