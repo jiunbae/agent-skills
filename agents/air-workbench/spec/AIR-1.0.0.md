@@ -412,7 +412,7 @@ tokens, private locators, absolute paths, or omitted session content.
 `GET /air/v1/capabilities` instead of assuming a planned operation exists.
 Unavailable operations MUST fail as a typed problem, not silently downgrade.
 
-The `air-skill-catalog` and OpenAPI document version is `1.1.0`; AIR
+The `air-skill-catalog` and OpenAPI document version is `1.2.0`; AIR
 artifacts remain `1.0.0` and the route major remains `/air/v1`.
 The catalog item MAY contain `replaces_id`. It is the opaque ID of an item in
 only the immediately preceding successfully published generation. The server
@@ -426,6 +426,18 @@ truncated authority MUST omit the field. Public names, descriptions, hashes,
 source labels, and paths MUST NOT establish this relation. `replaces_id` is
 metadata, not a route alias or durable history; the old artifact ID remains
 stale.
+
+The catalog item MAY contain a display-only relative label, `relative_path`.
+It is `local-only` disclosure in the sense of the Skill import rules: it is
+never authority, is never a locator a client may submit, and selection remains
+by opaque item ID. The server MUST emit it relative to the root that observed
+the record, MUST omit it whenever the relative form is empty, absolute, or
+contains a `..`, `.`, or empty segment, and MUST NOT emit an absolute path or
+any path above that root. Refusal MUST be omission, never a truncation, a
+failure, or a loss of authority, and the field MUST be shed before any item is
+dropped under response byte pressure. It is identical on loopback and on an
+explicit `--host 0.0.0.0` bind. Session catalog rows MUST NOT carry any
+path-like field.
 
 The browser never supplies filesystem paths, roots, globs, URLs, or output
 destinations. Transform operations are in-memory and do not install or write

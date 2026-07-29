@@ -60,7 +60,7 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
 
   const openapi = documents.get("air.openapi.json");
   assert.equal(openapi.openapi, "3.1.1");
-  assert.equal(openapi.info.version, "1.1.0");
+  assert.equal(openapi.info.version, "1.2.0");
   assert.deepEqual(Object.keys(openapi.paths).sort(), [
     "/air/v1/capabilities",
     "/air/v1/imports/skill",
@@ -81,7 +81,7 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
   }
   const skillCatalog = openapi.components.schemas.SkillCatalog;
   const skillCatalogItem = openapi.components.schemas.SkillCatalogItem;
-  assert.equal(skillCatalog.properties.version.const, "1.1.0");
+  assert.equal(skillCatalog.properties.version.const, "1.2.0");
   assert.equal(skillCatalogItem.required.includes("replaces_id"), false);
   assert.deepEqual(skillCatalogItem.properties.replaces_id, {
     type: "string",
@@ -89,6 +89,26 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
     description:
       "Opaque ID of the uniquely replaced item from the immediately preceding complete catalog generation. It is derived only from a mutually unique server-private source-authority relation, is omitted for ambiguity or incomplete authority, and is not a route alias.",
   });
+  // The display-only label widens what the server discloses, never what the
+  // client may submit, so it stays optional and the item stays closed.
+  assert.equal(skillCatalogItem.unevaluatedProperties, false);
+  assert.equal(skillCatalogItem.required.includes("relative_path"), false);
+  assert.deepEqual(skillCatalogItem.properties.relative_path, {
+    type: "string",
+    minLength: 1,
+    maxLength: 1024,
+    description:
+      "Display-only label, relative to the root that observed the record, published under the same local-only disclosure as an AIR locator. It is never authority, is never an addressable locator, and is never accepted as client input; selection remains by opaque item ID. The server emits it only when the relative form is non-empty, non-absolute, and free of \"..\", \".\", and empty segments, never publishes an absolute path or any path above the observing root, omits it rather than truncating or failing, and sheds it under response-byte pressure. It is identical on loopback and on an explicit --host 0.0.0.0 bind.",
+  });
+  for (const [name, schema] of Object.entries(openapi.components.schemas)) {
+    if (!/^Session/u.test(name)) continue;
+    const properties = Object.keys(schema.properties ?? {});
+    assert.deepEqual(
+      properties.filter((key) => /(^|_)(path|paths|relative_path)$/u.test(key)),
+      [],
+      `session schema ${name} must not publish a path-like field`,
+    );
+  }
   const sessionItems =
     openapi.components.schemas.SessionCatalog.properties.items;
   assert.equal(sessionItems.uniqueItems, true);
@@ -131,6 +151,9 @@ test("AIR normative text freezes domains, carriers, sessions, and legacy boundar
     "MUST differ across registry lifetimes",
     "The catalog item MAY contain `replaces_id`",
     "not a route alias",
+    "The catalog item MAY contain a display-only relative label, `relative_path`",
+    "MUST NOT emit an absolute path or\nany path above that root",
+    "Session catalog rows MUST NOT carry any\npath-like field",
   ]) {
     assert.ok(spec.includes(required), `missing normative phrase: ${required}`);
   }

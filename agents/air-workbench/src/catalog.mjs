@@ -140,6 +140,47 @@ function isContained(parent, child) {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
+const CATALOG_RELATIVE_LABEL_BYTES = 1024;
+
+// A display label, never a locator: it is relative to the root that observed
+// the record, is refused whenever it would escape that root, and is omitted
+// rather than guessed. Refusal is always omission, never a throw and never a
+// truncation, because a disclosure convenience must not become a catalog
+// outage.
+function rootRelativeLabel(allowedRoot, parentRealpath) {
+  if (typeof allowedRoot !== "string" || typeof parentRealpath !== "string") {
+    return null;
+  }
+  const label = relative(allowedRoot, parentRealpath);
+  if (label === "") return null;
+  if (isAbsolute(label)) return null;
+  const segments = label.split(sep);
+  if (segments.some((segment) => (
+    segment === ".." || segment === "." || segment === ""
+  ))) {
+    return null;
+  }
+  const posix = segments.join("/");
+  if (Buffer.byteLength(posix, "utf8") > CATALOG_RELATIVE_LABEL_BYTES) {
+    return null;
+  }
+  return posix;
+}
+
+// One catalog item groups every physical record sharing a content hash, so the
+// published label is the lexicographic minimum over the records that yield one.
+// Deterministic selection keeps the field stable across scan order and across
+// refresh generations, which a frozen generation-to-generation snapshot needs.
+function selectRelativeLabel(records) {
+  let selected = null;
+  for (const record of records) {
+    const label = rootRelativeLabel(record.allowedRoot, record.parentRealpath);
+    if (label === null) continue;
+    if (selected === null || label < selected) selected = label;
+  }
+  return selected;
+}
+
 function byteTruncate(value, limit) {
   let result = "";
   let used = 0;
@@ -1413,6 +1454,10 @@ async function safeReadCandidate(path, allowedRoot, state) {
       hash: sha256(bytes),
       identity: statsIdentity(after),
       size: after.size,
+      // Captured, not recomputed: this is the realpath that already survived
+      // both containment checks above, so the display label can never be
+      // derived from a directory the read itself did not prove contained.
+      parentRealpath: parentAfter,
     };
   } finally {
     await handle?.close().catch(() => {});
@@ -1960,10 +2005,12 @@ function buildItems(state, priorIds, allocateOpaqueId) {
     const imported = importSummary(records[0].bytes, id);
     const allDiagnostics = [...metadata.diagnostics, ...imported.diagnostics];
     const diagnostics = allDiagnostics.slice(0, state.limits.maxDiagnosticsPerItem);
+    const relativeLabel = selectRelativeLabel(records);
     const item = {
       id,
       name: metadata.name,
       description: metadata.description,
+      ...(relativeLabel === null ? {} : { relative_path: relativeLabel }),
       content_hash: hash,
       byte_count: records[0].byteCount,
       workflow_node_count: imported.nodeCount,
@@ -2118,7 +2165,7 @@ async function scanCatalog({
   let responseTruncated = state.truncated;
   const base = {
     format: "air-skill-catalog",
-    version: "1.1.0",
+    version: "1.2.0",
     generation,
     truncated: responseTruncated,
     limit_codes: limitCodes,
@@ -2153,7 +2200,13 @@ async function scanCatalog({
       limitCodes.push("AIR_CATALOG_RESPONSE_LIMIT");
       limitCodes.sort();
     }
-    for (const item of publicItems) delete item.replaces_id;
+    for (const item of publicItems) {
+      delete item.replaces_id;
+      // The display label is a convenience, not authority: shed it with
+      // `replaces_id` before any whole item is dropped, so byte pressure costs
+      // presentation before it costs discovery.
+      delete item.relative_path;
+    }
   }
   while (
     publicItems.length > 0 &&

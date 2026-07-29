@@ -1091,7 +1091,7 @@ test("refresh coalesces, preserves stable IDs, uses duplicates after races, and 
     randomIdBytes: ids(),
   });
   const initial = await catalog.initialize();
-  assert.equal(initial.version, "1.1.0");
+  assert.equal(initial.version, "1.2.0");
   const oldId = initial.items[0].id;
   const firstRefresh = catalog.refresh();
   const secondRefresh = catalog.refresh();
@@ -3016,4 +3016,90 @@ test("partial plugin discovery clears authority without publishing a bound", asy
   const fourth = await catalog.refresh();
   assert.equal(fourth.truncated, false);
   assert.equal(fourth.items[0].replaces_id, third.items[0].id);
+});
+
+test("a grouped root publishes a two-segment display label, never an absolute path", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-relative-label-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "checkout");
+  // The directory a reader knows the Skill by, and a frontmatter name that
+  // deliberately does not contain it: the whole point of the disclosure.
+  await put(
+    join(root, "development", "playwright", "SKILL.md"),
+    skill("automating-browser", "Drives a real browser for end-to-end checks"),
+  );
+  const catalog = createSkillCatalog({
+    roots: [{
+      label: "repository-source",
+      kind: "repository",
+      path: root,
+      grouped: true,
+    }],
+    randomIdBytes: ids(),
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, 1);
+  assert.equal(snapshot.items[0].name, "automating-browser");
+  assert.equal(snapshot.items[0].relative_path, "development/playwright");
+  const encoded = JSON.stringify(snapshot);
+  assert.equal(encoded.includes(await realpath(directory)), false);
+  assert.equal(encoded.includes(directory), false);
+  assert.doesNotMatch(encoded, /"relative_path":"\//u);
+  assert.doesNotMatch(encoded, /\.\./u);
+  // Widening disclosure must not widen the source label vocabulary.
+  assert.deepEqual(
+    snapshot.items[0].source_labels.map((source) => source.label),
+    ["repository-source"],
+  );
+});
+
+test("a Skill directly at the root publishes no display label", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-root-label-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "solo");
+  await put(join(root, "SKILL.md"), skill("solo", "At the observing root"));
+  await put(
+    join(root, "nested", "SKILL.md"),
+    skill("nested", "One level under the observing root"),
+  );
+  const catalog = createSkillCatalog({
+    roots: [{ label: "project-solo", kind: "project", path: root }],
+    randomIdBytes: ids(),
+  });
+  const snapshot = await catalog.initialize();
+  const atRoot = snapshot.items.find((item) => item.name === "solo");
+  const nested = snapshot.items.find((item) => item.name === "nested");
+  // An empty relative form is omitted, never published as "", "." or the root.
+  assert.equal(Object.hasOwn(atRoot, "relative_path"), false);
+  assert.equal(nested.relative_path, "nested");
+});
+
+test("a symlinked Skill directory labels against the target root, never above it", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-linked-label-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const holder = join(directory, "holder");
+  const target = join(directory, "target");
+  await put(
+    join(target, "vendor", "alias-skill", "SKILL.md"),
+    skill("alias-skill", "Reached through a directory symbolic link"),
+  );
+  await mkdir(holder, { recursive: true });
+  await symlink(join(target, "vendor", "alias-skill"), join(holder, "alias"));
+  const catalog = createSkillCatalog({
+    roots: [
+      { label: "project-holder", kind: "project", path: holder },
+      { label: "repository-target", kind: "repository", path: target },
+    ],
+    randomIdBytes: ids(),
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, 1);
+  // Both records of this content hash resolve into the target root, so the
+  // label is relative to the root that authorized the read, not the holder.
+  // A holder-relative computation would have produced "../target/vendor/...".
+  assert.equal(snapshot.items[0].relative_path, "vendor/alias-skill");
+  assert.equal(snapshot.items[0].location_count, 2);
+  const encoded = JSON.stringify(snapshot);
+  assert.doesNotMatch(encoded, /\.\./u);
+  assert.equal(encoded.includes(directory), false);
 });

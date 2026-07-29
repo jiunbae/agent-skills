@@ -379,7 +379,7 @@ async function fixtures({ bounded = false } = {}) {
       ];
   let catalogSnapshot = {
     format: "air-skill-catalog",
-    version: "1.1.0",
+    version: "1.2.0",
     generation: 1,
     truncated: false,
     roots: [],

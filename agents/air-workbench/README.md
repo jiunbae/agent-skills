@@ -59,8 +59,12 @@ Codex and Claude sessions. Filter it in place, use **Quick Open**
 snapshot. Discovery is on by default; there is no watcher or live-follow
 process.
 
-The local catalog/OpenAPI contract is version `1.1.0`; AIR artifacts and
-`/air/v1` remain unchanged. A content edit rotates its opaque Skill ID. Only a
+The local catalog/OpenAPI contract is version `1.2.0`; AIR artifacts and
+`/air/v1` remain unchanged. A catalog Skill may carry a display-only
+`relative_path` label, relative to the root that observed it, so search finds a
+Skill by the directory a reader knows it by even when its frontmatter name
+differs; it is never absolute, never escapes that root, is omitted when it
+cannot be formed, and is never accepted as input. A content edit rotates its opaque Skill ID. Only a
 complete, mutually unique server-private same-source match may expose the
 immediately prior opaque ID as `replaces_id`, enabling an explicit
 Keep/Cancel/Reload decision. Split, merge, swap, incomplete, unreadable, or

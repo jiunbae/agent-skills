@@ -581,7 +581,7 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
 
   const listed = await http(address, `/air/v1/skills?token=${token}`);
   assert.equal(listed.status, 200);
-  assert.equal(JSON.parse(listed.body).version, "1.1.0");
+  assert.equal(JSON.parse(listed.body).version, "1.2.0");
   assert.equal(JSON.parse(listed.body).item_count, 1);
   assert.equal(listed.body.includes(Buffer.from(directory)), false);
   assert.equal(listed.body.includes(SKILL), false);
@@ -623,7 +623,7 @@ test("AIR read-only routes require exact token, expose bounded catalog/schema da
   );
   assert.equal(refreshed.status, 200);
   const refreshedBody = JSON.parse(refreshed.body);
-  assert.equal(refreshedBody.version, "1.1.0");
+  assert.equal(refreshedBody.version, "1.2.0");
   assert.equal(refreshedBody.generation, 2);
   assert.equal(refreshedBody.items[0].replaces_id, snapshot.items[0].id);
   assert.notEqual(refreshedBody.items[0].id, snapshot.items[0].id);

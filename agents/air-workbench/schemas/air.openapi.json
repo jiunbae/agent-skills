@@ -3,7 +3,7 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "AIR Workbench local API",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Project-defined local API for Agent Intermediate Representation artifacts. This document makes no IANA or standards-body claim."
   },
   "servers": [
@@ -635,7 +635,7 @@
             "const": "air-skill-catalog"
           },
           "version": {
-            "const": "1.1.0"
+            "const": "1.2.0"
           },
           "generation": {
             "type": "integer",
@@ -837,6 +837,12 @@
           },
           "description": {
             "type": "string"
+          },
+          "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Display-only label, relative to the root that observed the record, published under the same local-only disclosure as an AIR locator. It is never authority, is never an addressable locator, and is never accepted as client input; selection remains by opaque item ID. The server emits it only when the relative form is non-empty, non-absolute, and free of \"..\", \".\", and empty segments, never publishes an absolute path or any path above the observing root, omits it rather than truncating or failing, and sheds it under response-byte pressure. It is identical on loopback and on an explicit --host 0.0.0.0 bind."
           },
           "content_hash": {
             "type": "string",
