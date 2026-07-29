@@ -2062,15 +2062,35 @@ test("previously recognized Skills keep their exact imported shape and firing ru
       assert.equal(edge.provenance, "imported", `${relative} edges stay imported`);
     }
   }
-  const security = await importSkillFile(
-    join(ROOT, "security/security-auditor/SKILL.md"),
+  // A node id hashes `${sourcePath}\0${headingStart}\0${headingText}`, so it
+  // moves with the absolute path of the checkout. Freezing ids read through an
+  // absolute path pinned this assertion to one machine and one directory, and
+  // the release gate could not pass from a `git worktree` or a second clone.
+  // Freeze them against a fixed logical source path instead: that still pins
+  // the derivation, the candidate offsets and the heading bytes — everything a
+  // recognizer change could move — without pinning the checkout location.
+  const securityRelative = "security/security-auditor/SKILL.md";
+  const security = importSkillBytes(
+    await readFile(join(ROOT, securityRelative)),
+    { sourcePath: securityRelative },
   );
   assert.deepEqual(security.graph.nodes.map((node) => node.id), [
-    "step-2b9f90db3114a836",
-    "step-53942b2e6a14ba91",
-    "step-39ecb760f494af75",
-    "step-f88f895145a4d939",
+    "step-ac5bb9043a6ff039",
+    "step-e509f5f12be36b5c",
+    "step-a26b1185016077eb",
+    "step-f4551dd1eb212088",
   ]);
+  // The same bytes read through the absolute path keep the same shape; only the
+  // path-derived ids differ.
+  const absolute = await importSkillFile(join(ROOT, securityRelative));
+  assert.deepEqual(
+    absolute.graph.nodes.map((node) => node.title),
+    security.graph.nodes.map((node) => node.title),
+  );
+  assert.deepEqual(
+    absolute.graph.nodes.map((node) => node.source_map.span),
+    security.graph.nodes.map((node) => node.source_map.span),
+  );
 });
 
 test("the recognition ladder covers every repository Skill and round-trips byte for byte", async () => {
