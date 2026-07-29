@@ -21,7 +21,9 @@ SKILL.md ⇄ AIR workflow ⇄ AIR Workbench graph
 - `.air.json` is the complete representation for AIR `workflow`, `plan`, and
   `trace` artifacts.
 - `.air.md` is a lossless workflow-only Markdown carrier defined by the AIR
-  codec, but Codex and Claude do not discover that filename.
+  codec, but Codex and Claude do not discover that filename. It keeps the
+  source bytes as an exact prefix and appends an inert `air:v1` metadata
+  comment, so a carrier is always larger than the source it came from.
   Place reviewed carrier bytes at `<skill-directory>/SKILL.md` to distribute
   or activate them as a native Skill.
 - AIR roots use `format: "air"`, `air_version: "1.0.0"`, project-controlled
@@ -208,10 +210,40 @@ node scripts/air.mjs convert \
   --out /tmp/background-implementer.air.md
 ```
 
-Without semantic edits, the exported bytes are identical to the imported
-source. To activate the reviewed carrier as a native Skill, place its bytes at
-`<skill-directory>/SKILL.md`. Portable V1 does not overwrite any output; always
-choose a new `--out` path.
+`air convert` does **not** reproduce the imported bytes. The `.air.md` carrier
+is the original source bytes verbatim, followed by an appended inert
+`air:v1` metadata comment that carries the AIR envelope. The carrier is
+therefore always larger than its source: importing and converting
+`../background-implementer/SKILL.md` turns 5,693 bytes
+(`sha256 3b590e99…`) into 28,747 bytes (`sha256 65ac5503…`), because roughly
+23 KB of base64 metadata is appended. The source bytes remain a byte-exact
+prefix of the carrier, which is what makes the carrier lossless — not byte
+identity.
+
+The legacy render path is the byte-preserving one. Without semantic edits,
+`workflow-studio export` reproduces the imported source exactly:
+
+```bash
+node scripts/workflow-studio.mjs import \
+  ../background-implementer/SKILL.md \
+  --out /tmp/background-implementer.workflow.json
+
+node scripts/workflow-studio.mjs export \
+  /tmp/background-implementer.workflow.json \
+  --out /tmp/background-implementer.md
+```
+
+That command reports the source `sha256` and `byte_length` back unchanged
+(5,693 bytes, `sha256 3b590e99…` for the example above).
+
+Either output can be activated as a native Skill by placing its bytes at
+`<skill-directory>/SKILL.md`. Choose deliberately: install the
+`workflow-studio export` output when the distributed Skill must stay
+byte-identical to its source, and install the `air convert` carrier when you
+want the AIR envelope and stable structural IDs to travel with the Skill,
+accepting the larger file. Diff the candidate against the current `SKILL.md`
+before replacing it. Portable V1 does not overwrite any output; always choose a
+new `--out` path.
 
 ## Prompt → approved plan → native run → trace
 
@@ -288,6 +320,86 @@ never overwrites the original skill. A trace-derived draft must be reviewed:
 observed event order is history, not hidden reasoning or a guaranteed future
 plan.
 
+## What the importer recognizes
+
+Import coverage is partial by construction. The importer does not read a
+`SKILL.md` for meaning; it looks for a small set of document shapes and maps
+each match to a `step` node. If none of them matches, you get an empty graph —
+not an error. You cannot author a Skill that graphs well without knowing which
+shapes are recognized, so they are listed here.
+
+The recognizer is a ladder in `src/core.mjs` (`deriveCandidates`). It stops at
+the first rung that produces any candidate; lower rungs are never consulted.
+Every node and edge records the rung that produced it as its
+`confidence.rule_id`, so you can always tell which rule fired.
+
+| Rung | `rule_id` | Shape it matches |
+|------|-----------|------------------|
+| 1 | `workflow.children` / `workflows.children` | An `## Workflow` (or `## Workflows`) heading whose text is exactly that word. Each `###` child underneath becomes a step. Under the singular heading the steps are connected in order; under the plural heading they are **not** connected, because "Workflows" names a set, not a sequence. |
+| 2 | `numbered.h2` | `##` headings that start with a number, optionally prefixed by `Step` or `Phase`: `## 1. Prepare`, `## Step 2) Review`, `## Phase 3 - Ship`. |
+| 3 | `workflow.ordered-list` | An exact `## Workflow` heading with **no** `###` children but a top-level ordered list of at least two items. Each `1.` item becomes a step. |
+| 4 | `workflow.titled.children` | A `##` heading that ends in `workflow`, `workflows`, `process`, `procedure`, or `pipeline` — for example `## Review Workflow` — where **every** one of at least two `###` children is number-prefixed. One unnumbered child disqualifies the whole section. |
+| 5 | `numbered.h3` | Number-prefixed `###` headings anywhere in the document. |
+| 6 | `section.order` | Fallback. Two or more ordinary `##` headings with usable titles, chained in the order they appear. |
+
+Scanning is fence-aware: headings and list markers inside fenced code blocks are
+ignored, and YAML frontmatter is skipped. A number prefix is stripped from the
+step title (`## Step 2) Review` becomes the step `Review`). A heading whose text
+contains the word `parallel` yields a `parallel` step and a `parallel` incoming
+edge instead of a `sequence` one. Candidates nested inside another candidate's
+span are dropped, so a section and its own subsections cannot both become steps.
+
+### Declared versus inferred
+
+Rungs 1-5 read structure the source **declares**. Rung 6 does not: it is a guess
+about a document that declares no sequence at all. Nothing in an ordinary
+`## Setup` / `## Usage` / `## Troubleshooting` document says those sections run
+in that order, or run at all. The importer chains them anyway so the document is
+reviewable, and then labels the result honestly. The two cases are distinguished
+everywhere:
+
+| | Declared (rungs 1-5) | Inferred (rung 6) |
+|---|---|---|
+| `confidence.level` | `structural` | `heuristic` |
+| node `confidence.reason` | "Mapped from a fence-aware workflow heading." | "Inferred from an ordinary top-level section; the source declares no workflow." |
+| edge `confidence.reason` | "Heading order within the same workflow region." | "Inferred from document order; the source declares no dependency." |
+| edge `provenance` in the artifact and CLI JSON | `imported` | `inferred` |
+| extra edge fields | none | `source_provenance: "inferred"`, `source_confidence: 0.5` |
+| browser inspector **Provenance** field | `imported` | `inferred` |
+
+Note the vocabulary: the artifact, the CLI and the inspector all spell a
+declared edge `imported`, never "declared" — the word `declared` appears in the
+inspector only as a fallback for an edge that carries no provenance at all, and
+a round-tripped edge restored from `workflow-studio:v1` metadata reads
+`managed`. Treat an `inferred` / `heuristic` edge as a proposal to review, never
+as an ordering the Skill author committed to.
+
+### When nothing is recognized
+
+If no rung matches, the import succeeds with zero nodes and zero edges, keeps
+the entire file as an opaque span, and attaches one diagnostic:
+
+```json
+{
+  "severity": "warning",
+  "code": "workflow.none",
+  "message": "No supported workflow structure was recognized; all source remains opaque."
+}
+```
+
+The bytes are still safe — a no-edit render returns them unchanged — but there
+is nothing to edit on the canvas. To get a graph, add one of the shapes above.
+The cheapest fix is an exact `## Workflow` heading with `###` children (rung 1),
+or numbering the `##` headings you already have (rung 2). Both are declared
+structure, so both land at `structural` confidence instead of `heuristic`.
+
+Measured on this repository at the time of writing, all 32 `SKILL.md` files —
+the 31 distributed Skills plus the bundled `hello-agent` example fixture —
+import to a non-empty graph. Ten of them reach it only through the `section.order`
+fallback, so their step order is inferred, not declared. Re-measure rather than
+trusting that count: run `air import` over each `SKILL.md` and read
+`confidence.rule_id` on the resulting nodes.
+
 ## Workflow IR 1.0 compatibility
 
 V1 supports a deliberately small graph grammar:
@@ -302,8 +414,9 @@ V1 supports a deliberately small graph grammar:
 - provenance: imported/managed declarations for workflow content;
   `observed` events and `inferred` sequence edges for traces
 
-The importer recognizes fence-aware workflow headings and preserves everything
-else as source or opaque spans. The authoritative raw bytes, byte length, and
+The importer recognizes the fence-aware document shapes listed under
+[What the importer recognizes](#what-the-importer-recognizes) and preserves
+everything else as source or opaque spans. The authoritative raw bytes, byte length, and
 SHA-256 are stored in the artifact. A no-edit render emits the original bytes.
 Mapped text edits patch only their UTF-8 byte ranges. Edited exports retain
 stable IDs and edges in an inert `workflow-studio:v1` Markdown comment, which
@@ -378,6 +491,13 @@ listens. Browser exports are local client downloads.
 
 ## Limitations
 
+- Import coverage is partial and shape-based. A `SKILL.md` graphs only if it
+  matches one of the six rungs in
+  [What the importer recognizes](#what-the-importer-recognizes); anything else
+  imports to zero nodes and zero edges with a `workflow.none` warning. The
+  bottom rung infers step order from document order, which is a guess about a
+  document that declares no sequence — it is reported as `heuristic` confidence
+  and `inferred` edge provenance, and should be reviewed rather than trusted.
 - The approved graph is context for native Codex/Claude execution; it is not
   enforced node by node. Pause/branch/retry orchestration is out of scope.
 - Native post-run graphs contain emitted CLI events and explicitly inferred

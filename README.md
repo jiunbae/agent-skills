@@ -53,6 +53,10 @@ Install the agent-skills toolkit into this project:
    npx @open330/agt skill list --agent codex
    npx @open330/agt persona list
 
+5. Optional — the "core" profile does not include `agents/air-workbench`.
+   Install that one explicitly only if you want the local graph workbench:
+   npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
+
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
@@ -124,6 +128,35 @@ Installed by default with `--core`:
 - `agents/background-planner` — Parallel persona planning with stance-steered synthesis
 - `agents/background-reviewer` — Parallel persona review with adversarial verification
 - `agents/rpf` — Pointer-driven iterative review, plan, work, and feedback
+
+### Opt-in Skills (not in `core`)
+
+Every other skill in the catalog is installed on request. `agents/air-workbench`
+is deliberately one of them: it ships a local HTTP server, a checked-in browser
+bundle, and an approval-gated native-run path, so it stays opt-in rather than
+being added to every workspace by default. Nothing in `--profile core` or
+`--core` installs it. Pick whichever path you already use:
+
+```bash
+# npx
+npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
+
+# agt CLI
+agt skill install -g --from jiunbae/agent-skills/agents/air-workbench
+
+# install.sh, from a repository checkout
+./install.sh agents/air-workbench
+```
+
+Then run it from the installed copy — it needs no `npm install`:
+
+```bash
+node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
+```
+
+The same form works for any other catalog entry, for example
+`--from jiunbae/agent-skills/development/playwright` or
+`./install.sh integrations/slack-skill`.
 
 ---
 

@@ -61,6 +61,38 @@ empty `[Unreleased]` section above it.
   publish the `@open330/agt` npm package.
 
 ### Fixed
+- `agents/air-workbench/README.md` now documents that `SKILL.md` import coverage
+  is partial and shape-based, which no document previously stated anywhere. A new
+  "What the importer recognizes" section lists the six recognizer rungs and their
+  `confidence.rule_id` values, the fence-aware scanning rules, what to change in a
+  `SKILL.md` to get a better graph, and the `workflow.none` warning that an
+  unrecognized document produces instead of an error. It also separates **declared**
+  structure (rungs 1-5, `structural` confidence, `imported` edge provenance) from
+  **inferred** document order (the bottom `section.order` rung, `heuristic`
+  confidence, `inferred` edge provenance with `source_confidence: 0.5`), and records
+  where each label is observable in the CLI JSON and in the browser inspector.
+  Inferred ordering is stated plainly as a guess about a document that declares
+  no sequence, not as an ordering the Skill author committed to. A matching
+  Limitations bullet and `SKILL.md` constraint were added.
+- `agents/air-workbench/README.md` no longer claims that "without semantic
+  edits, the exported bytes are identical to the imported source" directly
+  below an `air convert` example, where it was false. `air convert` writes a
+  `.air.md` carrier that keeps the source bytes as an exact prefix and then
+  appends an inert `air:v1` metadata comment; importing and converting
+  `agents/background-implementer/SKILL.md` produces 28,747 bytes from a 5,693-byte
+  source. The byte-preserving path is the legacy `workflow-studio export`
+  render, which reproduces the source `sha256` and byte length exactly. The
+  README now names both commands, gives the measured numbers, and tells the
+  reader which output to install at `<skill-directory>/SKILL.md` for which
+  purpose. Readers who followed the old instruction installed a Skill roughly
+  five times its source size without being told.
+- Both root READMEs now document how to install `agents/air-workbench`. Every
+  onboarding path used `--profile core` or `--core`, and neither includes the
+  Workbench, so no documented quickstart ever installed it; the only working
+  command lived in `MIGRATION.md`. A new "Opt-in Skills (not in `core`)"
+  section gives the `npx`, `agt` and `install.sh` forms, the command to run the
+  installed copy, and the reason the Workbench stays out of `core`. `profiles.yml`
+  is unchanged — the Workbench remains opt-in by design.
 - Release notes now count only real `<group>/<skill>/SKILL.md` skills, so the
   published total is 31 instead of 32 — the previous expression also counted a
   bundled example fixture nested inside a skill. The `common` group row was

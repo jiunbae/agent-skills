@@ -117,10 +117,15 @@ raw provider JSONL to the browser.
 - `.air.json` is the complete AIR 1 artifact for `workflow`, `plan`, and
   `trace`.
 - `.air.md` is the lossless workflow-only Markdown carrier defined by the AIR
-  codec.
+  codec. Lossless does not mean byte-identical: the carrier is the source bytes
+  as an exact prefix plus an appended inert `air:v1` metadata comment, so it is
+  always larger than the source. Never tell a user that `air convert` returns
+  their original bytes. The byte-preserving render is
+  `workflow-studio export` on an unedited import.
 - `.air.md` contains valid Agent Skill Markdown, but Codex and Claude do not
   discover it merely from that extension. To activate or distribute it as a
-  native Skill, place the reviewed bytes at `<skill-directory>/SKILL.md`.
+  native Skill, place the reviewed bytes at `<skill-directory>/SKILL.md` —
+  after confirming with the user which of the two outputs they want there.
 - Plans and traces use `.air.json`; Markdown reports of them are non-lossless
   views, not AIR carriers.
 
@@ -245,6 +250,16 @@ describe observed history, not guaranteed future behavior.
   follow.
 - The installed runtime uses checked-in same-origin assets and needs no npm,
   CDN, registry, telemetry, remote service, or global executable.
+- Import coverage is partial and shape-based. Only the recognized document
+  shapes become steps; anything else imports to zero nodes and zero edges with
+  a `workflow.none` warning, which is a normal result and not an error. The
+  bottom rung chains ordinary `##` sections in document order and marks the
+  result `heuristic` confidence with `inferred` edge provenance — say so
+  instead of presenting an inferred order as the author's declared sequence.
+  `README.md` lists the rungs and their `confidence.rule_id` values.
+- This Skill is not part of the `core` install profile. Install it explicitly
+  with `agt skill install -g --from jiunbae/agent-skills/agents/air-workbench`
+  or `./install.sh agents/air-workbench`.
 
 See `README.md` and `spec/AIR-1.0.0.md` for the complete contract, safety
 model, build instructions, and compatibility matrix.

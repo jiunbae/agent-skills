@@ -44,6 +44,10 @@ npx @open330/agt skill install --profile core --from jiunbae/agent-skills --agen
 npx @open330/agt skill list
 npx @open330/agt skill list --agent codex
 
+# 선택 사항: core 프로필에는 agents/air-workbench가 포함되지 않는다.
+# 로컬 그래프 워크벤치가 필요할 때만 따로 설치한다.
+npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
+
 # 또는 install.sh 직접 사용
 git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
 cd ~/.agent-skills && ./install.sh --core
@@ -106,6 +110,35 @@ cd ~/.agent-skills
 - `agents/background-planner` — 페르소나 병렬 기획 + stance 기반 종합
 - `agents/background-reviewer` — 페르소나 병렬 리뷰 + 적대적 검증
 - `agents/rpf` — Pointer 기반 반복 리뷰·계획·작업·피드백
+
+### 선택 설치 스킬 (`core`에 없음)
+
+카탈로그의 나머지 스킬은 요청할 때만 설치된다. `agents/air-workbench`도
+의도적으로 그중 하나다. 로컬 HTTP 서버와 체크인된 브라우저 번들, 승인 게이트가
+붙은 네이티브 실행 경로를 함께 제공하므로 모든 워크스페이스에 기본 포함하지 않고
+선택 설치로 남겨 두었다. `--profile core`나 `--core`로는 설치되지 않는다.
+평소 쓰던 방식 중 하나를 고르면 된다.
+
+```bash
+# npx
+npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
+
+# agt CLI
+agt skill install -g --from jiunbae/agent-skills/agents/air-workbench
+
+# 레포지토리 체크아웃에서 install.sh 사용
+./install.sh agents/air-workbench
+```
+
+설치된 사본에서 바로 실행한다. `npm install`은 필요하지 않다.
+
+```bash
+node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
+```
+
+같은 형식을 다른 카탈로그 항목에도 쓸 수 있다. 예를 들어
+`--from jiunbae/agent-skills/development/playwright`,
+`./install.sh integrations/slack-skill`.
 
 ---
 
