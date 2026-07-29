@@ -43,6 +43,35 @@ empty `[Unreleased]` section above it.
   `~/.agents/skills`. Marker, error-code, environment-variable and legacy hash
   spellings intentionally keep the historical `workflow-studio` name so existing
   artifacts stay valid.
+- `agents/rpf` now treats concurrent access to one pointer document as a
+  first-class case: several RPF runs from different tools (Claude Code, Codex,
+  another IDE agent) or a human editor may hold the same `POINTER_DOC` at once.
+  A new `references/concurrency.md` defines the protocol — an atomic `mkdir`
+  write lock with a lease and stale takeover, compare-and-swap writes validated
+  against the hash observed at read time, atomic `rename` publication with
+  readback verification, deterministic merge rules per pointer section,
+  lock-allocated cycle numbers so review artifacts cannot collide, expiring
+  per-item work claims and registered file globs, a separate deploy exclusion
+  lock, and path-scoped staging plus rebase-retry for shared working trees. The
+  protocol relies only on atomic `mkdir` and `rename`, so hosts interoperate
+  without a shared runtime. Convergence now also requires that no live peer run
+  remains; otherwise the run reports the new `waiting-peers` status instead of
+  claiming convergence. The cycle report gained `RUN_ID`, `POINTER_REV`,
+  `POINTER_HASH`, `ACTIVE_PEERS`, and `CLAIM_CONFLICTS`, and `DEPLOY` gained a
+  `per-cycle-skipped:<reason>` value.
+- `agents/rpf` review fan-out now draws its lenses from this repository's
+  `personas/*.md` library instead of an inline lens table, matching
+  `background-reviewer` and the "personas are the single source of lenses" rule
+  the orchestration reference already stated. Findings must fill the shared
+  finding schema, and critical/high findings must survive an adversarial kill
+  gate — an independent verifier, preferably from another model family, told to
+  refute them — before they can become work items. RPF edits, commits, and
+  deploys from its findings, so a plausible-but-wrong finding was more expensive
+  here than in a read-only review. New `references/orchestration.md` and
+  `references/detection.md` carry the persona mapping, schema, verification,
+  artifact retention, and the gate/deploy detection catalogs; detection
+  previously named only abstract categories, which under-detected gates in a
+  skill that forbids inventing them.
 - Established `jiunbae/agent-skills` as the single source of truth for skills,
   personas, hooks, profiles, and static context.
 - Updated `setup.sh` to download this repository from `main` and preserve
@@ -85,6 +114,39 @@ empty `[Unreleased]` section above it.
 - korean-editor: `verify_fidelity.py` tokenizes dates, versions, and clock
   times before bare numbers. A failure on `2026-07-29` now names the date
   rather than reporting three unrelated numbers.
+- The `agents/rpf` pointer template could not hold what the skill required of
+  it. Phase 2 demanded that every deferred finding record evidence, its original
+  severity and confidence, the reason, and the condition that reopens it, but
+  the template's work-queue table had no such columns, so the contract was
+  unenforceable and each run invented a format. The template now carries
+  `Deferred findings`, `Refuted findings`, an `Active runs` registry, a
+  dispositioned `Feedback` table, and per-row severity, claim, and revision
+  columns.
+- `agents/rpf` had no stall stop condition: a cycle that reported no commits and
+  no material pointer changes while goal gaps remained was neither convergence
+  nor an error, so the loop could spend its entire 128-cycle budget reproducing
+  one blocked state. Two such consecutive cycles now stop the run as `blocked`
+  and ask the user for the decision that unblocks it.
+- `agents/rpf` convergence required `MATERIAL_POINTER_CHANGES = 0`, which the
+  cycle that completed the last work item could never satisfy, so every run paid
+  for one extra full review cycle. Completion evidence recorded for work that
+  was already pending at the start of the cycle no longer counts as material.
+- `agents/rpf` asked the orchestrator to verify that the pointer contained the
+  state a cycle reported, without any shared token to compare. The cycle report
+  now carries `POINTER_REV` and `POINTER_HASH` from the controller's verified
+  readback, making that check mechanical.
+- `agents/rpf` gave contradictory instructions for a failed per-cycle deploy:
+  Phase 4 said to report it and continue, while the stop conditions said to
+  stop. Stopping is now explicit, and a deploy skipped because a peer run holds
+  the deploy lock is stated not to be an error.
+- `agents/rpf` left review-artifact growth and version control unspecified —
+  128 cycles of reviewer output is not incidental history. Artifacts now use the
+  repository's flat `R<n>-<worker>.md` convention, retain the last five cycles,
+  and pre-loop setup must decide and announce whether `.context/reviews/` is
+  committed or ignored.
+- `agents/rpf` invocation parsing was ambiguous when a bootstrap directive
+  mentioned a Markdown path; the first `.md` token is now the pointer and the
+  rest is directive text.
 - `agents/air-workbench/README.md` now documents that `SKILL.md` import coverage
   is partial and shape-based, which no document previously stated anywhere. A new
   "What the importer recognizes" section lists the six recognizer rungs and their
