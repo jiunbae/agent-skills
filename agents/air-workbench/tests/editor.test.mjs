@@ -2934,3 +2934,369 @@ test("a truncated catalog keeps retention catalog-wide", async () => {
   );
   assert.equal(gone_.entry.removed, false);
 });
+
+function importRefusalDiagnostic() {
+  return {
+    severity: "warning",
+    code: "WORKFLOW_NONE",
+    message:
+      "No supported workflow structure was recognized; all source remains opaque.",
+    targets: [],
+  };
+}
+
+test("artifact diagnostics become Problems rows carrying their own severity", async () => {
+  const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  assert.match(
+    editor,
+    /problemRows\(state\.validation, state\.diagnostics\)/u,
+    "renderValidation must read the diagnostics the model already holds",
+  );
+  assert.match(editor, /button\.dataset\.problemSeverity = problem\.type/u);
+
+  const build = await browserCatalogFunctions([
+    "diagnosticSeverityLabel",
+    "diagnosticProblemRows",
+    "problemRows",
+    "problemRowLabel",
+    "validationSummaryText",
+  ]);
+  const {
+    diagnosticProblemRows,
+    problemRows,
+    problemRowLabel,
+    validationSummaryText,
+  } = build(new Map());
+
+  const validation = { valid: true, errors: [], warnings: [] };
+  const diagnostics = [importRefusalDiagnostic()];
+  const rows = problemRows(validation, diagnostics);
+
+  assert.equal(
+    rows.length,
+    1,
+    "a diagnostic the header already counts must not report Problems 0",
+  );
+  assert.equal(rows[0].origin, "diagnostic");
+  assert.equal(rows[0].type, "Warning");
+  assert.equal(
+    problemRowLabel(rows[0]),
+    "Warning · WORKFLOW_NONE: No supported workflow structure was " +
+      "recognized; all source remains opaque.",
+  );
+  assert.match(
+    validationSummaryText(validation, diagnostics),
+    /Valid · 1 import diagnostic$/u,
+  );
+  assert.equal(
+    validationSummaryText(validation, []),
+    "Valid",
+    "an artifact with no diagnostics keeps the historical summary",
+  );
+
+  const severities = diagnosticProblemRows([
+    { severity: "error", code: "A_CODE", message: "broken", targets: ["n1"] },
+    { severity: "info", code: "B_CODE", message: "noted", targets: [] },
+    { severity: "nonsense", code: "C_CODE", message: "odd", targets: [] },
+    { severity: "warning", code: "D_CODE", message: "span", targets: [{ source_id: "s", start_byte: 0, end_byte: 1 }] },
+  ]);
+  assert.deepEqual(
+    severities.map((row) => row.type),
+    ["Error", "Info", "Diagnostic", "Warning"],
+    "the engine's severity is rendered, never flattened to one label",
+  );
+  assert.deepEqual(severities[0].targets, ["n1"]);
+  assert.deepEqual(
+    severities[3].targets,
+    [],
+    "a byte-span target resolves to no selection and must not be clickable",
+  );
+});
+
+test("the empty canvas repeats the engine's reason for recognizing nothing", async () => {
+  const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  assert.match(
+    editor,
+    /"empty-state",\s*workflowAbsenceMessage\(state\.diagnostics\)/u,
+    "the empty canvas must state the reason, not just the absence",
+  );
+
+  const build = await browserCatalogFunctions([
+    "diagnosticSeverityLabel",
+    "diagnosticProblemRows",
+    "workflowAbsenceMessage",
+  ]);
+  const { workflowAbsenceMessage } = build(new Map());
+
+  assert.equal(
+    workflowAbsenceMessage([importRefusalDiagnostic()]),
+    "No recognized workflow steps. No supported workflow structure was " +
+      "recognized; all source remains opaque. (WORKFLOW_NONE)",
+  );
+  assert.equal(
+    workflowAbsenceMessage([
+      { severity: "info", code: "NOTED", message: "noted", targets: [] },
+      { severity: "error", code: "REFUSED", message: "refused", targets: [] },
+    ]),
+    "No recognized workflow steps. refused (REFUSED)",
+    "the most severe reason wins over an incidental note",
+  );
+  assert.equal(
+    workflowAbsenceMessage([]),
+    "No recognized workflow steps.",
+    "an unexplained absence keeps the historical bare wording",
+  );
+});
+
+test("the inspector attributes confidence and edge kind to a published rule", async () => {
+  const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  assert.match(
+    editor,
+    /element\("nodeConfidence"\)\.textContent = confidenceSummary\(node\.confidence\)/u,
+    "the inspector must surface confidence.rule_id",
+  );
+  assert.match(
+    editor,
+    /element\("edgeIdentity"\)\.textContent = edgeIdentitySummary\(edge\)/u,
+  );
+  assert.match(
+    editor,
+    /element\("edgeProvenance"\)\.textContent = edge\.provenance \|\| "declared"/u,
+    "the published provenance spelling stays exact for observed and inferred",
+  );
+  const css = await readFile(new URL("styles.css", ASSET_ROOT), "utf8");
+  assert.match(css, /data-confidence-level="heuristic"/u);
+  assert.match(css, /data-provenance="inferred"/u);
+
+  const build = await browserCatalogFunctions([
+    "confidenceSummary",
+    "edgeIdentitySummary",
+  ]);
+  const { confidenceSummary, edgeIdentitySummary } = build(new Map());
+
+  assert.equal(
+    confidenceSummary({
+      level: "structural",
+      rule_id: "skill.heading.v1",
+      reason: "Mapped from a fence-aware workflow heading.",
+    }),
+    "structural · rule skill.heading.v1 — Mapped from a fence-aware " +
+      "workflow heading.",
+  );
+  assert.equal(
+    confidenceSummary({
+      level: "heuristic",
+      rule_id: "skill.prose.v1",
+      reason: "",
+    }),
+    "heuristic · rule skill.prose.v1",
+    "a newly published level renders from the value, not from a literal",
+  );
+  assert.equal(
+    confidenceSummary({}),
+    "unknown · rule unattributed",
+    "an unattributed reading says so instead of claiming a rule",
+  );
+  assert.notEqual(
+    confidenceSummary({ level: "structural", rule_id: "r" }),
+    confidenceSummary({ level: "heuristic", rule_id: "r" }),
+  );
+
+  assert.equal(
+    edgeIdentitySummary({
+      id: "edge-1",
+      kind: "sequence",
+      confidence: { level: "structural", rule_id: "skill.order.v1" },
+    }),
+    "edge-1 · sequence · rule skill.order.v1",
+  );
+  assert.equal(
+    edgeIdentitySummary({ id: "edge-2", kind: "parallel" }),
+    "edge-2 · parallel · rule unattributed",
+  );
+});
+
+test("a refused Skill import is distinguishable from a Skill with no workflow", async () => {
+  const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  assert.match(
+    editor,
+    /create\("span", "", resourceImportSummary\(item\)\)/u,
+    "the resource row must read item.diagnostics, not only the counts",
+  );
+  assert.match(
+    editor,
+    /resourceImportFailed\(item\)\) \{\s*badges\.append\(\s*create\("span", "resource-badge", "import failed"\)/u,
+  );
+
+  const build = await browserCatalogFunctions([
+    "diagnosticSeverityLabel",
+    "diagnosticProblemRows",
+    "resourceImportFailed",
+    "resourceImportSummary",
+  ]);
+  const { resourceImportFailed, resourceImportSummary } = build(new Map());
+
+  const refused = {
+    ...catalogSkillItem("skill_MMMMMMMMMMMMMMMMMMMMMM", "refused"),
+    diagnostics: [importRefusalDiagnostic()],
+  };
+  const bare = catalogSkillItem("skill_NNNNNNNNNNNNNNNNNNNNNN", "bare");
+  const imported = {
+    ...catalogSkillItem("skill_OOOOOOOOOOOOOOOOOOOOOO", "imported"),
+    workflow_node_count: 5,
+    workflow_edge_count: 4,
+  };
+
+  assert.equal(resourceImportFailed(refused), true);
+  assert.equal(resourceImportFailed(bare), false);
+  assert.equal(resourceImportFailed(imported), false);
+  assert.equal(
+    resourceImportSummary(refused),
+    "0 nodes · 0 edges · import failed · WORKFLOW_NONE",
+  );
+  assert.equal(
+    resourceImportSummary(bare),
+    "0 nodes · 0 edges · no workflow declared",
+  );
+  assert.notEqual(
+    resourceImportSummary(refused),
+    resourceImportSummary(bare),
+    "a failed import and an empty Skill must not read identically",
+  );
+  assert.equal(
+    resourceImportSummary(imported),
+    "5 nodes · 4 edges",
+    "a successful import keeps the historical counts row",
+  );
+  assert.equal(
+    resourceImportFailed({ ...bare, omitted_diagnostic_count: 3 }),
+    true,
+    "diagnostics dropped by the publication bound still mean a failed import",
+  );
+});
+
+test("Skill search matches the path and source label, not only the name", async () => {
+  const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  assert.doesNotMatch(
+    editor,
+    /"No matching workspace Skills\."/u,
+    "the ambiguous failure text must be gone",
+  );
+  assert.match(
+    editor,
+    /resourceItems\.filter\(\(resource\) =>\s*resourceMatchesQuery\(resource, query\)\)/u,
+    "Quick Open and the explorer must share one index",
+  );
+
+  const build = await browserCatalogFunctions([
+    "resourceKey",
+    "resourceSearchText",
+    "resourceMatchesQuery",
+    "resourceEmptyMessage",
+  ]);
+  const { resourceMatchesQuery, resourceEmptyMessage, resourceSearchText } =
+    build(new Map());
+
+  // A repository Skill filed under development/playwright publishes the
+  // frontmatter name "automating-browser"; the directory is what a reader types.
+  const filed = {
+    type: "skill",
+    id: "skill_PPPPPPPPPPPPPPPPPPPPPP",
+    group: "workspace",
+    item: {
+      ...catalogSkillItem("skill_PPPPPPPPPPPPPPPPPPPPPP", "automating-browser", [
+        skillSource("repository-source", "repository"),
+      ]),
+      description: "Provides Playwright-based browser automation.",
+      path: "development/playwright/SKILL.md",
+    },
+  };
+
+  assert.equal(
+    resourceMatchesQuery(filed, "development/playwright"),
+    true,
+    "a Skill must be findable by the path it is filed under",
+  );
+  assert.equal(resourceMatchesQuery(filed, "repository-source"), true);
+  assert.equal(
+    resourceMatchesQuery(filed, "repository"),
+    true,
+    "the source kind is part of how a reader names a Skill's origin",
+  );
+  assert.equal(resourceMatchesQuery(filed, "automating-browser"), true);
+  assert.equal(resourceMatchesQuery(filed, "playwright-based"), true);
+  assert.equal(
+    resourceMatchesQuery(filed, "skill_pppppppppppppppppppppp"),
+    true,
+    "the opaque id shown on the row is also how a reader cites a Skill",
+  );
+  assert.equal(resourceMatchesQuery(filed, ""), true);
+  assert.equal(resourceMatchesQuery(filed, "no-such-skill"), false);
+  assert.match(resourceSearchText(filed), /development\/playwright\/SKILL\.md/u);
+
+  // The label index must not depend on a name conflict having been detected.
+  assert.equal(filed.item.name_conflict, false);
+
+  const session = {
+    type: "session",
+    id: "session_QQQQQQQQQQQQQQQQQQQQQQ",
+    group: "sessions",
+    localAlias: "S-QQQQQQQQQQQQQQQQQQQQQQ",
+    item: { provider: "codex", stream_kind: "rollout" },
+  };
+  assert.equal(resourceMatchesQuery(session, "rollout"), true);
+  assert.equal(resourceMatchesQuery(session, "s-qqqq"), true);
+  assert.equal(resourceMatchesQuery(session, "no-such-session"), false);
+
+  assert.equal(
+    resourceEmptyMessage("workspace Skills", "", 0),
+    "No workspace Skills were discovered.",
+  );
+  assert.equal(
+    resourceEmptyMessage("workspace Skills", "git-commit-pr", 32),
+    'No workspace Skills match "git-commit-pr" by name, description, ' +
+      "source label, or path.",
+  );
+  assert.notEqual(
+    resourceEmptyMessage("workspace Skills", "git-commit-pr", 32),
+    resourceEmptyMessage("workspace Skills", "", 0),
+    "an empty catalog and an unmatched query are different answers",
+  );
+});
+
+test("an open document contributes its real path to the Skill search index", async () => {
+  const build = await browserCatalogFunctions([
+    "resourceKey",
+    "resourceSearchText",
+    "resourceMatchesQuery",
+  ]);
+  const resource = {
+    type: "skill",
+    id: "legacy-artifact",
+    group: "workspace",
+    item: {
+      id: "legacy-artifact",
+      name: "Opened artifact",
+      description: "Artifact supplied on the AIR Workbench command line.",
+      source_labels: [],
+    },
+  };
+  const documents = new Map([
+    [
+      "skill:legacy-artifact",
+      { state: { sourcePath: "/repo/meta/skill-manager/SKILL.md" } },
+    ],
+  ]);
+  const { resourceMatchesQuery } = build(documents);
+
+  assert.equal(
+    resourceMatchesQuery(resource, "skill-manager"),
+    true,
+    "the path shown in the header must also be searchable",
+  );
+  assert.equal(
+    build(new Map()).resourceMatchesQuery(resource, "skill-manager"),
+    false,
+    "an unopened resource contributes no path it does not have",
+  );
+});

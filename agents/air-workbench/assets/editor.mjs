@@ -534,7 +534,11 @@ function renderGraph() {
     if (!overLimit) {
       element("graphCanvas").hidden = false;
       element("graphCanvas").replaceChildren(
-        create("p", "empty-state", "No recognized workflow steps."),
+        create(
+          "p",
+          "empty-state",
+          workflowAbsenceMessage(state.diagnostics),
+        ),
       );
     }
   } else if (!graphIsland) {
@@ -704,9 +708,12 @@ function renderInspector() {
     body.value = node.body;
     title.disabled = node.readOnly || !node.editableFields.includes("title");
     body.disabled = node.readOnly || !node.editableFields.includes("body");
-    element("nodeConfidence").textContent =
-      `${node.confidence.level}${node.confidence.reason ? ` — ${node.confidence.reason}` : ""}`;
+    element("nodeConfidence").textContent = confidenceSummary(node.confidence);
+    element("nodeConfidence").dataset.confidenceLevel = String(
+      node.confidence.level ?? "unknown",
+    );
     element("nodeProvenance").textContent = node.provenance;
+    element("nodeProvenance").dataset.provenance = String(node.provenance);
     element("nodeMapping").textContent =
       `title ${node.sourceMap.title ? "mapped" : "unmapped"}; ` +
       `body ${node.sourceMap.body ? "mapped" : "unmapped"}`;
@@ -761,9 +768,11 @@ function renderInspector() {
       traceSemantics?.heading ?? "Dependency inspector";
     element("selectionBadge").textContent =
       state.kind === "trace" ? "Evidence" : "Edge";
-    element("edgeIdentity").textContent =
-      `${edge.id} · ${edge.air_kind || edge.kind}`;
+    element("edgeIdentity").textContent = edgeIdentitySummary(edge);
     element("edgeProvenance").textContent = edge.provenance || "declared";
+    element("edgeProvenance").dataset.provenance = String(
+      edge.provenance || "declared",
+    );
     element("edgeTruth").textContent =
       traceSemantics?.truth ?? "Declared workflow dependency";
     const controls = edgeControlPolicy(state);
@@ -998,24 +1007,139 @@ function problemTarget(message) {
   return edge ? { type: "edge", id: edge.id } : null;
 }
 
-function renderValidation() {
-  const { errors, warnings, valid } = state.validation;
-  element("validationSummary").textContent = valid
+// An artifact diagnostic carries the engine's own severity. Validation rows are
+// authored by the editor, so they keep their fixed Error/Warning wording.
+function diagnosticSeverityLabel(severity) {
+  const value = String(severity ?? "").toLocaleLowerCase();
+  if (value === "error") return "Error";
+  if (value === "warning") return "Warning";
+  if (value === "info") return "Info";
+  return "Diagnostic";
+}
+
+// `targets` is either an opaque node/edge id or a source byte span. Only the id
+// form can be resolved to a workspace selection, so the span form is dropped
+// here and its row stays non-clickable rather than pointing at nothing.
+function diagnosticProblemRows(diagnostics) {
+  return (Array.isArray(diagnostics) ? diagnostics : []).map((entry) => ({
+    origin: "diagnostic",
+    type: diagnosticSeverityLabel(entry?.severity),
+    code: typeof entry?.code === "string" ? entry.code : "",
+    message:
+      typeof entry?.message === "string" && entry.message.length > 0
+        ? entry.message
+        : "The engine reported a diagnostic without a message.",
+    targets: (Array.isArray(entry?.targets) ? entry.targets : []).filter(
+      (target) => typeof target === "string" && target.length > 0,
+    ),
+  }));
+}
+
+function problemRows(validation, diagnostics) {
+  const errors = Array.isArray(validation?.errors) ? validation.errors : [];
+  const warnings = Array.isArray(validation?.warnings) ? validation.warnings : [];
+  return [
+    ...errors.map((message) => ({
+      origin: "validation",
+      type: "Error",
+      code: "",
+      message,
+      targets: [],
+    })),
+    ...warnings.map((message) => ({
+      origin: "validation",
+      type: "Warning",
+      code: "",
+      message,
+      targets: [],
+    })),
+    ...diagnosticProblemRows(diagnostics),
+  ];
+}
+
+function problemRowLabel(problem) {
+  const prefix = problem.code ? `${problem.type} · ${problem.code}` : problem.type;
+  return `${prefix}: ${problem.message}`;
+}
+
+function validationSummaryText(validation, diagnostics) {
+  const errors = Array.isArray(validation?.errors) ? validation.errors : [];
+  const warnings = Array.isArray(validation?.warnings) ? validation.warnings : [];
+  const reported = diagnosticProblemRows(diagnostics).length;
+  const base = validation?.valid
     ? warnings.length
       ? `Valid with ${warnings.length} warning${warnings.length === 1 ? "" : "s"}`
       : "Valid"
     : `${errors.length} validation error${errors.length === 1 ? "" : "s"}`;
-  const problems = [
-    ...errors.map((message) => ({ type: "Error", message })),
-    ...warnings.map((message) => ({ type: "Warning", message })),
-  ];
+  return reported
+    ? `${base} · ${reported} import diagnostic${reported === 1 ? "" : "s"}`
+    : base;
+}
+
+// The engine already explains why nothing was recognized; the canvas repeats
+// that explanation instead of leaving the absence unattributed.
+function workflowAbsenceMessage(diagnostics) {
+  const rows = diagnosticProblemRows(diagnostics);
+  const chosen =
+    rows.find((row) => row.type === "Error") ??
+    rows.find((row) => row.type === "Warning") ??
+    rows[0] ??
+    null;
+  if (!chosen) return "No recognized workflow steps.";
+  return chosen.code
+    ? `No recognized workflow steps. ${chosen.message} (${chosen.code})`
+    : `No recognized workflow steps. ${chosen.message}`;
+}
+
+// Every confidence level and every edge provenance is rendered from the value
+// itself, so a newly published level or an inferred edge reads truthfully
+// without a code change here.
+function confidenceSummary(confidence) {
+  const level = String(confidence?.level ?? "unknown");
+  const ruleId =
+    typeof confidence?.rule_id === "string" && confidence.rule_id.length > 0
+      ? confidence.rule_id
+      : "unattributed";
+  const reason =
+    typeof confidence?.reason === "string" ? confidence.reason.trim() : "";
+  return `${level} · rule ${ruleId}${reason ? ` — ${reason}` : ""}`;
+}
+
+function edgeIdentitySummary(edge) {
+  const kind = String(edge?.air_kind || edge?.kind || "sequence");
+  const ruleId =
+    typeof edge?.confidence?.rule_id === "string" &&
+    edge.confidence.rule_id.length > 0
+      ? edge.confidence.rule_id
+      : "unattributed";
+  return `${edge?.id} · ${kind} · rule ${ruleId}`;
+}
+
+function renderValidation() {
+  const problems = problemRows(state.validation, state.diagnostics);
+  element("validationSummary").textContent = validationSummaryText(
+    state.validation,
+    state.diagnostics,
+  );
   element("problemCount").textContent = String(problems.length);
   element("validationList").replaceChildren(
-    ...problems.map(({ type, message }) => {
+    ...problems.map((problem) => {
       const item = create("li");
-      const button = create("button", "problem-row", `${type}: ${message}`);
+      const button = create("button", "problem-row", problemRowLabel(problem));
       button.type = "button";
-      const target = problemTarget(message);
+      button.dataset.problemSeverity = problem.type;
+      button.dataset.problemOrigin = problem.origin;
+      const target =
+        problem.targets
+          .map((id) => {
+            if (state.nodes.some((node) => node.id === id)) {
+              return { type: "node", id };
+            }
+            return state.edges.some((edge) => edge.id === id)
+              ? { type: "edge", id }
+              : null;
+          })
+          .find(Boolean) ?? problemTarget(problem.message);
       button.disabled = !target;
       button.addEventListener("click", () => {
         if (target?.type === "node") selectNodeInWorkspace(target.id, "nodeTitle");
@@ -1027,7 +1151,8 @@ function renderValidation() {
       return item;
     }),
   );
-  element("validationDetails").open = !valid;
+  element("validationDetails").open =
+    !state.validation.valid || problems.length > 0;
   previousValidationSignature = validationSignature(state);
 }
 
@@ -1053,19 +1178,77 @@ function conflictSourceLabel(item) {
     .join(", ");
 }
 
+// A Skill is filed under its frontmatter `name`, which routinely differs from
+// the directory a reader searches for, so the index also carries every source
+// label, source kind, and whatever path spellings the catalog publishes.
+function resourceSearchText(resource) {
+  const item = resource?.item ?? {};
+  if (resource?.type !== "skill") {
+    return [item.provider, item.stream_kind, resource?.localAlias, resource?.id]
+      .filter((value) => typeof value === "string" && value.length > 0)
+      .join(" ");
+  }
+  const labels = Array.isArray(item.source_labels) ? item.source_labels : [];
+  return [
+    item.name,
+    item.description,
+    resource.id,
+    item.path,
+    item.relative_path,
+    ...(Array.isArray(item.paths) ? item.paths : []),
+    ...labels.flatMap((source) => [source?.label, source?.kind, source?.path]),
+    documents.get(resourceKey(resource))?.state?.sourcePath,
+  ]
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .join(" ");
+}
+
+function resourceMatchesQuery(resource, query) {
+  if (!query) return true;
+  return resourceSearchText(resource).toLocaleLowerCase().includes(query);
+}
+
+// "Nothing matched" and "nothing exists" are different answers; a reader who
+// cannot tell them apart cannot tell a typo from a missing Skill.
+function resourceEmptyMessage(scope, query, total) {
+  if (total === 0) return `No ${scope} were discovered.`;
+  if (!query) return `No ${scope} are available.`;
+  return (
+    `No ${scope} match "${query}" by name, description, ` +
+    "source label, or path."
+  );
+}
+
 function visibleResources() {
   const query = element("resourceSearch").value.trim().toLocaleLowerCase();
   if (!query) return resourceItems;
-  return resourceItems.filter((resource) => {
-    const searchable = resource.type === "skill"
-      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""} ${
-          conflictSourceLabel(resource.item)
-        }`
-      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""} ${
-        resource.localAlias ?? ""
-      }`;
-    return searchable.toLocaleLowerCase().includes(query);
-  });
+  return resourceItems.filter((resource) =>
+    resourceMatchesQuery(resource, query));
+}
+
+// A Skill with no declared workflow and a Skill whose import was refused both
+// publish 0/0. Only the diagnostics separate them.
+function resourceImportFailed(item) {
+  const nodes = Number(item?.workflow_node_count) || 0;
+  const edges = Number(item?.workflow_edge_count) || 0;
+  if (nodes > 0 || edges > 0) return false;
+  return (
+    diagnosticProblemRows(item?.diagnostics).length > 0 ||
+    Number(item?.omitted_diagnostic_count) > 0
+  );
+}
+
+function resourceImportSummary(item) {
+  const nodes = Number(item?.workflow_node_count) || 0;
+  const edges = Number(item?.workflow_edge_count) || 0;
+  const counts = `${nodes} nodes · ${edges} edges`;
+  if (nodes > 0 || edges > 0) return counts;
+  if (!resourceImportFailed(item)) return `${counts} · no workflow declared`;
+  const rows = diagnosticProblemRows(item?.diagnostics);
+  const worst = rows.find((row) => row.type === "Error") ?? rows[0] ?? null;
+  return worst?.code
+    ? `${counts} · import failed · ${worst.code}`
+    : `${counts} · import failed`;
 }
 
 function resourceButton(resource) {
@@ -1081,13 +1264,12 @@ function resourceButton(resource) {
     const item = resource.item;
     button.append(
       create("strong", "", item.name || "Unnamed skill"),
-      create(
-        "span",
-        "",
-        `${item.workflow_node_count} nodes · ${item.workflow_edge_count} edges`,
-      ),
+      create("span", "", resourceImportSummary(item)),
     );
     const badges = create("span", "resource-badges");
+    if (resourceImportFailed(item)) {
+      badges.append(create("span", "resource-badge", "import failed"));
+    }
     if (item.name_conflict) {
       badges.append(create("span", "resource-badge", "name conflict"));
       const sourceLabel = conflictSourceLabel(item);
@@ -1186,22 +1368,42 @@ function renderResources() {
     ".resource-tree .resource-row",
   );
   const focusedKey = focusedRow?.dataset.resourceKey;
+  const query = element("resourceSearch").value.trim();
   const visible = visibleResources();
   const skills = visible.filter((resource) => resource.type === "skill");
+  const total = (predicate) => resourceItems.filter(predicate).length;
   replaceResourceRows(
     element("workspaceSkillList"),
     skills.filter((resource) => resource.group === "workspace"),
-    "No matching workspace Skills.",
+    resourceEmptyMessage(
+      "workspace Skills",
+      query,
+      total(
+        (resource) =>
+          resource.type === "skill" && resource.group === "workspace",
+      ),
+    ),
   );
   replaceResourceRows(
     element("installedSkillList"),
     skills.filter((resource) => resource.group === "installed"),
-    "No matching installed Skills.",
+    resourceEmptyMessage(
+      "installed Skills",
+      query,
+      total(
+        (resource) =>
+          resource.type === "skill" && resource.group === "installed",
+      ),
+    ),
   );
   replaceResourceRows(
     element("sessionList"),
     visible.filter((resource) => resource.type === "session"),
-    "No metadata-only sessions available.",
+    resourceEmptyMessage(
+      "metadata-only sessions",
+      query,
+      total((resource) => resource.type === "session"),
+    ),
   );
   reconcileResourceTabStop(
     element("resourcesRegion").querySelector(".resource-tree"),
@@ -2021,21 +2223,14 @@ function renderQuickOpen() {
     "#quickOpenList .resource-row",
   );
   const focusedKey = focusedRow?.dataset.resourceKey;
-  const query = element("quickOpenSearch").value.trim().toLocaleLowerCase();
-  const matches = resourceItems.filter((resource) => {
-    const label = resource.type === "skill"
-      ? `${resource.item.name ?? ""} ${resource.item.description ?? ""} ${
-          conflictSourceLabel(resource.item)
-        }`
-      : `${resource.item.provider ?? ""} ${resource.item.stream_kind ?? ""} ${
-        resource.localAlias ?? ""
-      }`;
-    return !query || label.toLocaleLowerCase().includes(query);
-  });
+  const typed = element("quickOpenSearch").value.trim();
+  const query = typed.toLocaleLowerCase();
+  const matches = resourceItems.filter((resource) =>
+    resourceMatchesQuery(resource, query));
   replaceResourceRows(
     element("quickOpenList"),
     matches,
-    "No matching local resource.",
+    resourceEmptyMessage("local resources", typed, resourceItems.length),
   );
   reconcileResourceTabStop(
     element("quickOpenList"),
@@ -2660,12 +2855,15 @@ async function loadLegacyArtifact({ preserveResources = false } = {}) {
       source_labels: [],
       exact_copy: false,
       name_conflict: false,
+      diagnostics: [],
+      omitted_diagnostic_count: 0,
     },
   };
   const entry = newDocument(resource, payload);
   if (preserveResources) commandLineResource = resource;
   resource.item.workflow_node_count = entry.state.nodes.length;
   resource.item.workflow_edge_count = entry.state.edges.length;
+  resource.item.diagnostics = entry.state.diagnostics;
   resourceItems = preserveResources
     ? [resource, ...resourceItems]
     : [resource];

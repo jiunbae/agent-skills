@@ -830,6 +830,32 @@ fieldset {
   text-align: left;
 }
 
+/* A problem with no resolvable target is still the reason the artifact looks
+   the way it does, so it stays fully legible instead of dimming out. */
+#validationList button:disabled {
+  color: var(--ink);
+  opacity: 1;
+  cursor: default;
+}
+
+#validationList button[data-problem-severity="Error"] {
+  color: var(--danger);
+}
+
+#validationList button[data-problem-severity="Warning"],
+#validationList button[data-problem-severity="Diagnostic"] {
+  color: var(--warning);
+}
+
+/* The level and the provenance are already spelled out in the text; colour is
+   a redundant cue that the reading is uncertain, never the only cue. */
+#nodeConfidence[data-confidence-level="heuristic"],
+#nodeConfidence[data-confidence-level="unknown"],
+#nodeProvenance[data-provenance="inferred"],
+#edgeProvenance[data-provenance="inferred"] {
+  color: var(--warning);
+}
+
 .trace-header,
 .drawer-header {
   justify-content: space-between;
