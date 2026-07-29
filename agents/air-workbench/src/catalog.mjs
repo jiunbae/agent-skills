@@ -207,6 +207,20 @@ function sanitizeLabel(value, fallback) {
   return byteTruncate(label.replace(/\s+/gu, " "), 64) || fallback;
 }
 
+// RPF-168: the default label used to be `${kind}-${index + 1}` — an ordinal
+// slot. `source_label` is what joins a published item back to the root that
+// supplied it (RPF-156 retention, and the Workbench's own item-to-root join), so
+// an ordinal answers *which position did this root occupy* while every consumer
+// asks *was the root that supplied this item observed*. Reordering roots between
+// generations then attributed an item from a dropped root to a clean one and
+// reported a Skill that is still on disk as deleted, at `truncated: false`.
+// Every other root kind already derives a stable label from its own identity;
+// this makes the fallback do the same, binding it to the resolved path so it
+// survives reordering, insertion and removal.
+function defaultRootLabel(kind, path) {
+  return `${kind}-${sha256(Buffer.from(resolve(path), "utf8")).slice(0, 16)}`;
+}
+
 function pluginSourceLabel(marketplace, plugin) {
   const label = `enabled-plugin:${marketplace}:${plugin}`;
   if (Buffer.byteLength(label, "utf8") <= 64) return label;
@@ -258,7 +272,7 @@ function normalizeRoot(root, index) {
   return freezeRoot({
     path: resolve(root.path),
     kind,
-    label: sanitizeLabel(root.label, `${kind}-${index + 1}`),
+    label: sanitizeLabel(root.label, defaultRootLabel(kind, root.path)),
     ...(kind === "repository" && root.grouped === true
       ? { grouped: true }
       : {}),
@@ -1025,12 +1039,18 @@ export function resolveSkillRoots({
     });
   }
 
-  for (const [index, root] of explicitRoots.entries()) {
+  for (const root of explicitRoots) {
     if (!root || typeof root.path !== "string") continue;
     pushUniqueRoot(roots, seen, {
       path: resolve(root.path),
       kind: root.kind === "enabled-plugin" ? "enabled-plugin" : "explicit",
-      label: sanitizeLabel(root.label, `explicit-${index + 1}`),
+      label: sanitizeLabel(
+        root.label,
+        defaultRootLabel(
+          root.kind === "enabled-plugin" ? "enabled-plugin" : "explicit",
+          root.path,
+        ),
+      ),
     });
   }
 

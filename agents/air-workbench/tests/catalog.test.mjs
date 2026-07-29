@@ -91,8 +91,42 @@ test("standard roots are caller-owned, bounded, and exclude plugin caches", () =
       grouped: true,
     },
   );
-  assert.ok(roots.some((root) => root.label === "explicit-1"));
+  // The rejected `../../private` label falls back to a stable path-derived
+  // identity, never to the root's ordinal position; see the reordering test.
+  const fallback = roots.find((root) => root.path === "/extra/skills");
+  assert.equal(fallback.kind, "explicit");
+  assert.match(fallback.label, /^explicit-[a-f0-9]{16}$/u);
   assert.equal(roots.some((root) => root.path.includes("plugins/cache")), false);
+});
+
+test("a root's default source label is its identity, not its ordinal slot", () => {
+  const alpha = { path: "/extra/alpha" };
+  const beta = { path: "/extra/beta" };
+  const labelsFor = (explicitRoots) =>
+    new Map(
+      resolveSkillRoots({
+        cwd: "/workspace/project",
+        userHome: "/home/user",
+        explicitRoots,
+      })
+        .filter((root) => root.kind === "explicit")
+        .map((root) => [root.path, root.label]),
+    );
+
+  const first = labelsFor([alpha, beta]);
+  const reordered = labelsFor([beta, alpha]);
+  const withoutAlpha = labelsFor([beta]);
+
+  // `source_label` is what joins a published item back to the root that supplied
+  // it. An ordinal answers "which slot did this root occupy" while every
+  // consumer asks "was the root that supplied this item observed", so swapping
+  // two roots used to attribute an item from a dropped root to a clean one and
+  // report a Skill that is still on disk as deleted (RPF-168).
+  assert.equal(first.get("/extra/alpha"), reordered.get("/extra/alpha"));
+  assert.equal(first.get("/extra/beta"), reordered.get("/extra/beta"));
+  assert.notEqual(first.get("/extra/alpha"), first.get("/extra/beta"));
+  // Removing a root must not relabel the survivor either.
+  assert.equal(first.get("/extra/beta"), withoutAlpha.get("/extra/beta"));
 });
 
 test("enabled-plugin resolver admits only configured or marked unambiguous roots", async (t) => {
