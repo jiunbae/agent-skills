@@ -2781,3 +2781,138 @@ test("a link a root does walk is followed and vouched for by that root", async (
   assert.equal(third.items[0].replaces_id, second.items[0].id);
   assert.equal(JSON.stringify(third).includes(directory), false);
 });
+
+test("recorded root evidence always costs lineage authority in the same scan", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-evidence-authority-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const root = join(directory, "skills");
+  const changing = join(root, "real", "SKILL.md");
+  await put(changing, skill("ev-real", "Before"));
+  const catalog = createSkillCatalog({
+    roots: [{ label: "ev", path: root }],
+    randomIdBytes: ids(),
+  });
+
+  // A clean prior scan, so the only thing that can suppress lineage later is
+  // the evidence introduced between the two scans.
+  const before = await catalog.initialize();
+  assert.equal(before.truncated, false);
+  assert.deepEqual(before.limit_codes, []);
+  assert.deepEqual(before.roots.map((state) => state.status), ["ready"]);
+  assert.deepEqual(before.roots[0].diagnostics, []);
+  assert.equal(before.roots[0].omitted_diagnostic_count, 0);
+  const priorId = before.items[0].id;
+
+  await writeFile(changing, skill("ev-real", "Middle"));
+  const clean = await catalog.refresh();
+  assert.deepEqual(clean.roots[0].diagnostics, []);
+  assert.equal(clean.items[0].replaces_id, priorId);
+  const cleanId = clean.items[0].id;
+
+  // Now a refusal: a directory standing where a SKILL.md would be read. It
+  // records root evidence and sets no bound at all, which is what makes this a
+  // clean statement about authority rather than about bounds.
+  await mkdir(join(root, "impostor", "SKILL.md"), { recursive: true });
+  await writeFile(changing, skill("ev-real", "After!"));
+  const refused = await catalog.refresh();
+
+  assert.equal(refused.truncated, false);
+  assert.deepEqual(refused.limit_codes, []);
+  assert.deepEqual(refused.roots.map((state) => state.status), ["ready"]);
+  assert.deepEqual(
+    refused.roots[0].diagnostics.map((entry) => entry.code),
+    ["AIR_CATALOG_SPECIAL_FILE"],
+  );
+  assert.equal(refused.roots[0].omitted_diagnostic_count, 0);
+  // The invariant, stated as the caller observes it: a root that published
+  // evidence of something it refused to read cannot also vouch that its
+  // observation was complete. `rootDiagnostic` settles both in one statement,
+  // and scanCatalog re-checks the pair before any consumer sees the result, so
+  // a future refusal path that records evidence and forgets the second half
+  // fails conservatively instead of silently republishing lineage.
+  assert.notEqual(refused.items[0].id, cleanId);
+  assert.ok(refused.items.every((item) => !("replaces_id" in item)));
+  assert.equal(JSON.stringify(refused).includes(directory), false);
+
+  // Self-correcting: removing the refused entry restores a complete
+  // observation, and lineage returns one clean scan later.
+  await rm(join(root, "impostor"), { recursive: true, force: true });
+  const recovering = await catalog.refresh();
+  assert.deepEqual(recovering.roots[0].diagnostics, []);
+  await writeFile(changing, skill("ev-real", "Restored"));
+  const recovered = await catalog.refresh();
+  assert.deepEqual(recovered.roots[0].diagnostics, []);
+  assert.equal(recovered.items[0].replaces_id, recovering.items[0].id);
+});
+
+test("absent roots and published bounds record no evidence and cost no authority", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "air-no-evidence-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // Guard one, the case every user without a given provider directory hits on
+  // their very first scan: an optional root that never existed is `missing`
+  // with its authority intact. It records no evidence, so it must not be read
+  // as a refusal — lineage has to survive it.
+  const present = join(directory, "present");
+  const changing = join(present, "real", "SKILL.md");
+  await put(changing, skill("nv-real", "Before"));
+  const withAbsent = createSkillCatalog({
+    roots: [
+      { label: "nv-present", path: present },
+      { label: "nv-absent", path: join(directory, "never-created") },
+    ],
+    randomIdBytes: ids(),
+  });
+  const first = await withAbsent.initialize();
+  assert.deepEqual(first.roots.map((state) => state.status), [
+    "ready",
+    "missing",
+  ]);
+  assert.equal(first.truncated, false);
+  assert.deepEqual(first.limit_codes, []);
+  for (const state of first.roots) {
+    assert.deepEqual(state.diagnostics, []);
+    assert.equal(state.omitted_diagnostic_count, 0);
+  }
+  await writeFile(changing, skill("nv-real", "After!"));
+  const second = await withAbsent.refresh();
+  assert.deepEqual(second.roots.map((state) => state.status), [
+    "ready",
+    "missing",
+  ]);
+  assert.equal(second.items[0].replaces_id, first.items[0].id);
+
+  // Guard two: bounds and authority are orthogonal. A bounded scan publishes a
+  // typed limit and a `partial` root, and records no root evidence whatsoever.
+  // Any rule that inferred an authority cost from a root's status, or a
+  // refusal from a bound, would misread all three of these.
+  for (const [label, limits, code] of [
+    ["depth", { maxDepth: 1 }, "AIR_CATALOG_DEPTH_LIMIT"],
+    ["entries", { maxEntries: 2 }, "AIR_CATALOG_ENTRY_LIMIT"],
+    ["records", { maxRecords: 1 }, "AIR_CATALOG_RECORD_LIMIT"],
+  ]) {
+    const root = join(directory, `bounded-${label}`);
+    await put(join(root, "a", "SKILL.md"), skill(`nv-${label}-a`, "A"));
+    await put(join(root, "b", "SKILL.md"), skill(`nv-${label}-b`, "B"));
+    await put(join(root, "a", "deep", "SKILL.md"), skill(`nv-${label}-d`, "D"));
+    const bounded = createSkillCatalog({
+      roots: [{ label: `nv-${label}`, path: root }],
+      limits,
+      randomIdBytes: ids(),
+    });
+    const snapshot = await bounded.initialize();
+    assert.equal(snapshot.truncated, true, label);
+    assert.ok(snapshot.limit_codes.includes(code), label);
+    assert.deepEqual(
+      snapshot.roots.map((state) => state.status),
+      ["partial"],
+      label,
+    );
+    for (const state of snapshot.roots) {
+      assert.deepEqual(state.diagnostics, [], label);
+      assert.equal(state.omitted_diagnostic_count, 0, label);
+    }
+    assert.equal(JSON.stringify(snapshot).includes(directory), false, label);
+  }
+});

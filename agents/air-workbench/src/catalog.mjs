@@ -1155,7 +1155,13 @@ function importSummary(bytes, syntheticId) {
   }
 }
 
-function rootDiagnostic(rootState, code, message, severity = "warning") {
+// Recording root evidence and publishing what it costs are one statement, so
+// no branch can do the first and forget the second — the same shape as
+// `markIncomplete` in sessions.mjs. Every caller here is a refusal: the root
+// was not observed as completely as it was enumerated, and that is exactly
+// what `authorityComplete` reports.
+function rootDiagnostic(state, rootState, code, message, severity = "warning") {
+  state.authorityComplete = false;
   if (rootState.diagnostics.length < 20) {
     rootState.diagnostics.push(diagnostic(code, message, severity));
   } else {
@@ -1164,9 +1170,9 @@ function rootDiagnostic(rootState, code, message, severity = "warning") {
 }
 
 function markRootAuthorityPartial(rootState, state) {
-  state.authorityComplete = false;
   rootState.status = "partial";
   rootDiagnostic(
+    state,
     rootState,
     "AIR_CATALOG_ROOT_UNREADABLE",
     "Configured Skill root authority changed or could not be revalidated.",
@@ -1274,18 +1280,18 @@ async function canonicalRoots(roots, state) {
       const info = await beforeDeadline(lstat(root.path), state);
       discovered = true;
       if (info.isSymbolicLink()) {
-        state.authorityComplete = false;
         rootState.status = "invalid";
         rootDiagnostic(
+          state,
           rootState,
           "AIR_CATALOG_ROOT_SYMLINK",
           "Configured Skill roots must not be symbolic links.",
           "error",
         );
       } else if (!info.isDirectory()) {
-        state.authorityComplete = false;
         rootState.status = "invalid";
         rootDiagnostic(
+          state,
           rootState,
           "AIR_CATALOG_ROOT_NOT_DIRECTORY",
           "Configured Skill root is not a directory.",
@@ -1315,9 +1321,9 @@ async function canonicalRoots(roots, state) {
       } else if (discovered) {
         markRootAuthorityPartial(rootState, state);
       } else {
-        state.authorityComplete = false;
         rootState.status = "unreadable";
         rootDiagnostic(
+          state,
           rootState,
           "AIR_CATALOG_ROOT_UNREADABLE",
           "Configured Skill root is not readable.",
@@ -1414,7 +1420,6 @@ async function safeReadCandidate(path, allowedRoot, state) {
 }
 
 function candidateError(rootState, error, state) {
-  state.authorityComplete = false;
   const known = new Set([
     "AIR_CATALOG_FILE_SYMLINK",
     "AIR_CATALOG_SPECIAL_FILE",
@@ -1433,7 +1438,7 @@ function candidateError(rootState, error, state) {
     AIR_CATALOG_IDENTITY_CHANGED: "A SKILL.md entry changed during inspection.",
     AIR_CATALOG_FILE_UNREADABLE: "A SKILL.md entry could not be read safely.",
   };
-  rootDiagnostic(rootState, code, messages[code], "error");
+  rootDiagnostic(state, rootState, code, messages[code], "error");
 }
 
 // Would `root`'s own walkRoot publish `join(target, "SKILL.md")`? Containment
@@ -1474,8 +1479,8 @@ async function maybeReadSkillDirectoryLink(
     if (!info.isDirectory()) {
       // A refused candidate leaves this root short of a complete observation,
       // exactly as candidateError treats the same code.
-      state.authorityComplete = false;
       rootDiagnostic(
+        state,
         root.rootState,
         "AIR_CATALOG_FILE_SYMLINK",
         "A final SKILL.md symbolic link was refused.",
@@ -1483,8 +1488,8 @@ async function maybeReadSkillDirectoryLink(
       return null;
     }
   } catch {
-    state.authorityComplete = false;
     rootDiagnostic(
+      state,
       root.rootState,
       "AIR_CATALOG_SYMLINK_REFUSED",
       "A broken or unreadable directory symbolic link was refused.",
@@ -1518,8 +1523,8 @@ async function maybeReadSkillDirectoryLink(
     // Refusing to follow the link means whatever it holds is unobserved; a
     // later generation that resolves differently must not read the gap as a
     // deletion.
-    state.authorityComplete = false;
     rootDiagnostic(
+      state,
       root.rootState,
       "AIR_CATALOG_SYMLINK_OUTSIDE_ROOTS",
       "A directory symbolic link outside other configured roots was refused.",
@@ -1556,9 +1561,9 @@ async function maybeReadSkillDirectoryLink(
 }
 
 function markDirectoryAuthorityPartial(root, state) {
-  state.authorityComplete = false;
   root.rootState.status = "partial";
   rootDiagnostic(
+    state,
     root.rootState,
     "AIR_CATALOG_DIRECTORY_UNREADABLE",
     "A Skill directory could not be inspected.",
@@ -1651,8 +1656,8 @@ async function walkRoot(root, allRoots, state) {
             current.depth === 1 ||
             (current.depth === 0 && REPOSITORY_SKILL_GROUPS.has(entry.name))
           ) {
-            state.authorityComplete = false;
             rootDiagnostic(
+              state,
               root.rootState,
               "AIR_CATALOG_SYMLINK_REFUSED",
               "A symbolic link inside a grouped root was refused.",
@@ -2067,6 +2072,30 @@ async function scanCatalog({
       }
       break;
     }
+  }
+  // Backstop, not a normal path: every refusal that records root evidence
+  // settles authority inside `rootDiagnostic` itself, so at HEAD this cannot
+  // fire. It is here for evidence that arrives another way — a rootState seeded
+  // with pre-populated diagnostics, or a future branch that pushes one
+  // directly — which would otherwise publish a refusal and still claim a
+  // complete observation. That is the fail-open shape this family keeps
+  // producing; the check converts it into a conservative, self-correcting one.
+  //
+  // Only the evidence is read. `status` is not: an absent optional root is
+  // `missing` with its authority intact, which every user without a given root
+  // hits on the first scan. `truncated` is not: bounds and authority are
+  // orthogonal by design, every bounded scan sets `truncated` without costing
+  // authority, and the two are composed only at the return.
+  if (
+    state.authorityComplete &&
+    state.rootStates.some((rootState) => (
+      rootState.diagnostics.length > 0 || rootState.omittedDiagnostics > 0
+    ))
+  ) {
+    // Never throw, and never markTruncated: a conservatism bug must not become
+    // a catalog outage, the records already collected are unaffected, and
+    // faking a bound is exactly what RPF-140 and RPF-141 removed.
+    state.authorityComplete = false;
   }
   const { items, internals } = buildItems(
     state,
