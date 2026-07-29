@@ -1739,11 +1739,71 @@ function withoutReplacementClaim(resource) {
   return { ...resource, item };
 }
 
-function mergeIncompleteSkillResources(previous, incoming) {
+// A published SkillCatalogItem carries `source_labels[] = {label, kind, …}` and
+// a published SkillCatalogRoot carries `{source_label, source_kind, …}`; the
+// server fills both from the same root descriptor, and a linked record is
+// attributed to the link HOLDER's root, so this pair is the item-to-root join.
+function skillCatalogRootKey(kind, label) {
+  return `${typeof kind === "string" ? kind : ""} ${
+    typeof label === "string" ? label : ""
+  }`;
+}
+
+// Per-root half of skillCatalogIsIncomplete. The two must stay in agreement:
+// this decides WHICH roots were incompletely observed, that one decides
+// WHETHER any root was.
+function skillCatalogRootIsIncomplete(root) {
+  return (
+    ["invalid", "partial", "unreadable"].includes(root?.status) ||
+    (Array.isArray(root?.diagnostics) && root.diagnostics.length > 0) ||
+    Number(root?.omitted_diagnostic_count) > 0
+  );
+}
+
+// Returns null when the loss cannot be attributed to any single root, which
+// means retention has to stay catalog-wide: `truncated` is a catalog-wide bound
+// and a catalog that published no roots offers nothing to attribute against.
+function incompleteSkillCatalogScope(catalog) {
+  if (!catalog || Boolean(catalog.truncated)) return null;
+  const roots = Array.isArray(catalog.roots) ? catalog.roots : [];
+  if (roots.length === 0) return null;
+  const published = new Set();
+  const incomplete = new Set();
+  for (const root of roots) {
+    const key = skillCatalogRootKey(root?.source_kind, root?.source_label);
+    published.add(key);
+    if (skillCatalogRootIsIncomplete(root)) incomplete.add(key);
+  }
+  return { published, incomplete };
+}
+
+function skillResourceNeedsRetention(resource, scope) {
+  if (!scope) return true;
+  const sources = Array.isArray(resource?.item?.source_labels)
+    ? resource.item.source_labels
+    : [];
+  let resolved = false;
+  for (const source of sources) {
+    const key = skillCatalogRootKey(source?.kind, source?.label);
+    // Any incompletely observed source root is enough: a multi-label item may
+    // still exist behind the part that was not read.
+    if (scope.incomplete.has(key)) return true;
+    if (scope.published.has(key)) resolved = true;
+  }
+  // Unknown provenance is not proof of complete observation.
+  return !resolved;
+}
+
+function mergeIncompleteSkillResources(previous, incoming, catalog) {
+  const scope = incompleteSkillCatalogScope(catalog);
   const incomingKeys = new Set(incoming.map(resourceKey));
   return [
     ...incoming,
-    ...previous.filter((resource) => !incomingKeys.has(resourceKey(resource))),
+    ...previous.filter(
+      (resource) =>
+        !incomingKeys.has(resourceKey(resource)) &&
+        skillResourceNeedsRetention(resource, scope),
+    ),
   ].map(withoutReplacementClaim);
 }
 
@@ -1895,6 +1955,7 @@ async function loadCatalogs({ refresh = false } = {}) {
         ? mergeIncompleteSkillResources(
             skillCatalogResources,
             incomingSkillResources,
+            skills,
           )
         : incomingSkillResources;
     if (skillsResult.status === "fulfilled") {

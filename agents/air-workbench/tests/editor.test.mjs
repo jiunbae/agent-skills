@@ -299,7 +299,10 @@ function symlinkRefusalDiagnostic() {
   };
 }
 
-function catalogSkillItem(id, name) {
+function catalogSkillItem(id, name, sourceLabels) {
+  const source_labels = sourceLabels ?? [
+    { label: "project", kind: "project", locations: 1, linked_locations: 0 },
+  ];
   return {
     id,
     name,
@@ -308,16 +311,93 @@ function catalogSkillItem(id, name) {
     byte_count: 16,
     workflow_node_count: 0,
     workflow_edge_count: 0,
-    source_labels: [
-      { label: "project", kind: "project", locations: 1, linked_locations: 0 },
-    ],
-    location_count: 1,
+    source_labels,
+    location_count: source_labels.length,
     exact_copy: false,
     name_conflict: false,
     stale: false,
     diagnostics: [],
     omitted_diagnostic_count: 0,
   };
+}
+
+// A published SkillSourceLabel on an item and a published SkillCatalogRoot are
+// filled from the same root descriptor, so {label, kind} joins to
+// {source_label, source_kind}. These helpers keep the two sides in lockstep.
+function skillSource(label, kind, { linked = 0 } = {}) {
+  return { label, kind, locations: 1, linked_locations: linked };
+}
+
+function skillCatalogRoot(label, kind, { diagnostics = [], omitted = 0, status = "ready", records = 0 } = {}) {
+  return {
+    source_label: label,
+    source_kind: kind,
+    status,
+    record_count: records,
+    diagnostics,
+    omitted_diagnostic_count: omitted,
+  };
+}
+
+function multiRootCatalog({ roots, items = [], truncated = false }) {
+  return {
+    generation: 2,
+    truncated,
+    limit_codes: [],
+    roots,
+    item_count: items.length,
+    items,
+  };
+}
+
+const CATALOG_RETENTION_FUNCTIONS = [
+  "resourceKey",
+  "resourceSourceKind",
+  "normalizeSkillResources",
+  "skillCatalogIsIncomplete",
+  "withoutReplacementClaim",
+  "skillCatalogRootKey",
+  "skillCatalogRootIsIncomplete",
+  "incompleteSkillCatalogScope",
+  "skillResourceNeedsRetention",
+  "mergeIncompleteSkillResources",
+];
+
+// Mirrors the loadCatalogs() decision: normalize, test completeness, merge only
+// when incomplete, then mark documents. Returns the same handles every
+// retention test needs.
+async function catalogRetentionHarness(previousItems) {
+  const documents = new Map();
+  const build = await browserCatalogFunctions([
+    ...CATALOG_RETENTION_FUNCTIONS,
+    "markChangedDocuments",
+  ]);
+  const api = build(documents);
+  const previousResources = api.normalizeSkillResources({
+    items: previousItems,
+  });
+  for (const resource of previousResources) {
+    documents.set(api.resourceKey(resource), {
+      resource,
+      stale: false,
+      removed: false,
+      loadedContentHash: resource.item.content_hash,
+    });
+  }
+  const generation = (catalog) => {
+    const incoming = api.normalizeSkillResources(catalog);
+    const incomplete = api.skillCatalogIsIncomplete(catalog);
+    const nextResources = incomplete
+      ? api.mergeIncompleteSkillResources(previousResources, incoming, catalog)
+      : incoming;
+    api.markChangedDocuments(nextResources);
+    return { incomplete, nextResources };
+  };
+  const state = (item) => {
+    const key = api.resourceKey({ type: "skill", id: item.id });
+    return { key, entry: documents.get(key) };
+  };
+  return { ...api, documents, previousResources, generation, state };
 }
 
 test("no-op candidate keeps the exact imported bytes", () => {
@@ -2549,12 +2629,7 @@ test("a clean catalog with no diagnostics stays complete", async () => {
 test("a refused subtree retains open Skills instead of reporting deletions", async () => {
   const documents = new Map();
   const build = await browserCatalogFunctions([
-    "resourceKey",
-    "resourceSourceKind",
-    "normalizeSkillResources",
-    "skillCatalogIsIncomplete",
-    "withoutReplacementClaim",
-    "mergeIncompleteSkillResources",
+    ...CATALOG_RETENTION_FUNCTIONS,
     "markChangedDocuments",
   ]);
   const {
@@ -2614,4 +2689,248 @@ test("a refused subtree retains open Skills instead of reporting deletions", asy
   );
   assert.equal(documents.get(unobservedKey).stale, false);
   assert.equal(typeof withoutReplacementClaim, "function");
+});
+
+function danglingSymlinkDiagnostic() {
+  return {
+    severity: "warning",
+    code: "AIR_CATALOG_SYMLINK_REFUSED",
+    message: "A symbolic link inside a grouped root was refused.",
+  };
+}
+
+test("a deletion from a clean root is reported while another root is refused", async () => {
+  const alpha = catalogSkillItem("skill_AAAAAAAAAAAAAAAAAAAAAA", "alpha", [
+    skillSource("project", "project"),
+  ]);
+  const beta = catalogSkillItem("skill_BBBBBBBBBBBBBBBBBBBBBB", "beta", [
+    skillSource("user", "user"),
+  ]);
+  const harness = await catalogRetentionHarness([alpha, beta]);
+
+  const { incomplete, nextResources } = harness.generation(
+    multiRootCatalog({
+      roots: [
+        skillCatalogRoot("project", "project", {
+          diagnostics: [danglingSymlinkDiagnostic()],
+          records: 1,
+        }),
+        skillCatalogRoot("user", "user", { records: 0 }),
+      ],
+      items: [alpha],
+    }),
+  );
+
+  assert.equal(
+    incomplete,
+    true,
+    "a dangling link keeps the catalog a partial observation",
+  );
+  const beta_ = harness.state(beta);
+  assert.equal(
+    nextResources.some(
+      (resource) => harness.resourceKey(resource) === beta_.key,
+    ),
+    false,
+    "a Skill deleted from a completely observed root must not be retained",
+  );
+  assert.equal(
+    beta_.entry.removed,
+    true,
+    "a deletion from a clean root stays a deletion when a different root is refused",
+  );
+  assert.equal(beta_.entry.stale, true);
+  assert.equal(harness.state(alpha).entry.removed, false);
+});
+
+test("a deletion from the refused root itself stays retained", async () => {
+  const alpha = catalogSkillItem("skill_AAAAAAAAAAAAAAAAAAAAAA", "alpha", [
+    skillSource("project", "project"),
+  ]);
+  const beta = catalogSkillItem("skill_BBBBBBBBBBBBBBBBBBBBBB", "beta", [
+    skillSource("project", "project"),
+  ]);
+  const harness = await catalogRetentionHarness([alpha, beta]);
+
+  const { incomplete, nextResources } = harness.generation(
+    multiRootCatalog({
+      roots: [
+        skillCatalogRoot("project", "project", {
+          diagnostics: [danglingSymlinkDiagnostic()],
+          records: 1,
+        }),
+      ],
+      items: [alpha],
+    }),
+  );
+
+  assert.equal(incomplete, true);
+  const beta_ = harness.state(beta);
+  assert.ok(
+    nextResources.some(
+      (resource) => harness.resourceKey(resource) === beta_.key,
+    ),
+    "the only root was incompletely observed, so its disappearances stay unproven",
+  );
+  assert.equal(
+    beta_.entry.removed,
+    false,
+    "the conservative outcome holds when the vanished Skill's own root is refused",
+  );
+});
+
+test("an item from the root carrying diagnostics is still retained", async () => {
+  const clean = catalogSkillItem("skill_CCCCCCCCCCCCCCCCCCCCCC", "clean", [
+    skillSource("user", "user"),
+  ]);
+  const behindTheLink = catalogSkillItem(
+    "skill_DDDDDDDDDDDDDDDDDDDDDD",
+    "behind-the-refused-symlink",
+    [skillSource("project", "project", { linked: 1 })],
+  );
+  const harness = await catalogRetentionHarness([clean, behindTheLink]);
+
+  const { nextResources } = harness.generation(
+    multiRootCatalog({
+      roots: [
+        skillCatalogRoot("project", "project", {
+          diagnostics: [danglingSymlinkDiagnostic()],
+          records: 0,
+        }),
+        skillCatalogRoot("user", "user", { records: 1 }),
+      ],
+      items: [clean],
+    }),
+  );
+
+  const linked = harness.state(behindTheLink);
+  assert.ok(
+    nextResources.some(
+      (resource) => harness.resourceKey(resource) === linked.key,
+    ),
+    "a linked record carries the link holder's label, which is the refused root",
+  );
+  assert.equal(
+    linked.entry.removed,
+    false,
+    "a Skill that was merely not looked at must never be reported as deleted",
+  );
+  assert.equal(linked.entry.stale, false);
+});
+
+test("unresolvable item provenance is retained", async () => {
+  const known = catalogSkillItem("skill_EEEEEEEEEEEEEEEEEEEEEE", "known", [
+    skillSource("user", "user"),
+  ]);
+  const orphan = catalogSkillItem("skill_FFFFFFFFFFFFFFFFFFFFFF", "orphan", [
+    skillSource("detached", "explicit"),
+  ]);
+  const noLabels = catalogSkillItem(
+    "skill_GGGGGGGGGGGGGGGGGGGGGG",
+    "no-labels",
+    [],
+  );
+  const harness = await catalogRetentionHarness([known, orphan, noLabels]);
+
+  harness.generation(
+    multiRootCatalog({
+      roots: [
+        skillCatalogRoot("project", "project", {
+          diagnostics: [danglingSymlinkDiagnostic()],
+        }),
+        skillCatalogRoot("user", "user", { records: 1 }),
+      ],
+      items: [known],
+    }),
+  );
+
+  assert.equal(
+    harness.state(orphan).entry.removed,
+    false,
+    "an item whose source root is not published at all has unknown provenance",
+  );
+  assert.equal(
+    harness.state(noLabels).entry.removed,
+    false,
+    "an item with no source label at all cannot be proven observed",
+  );
+});
+
+test("a fully clean catalog still reports deletions", async () => {
+  const kept = catalogSkillItem("skill_HHHHHHHHHHHHHHHHHHHHHH", "kept", [
+    skillSource("project", "project"),
+  ]);
+  const gone = catalogSkillItem("skill_IIIIIIIIIIIIIIIIIIIIII", "gone", [
+    skillSource("user", "user"),
+  ]);
+  const harness = await catalogRetentionHarness([kept, gone]);
+
+  const catalog = multiRootCatalog({
+    roots: [
+      skillCatalogRoot("project", "project", { records: 1 }),
+      skillCatalogRoot("user", "user", { records: 0 }),
+    ],
+    items: [kept],
+  });
+  const { incomplete } = harness.generation(catalog);
+
+  assert.equal(incomplete, false);
+  assert.equal(harness.state(gone).entry.removed, true);
+  assert.equal(harness.state(kept).entry.removed, false);
+
+  const scope = harness.incompleteSkillCatalogScope(catalog);
+  assert.equal(scope.incomplete.size, 0);
+  assert.equal(scope.published.size, 2);
+
+  // The per-root predicate and the catalog-wide one must never disagree.
+  for (const root of [
+    skillCatalogRoot("a", "user"),
+    skillCatalogRoot("a", "user", { status: "invalid" }),
+    skillCatalogRoot("a", "user", { status: "partial" }),
+    skillCatalogRoot("a", "user", { status: "unreadable" }),
+    skillCatalogRoot("a", "user", { status: "missing" }),
+    skillCatalogRoot("a", "user", { diagnostics: [danglingSymlinkDiagnostic()] }),
+    skillCatalogRoot("a", "user", { omitted: 2 }),
+  ]) {
+    assert.equal(
+      harness.skillCatalogRootIsIncomplete(root),
+      harness.skillCatalogIsIncomplete({ truncated: false, roots: [root] }),
+      `per-root and catalog-wide completeness disagree for status ${root.status}`,
+    );
+  }
+});
+
+test("a truncated catalog keeps retention catalog-wide", async () => {
+  const kept = catalogSkillItem("skill_JJJJJJJJJJJJJJJJJJJJJJ", "kept", [
+    skillSource("project", "project"),
+  ]);
+  const gone = catalogSkillItem("skill_KKKKKKKKKKKKKKKKKKKKKK", "gone", [
+    skillSource("user", "user"),
+  ]);
+  const harness = await catalogRetentionHarness([kept, gone]);
+
+  const catalog = multiRootCatalog({
+    truncated: true,
+    roots: [
+      skillCatalogRoot("project", "project", { records: 1 }),
+      skillCatalogRoot("user", "user", { records: 0 }),
+    ],
+    items: [kept],
+  });
+  const { incomplete, nextResources } = harness.generation(catalog);
+
+  assert.equal(incomplete, true);
+  assert.equal(
+    harness.incompleteSkillCatalogScope(catalog),
+    null,
+    "a catalog-wide bound cannot be attributed to any one root",
+  );
+  const gone_ = harness.state(gone);
+  assert.ok(
+    nextResources.some(
+      (resource) => harness.resourceKey(resource) === gone_.key,
+    ),
+    "truncation hides losses everywhere, including in roots that look clean",
+  );
+  assert.equal(gone_.entry.removed, false);
 });
