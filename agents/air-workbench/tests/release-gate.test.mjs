@@ -112,10 +112,10 @@ test("an importable non-Playwright module fails the bounded browser gate", async
       env: environment,
     },
   );
-  assert.match(tap, /^1\.\.4$/m);
-  assert.match(tap, /^# skipped 4$/m);
+  assert.match(tap, /^1\.\.5$/m);
+  assert.match(tap, /^# skipped 5$/m);
   assert.throws(
-    () => assertBrowserTapSummary(tap, "Workbench", 4),
+    () => assertBrowserTapSummary(tap, "Workbench", 5),
     /did not pass|zero are allowed/,
   );
 });
