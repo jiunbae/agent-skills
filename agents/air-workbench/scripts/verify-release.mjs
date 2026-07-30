@@ -31,10 +31,11 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertBrowserTapSummary,
-  assertConfiguredBrowserModule,
   assertSupportedRuntime,
   assertTapFileInventory,
   fixedNodeTestEnvironment,
+  resolveBrowserModule,
+  resolveChromiumExecutable,
   SUPPORTED_NODE_FLOOR,
 } from "./release-gate.mjs";
 
@@ -62,7 +63,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "identity.test.mjs": 4,
   "package-notices.test.mjs": 1,
   "r3-integration.test.mjs": 7,
-  "release-gate.test.mjs": 6,
+  "release-gate.test.mjs": 9,
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
   "session-api.test.mjs": 13,
@@ -109,9 +110,14 @@ Usage:
 
 Default delivery mode also verifies a clean worktree, including all untracked
 and unignored files, a good signed HEAD, and HEAD == origin/main. --precommit
-and --source omit only those delivery assertions. Browser gates require
-WORKFLOW_STUDIO_PLAYWRIGHT_MODULE and WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE;
-skipped, cancelled, todo, failed, or missing browser tests fail the release.
+and --source omit only those delivery assertions. Browser gates need a
+Playwright module and a Chromium executable. Set
+WORKFLOW_STUDIO_PLAYWRIGHT_MODULE to a Playwright checkout that persists, or
+leave it unset to resolve playwright or playwright-core from the component;
+never point it inside an npx cache, which npm evicts. Set
+WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE, or leave it unset to use the Chromium the
+resolved module names, which is the build whose revision matches it. Skipped,
+cancelled, todo, failed, or missing browser tests fail the release.
 `;
 
 if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
@@ -246,16 +252,24 @@ async function verifyPackageAndSource() {
     "--ignore-scripts",
   ], COMPONENT);
 
+  // Resolve the browser module once, here, and hand the resolved specifier to
+  // the bounded browser tests. Before this the gate validated one module and
+  // each test independently resolved another, so a green certification could
+  // describe a module no test ever loaded.
+  const resolvedBrowserModule = await resolveBrowserModule(
+    process.env.WORKFLOW_STUDIO_PLAYWRIGHT_MODULE,
+    { cwd: COMPONENT },
+  );
+  const executable = resolveChromiumExecutable(
+    process.env.WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE,
+    resolvedBrowserModule.chromium,
+  );
+  accessSync(executable, fsConstants.X_OK);
   const browserEnvironment = {
-    module: process.env.WORKFLOW_STUDIO_PLAYWRIGHT_MODULE,
-    executable: process.env.WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE,
+    ...process.env,
+    WORKFLOW_STUDIO_PLAYWRIGHT_MODULE: resolvedBrowserModule.specifier,
+    WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE: executable,
   };
-  assert(browserEnvironment.module, "WORKFLOW_STUDIO_PLAYWRIGHT_MODULE is required.");
-  assert(browserEnvironment.executable, "WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE is required.");
-  await assertConfiguredBrowserModule(browserEnvironment.module, {
-    cwd: COMPONENT,
-  });
-  accessSync(browserEnvironment.executable, fsConstants.X_OK);
   for (const [name, expectedTests] of [
     ["browser-air-workbench.mjs", 6],
     ["browser-r10.mjs", 1],
@@ -268,7 +282,7 @@ async function verifyPackageAndSource() {
       process.execPath,
       ["--test", "--test-reporter=tap", path],
       COMPONENT,
-      process.env,
+      browserEnvironment,
       true,
     );
     assertBrowserTapSummary(output, name, expectedTests);

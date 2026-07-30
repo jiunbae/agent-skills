@@ -470,6 +470,19 @@ WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE=/path/to/chromium \
 node agents/air-workbench/scripts/verify-release.mjs
 ```
 
+Both browser variables are optional. Left unset,
+`WORKFLOW_STUDIO_PLAYWRIGHT_MODULE` resolves `playwright` and then
+`playwright-core` from this component, and
+`WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE` falls back to the Chromium that resolved
+module names — the build whose revision is guaranteed to match it. Neither is
+a dependency of the installed Skill: they are acceptance-time inputs, and the
+Skill itself declares no runtime dependencies at all. Set
+`WORKFLOW_STUDIO_PLAYWRIGHT_MODULE` only to a Playwright checkout that
+persists. **Never point it inside an `npx` cache** such as `~/.npm/_npx`: npm
+evicts that directory without warning, and a gate configured against it fails
+later for no product reason. When no module resolves, the gate names the
+remedy rather than reporting only that a variable is unset.
+
 The default delivery mode also requires a clean worktree, including all
 untracked and unignored files, a good signature on `HEAD`, and
 `HEAD == origin/main`. While preparing that commit, use `--precommit` (or

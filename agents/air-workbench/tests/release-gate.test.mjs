@@ -18,7 +18,10 @@ import {
   assertSupportedRuntime,
   assertTapFileInventory,
   assertTapSummary,
+  BROWSER_MODULE_FALLBACKS,
   fixedNodeTestEnvironment,
+  resolveBrowserModule,
+  resolveChromiumExecutable,
   SUPPORTED_NODE_FLOOR,
 } from "../scripts/release-gate.mjs";
 import { verifyPrivacySurfaces } from "../scripts/verify-release.mjs";
@@ -117,6 +120,95 @@ test("an importable non-Playwright module fails the bounded browser gate", async
   assert.throws(
     () => assertBrowserTapSummary(tap, "Workbench", 6),
     /did not pass|zero are allowed/,
+  );
+});
+
+test("an unimportable browser module names the remedy, and an npx cache by name", async () => {
+  // RPF-178. Twice a recorded WORKFLOW_STUDIO_PLAYWRIGHT_MODULE pointed inside
+  // an `npx` cache that npm then evicted, failing the gate for no product
+  // reason. A path that no longer exists must say how to obtain one, and a
+  // path inside that cache must say why it evaporated.
+  const missing = resolve(COMPONENT, "tests/fixtures/not-a-real-module.mjs");
+  const evicted = join(
+    tmpdir(),
+    "_npx",
+    "0123456789abcdef",
+    "node_modules/playwright-core/index.mjs",
+  );
+
+  await assert.rejects(assertConfiguredBrowserModule(missing), (error) => {
+    assert.match(error.message, /could not be imported/);
+    assert.match(error.message, /npm install --no-save playwright-core/);
+    assert.doesNotMatch(error.message, /npx. cache, which npm evicts/);
+    return true;
+  });
+
+  await assert.rejects(assertConfiguredBrowserModule(evicted), (error) => {
+    assert.match(error.message, /npx. cache, which npm evicts/);
+    assert.match(error.message, /npm install --no-save playwright-core/);
+    return true;
+  });
+});
+
+test("an unset browser module resolves or names how to obtain one", async () => {
+  // RPF-178. The gate used to reject an unset variable with "is required",
+  // which tells a reader nothing. Unset now means "resolve the same pair the
+  // bounded browser tests already try", and only a genuine absence fails.
+  assert.deepEqual(BROWSER_MODULE_FALLBACKS, ["playwright", "playwright-core"]);
+  for (const name of ["browser-air-workbench.mjs", "browser-exact-bound.mjs"]) {
+    const source = readFileSync(resolve(COMPONENT, "tests", name), "utf8");
+    for (const fallback of BROWSER_MODULE_FALLBACKS) {
+      assert.match(
+        source,
+        new RegExp(`"${fallback}"`),
+        `${name} must try the same fallback the gate resolves.`,
+      );
+    }
+  }
+
+  let resolved = null;
+  let failure = null;
+  try {
+    resolved = await resolveBrowserModule(undefined, { cwd: COMPONENT });
+  } catch (error) {
+    failure = error;
+  }
+  if (resolved) {
+    assert.equal(resolved.source, "resolved");
+    assert.equal(typeof resolved.chromium.launch, "function");
+  } else {
+    assert.match(
+      failure.message,
+      /WORKFLOW_STUDIO_PLAYWRIGHT_MODULE is unset and neither playwright nor playwright-core resolves/,
+    );
+    assert.match(failure.message, /npm install --no-save playwright-core/);
+    assert.doesNotMatch(failure.message, /is required\./);
+  }
+});
+
+test("an unset Chromium executable follows the resolved module's own revision", () => {
+  const explicit = resolveChromiumExecutable("/explicit/chrome", {
+    executablePath: () => "/derived/chrome",
+  });
+  assert.equal(explicit, "/explicit/chrome");
+
+  assert.equal(
+    resolveChromiumExecutable("", { executablePath: () => "/derived/chrome" }),
+    "/derived/chrome",
+  );
+
+  assert.throws(
+    () => resolveChromiumExecutable(undefined, { executablePath: () => "" }),
+    /names no Chromium executable[\s\S]*npm install --no-save playwright-core/,
+  );
+  assert.throws(
+    () =>
+      resolveChromiumExecutable(undefined, {
+        executablePath() {
+          throw new Error("no browser was downloaded");
+        },
+      }),
+    /cannot name its own Chromium: no browser was downloaded[\s\S]*npm install --no-save playwright-core/,
   );
 });
 

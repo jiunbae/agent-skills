@@ -100,6 +100,17 @@ empty `[Unreleased]` section above it.
   publish the `@open330/agt` npm package.
 
 ### Fixed
+- air-workbench: the release gate's browser inputs are no longer a path that
+  evaporates. `WORKFLOW_STUDIO_PLAYWRIGHT_MODULE` had twice been recorded
+  pointing inside an `npx` cache that npm evicts, failing a release run for no
+  product reason, and an unset variable was rejected with "is required", which
+  names no remedy. Both browser variables are now optional: unset, the gate
+  resolves `playwright` then `playwright-core` — the same pair the bounded
+  browser tests already try — and derives Chromium from that module, so the
+  module the gate certifies and the module those tests load are one module
+  rather than two independent resolutions. Every failure now names how to
+  obtain a module, and a configured `npx` path is told why it disappeared. No
+  dependency was added: the installed Skill still declares none (RPF-178).
 - air-workbench: a step the recognizer *inferred* is no longer published as a
   record the author *declared*. The AIR workflow node `assertion` was pinned to
   the single value `declared`, so the ten of thirty-two repository Skills whose
@@ -120,12 +131,12 @@ empty `[Unreleased]` section above it.
   enough that "relative to it" reconstructs the machine's directory structure
   from publishing it verbatim — with the root at `/` the label was the absolute
   path minus its leading separator, so the leading-separator guard never fired
-  (RPF-177).
+  (RPF-179).
 - air-workbench: two Skill roots can no longer publish the same
   `(source_kind, source_label)` pair. A published item names its origin only by
   that pair and the Workbench joins on exactly it, so a collision made one root
   silently overwrite the other and an item from a `missing` root read as
-  observed by a `ready` one (RPF-178).
+  observed by a `ready` one (RPF-181).
 - air-workbench: a session root may again be copied, filtered or serialized and
   handed back. The guard against caller-set optionality rejected
   `optional: false` — the safe value, carried by every serialized form of

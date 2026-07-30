@@ -53,32 +53,132 @@ function parseRuntimeVersion(version) {
   };
 }
 
+// The browser gate needs a Playwright module, but it must never depend on one
+// at runtime: the installed Skill has no dependencies at all. The module is
+// therefore an acceptance-time input, resolved in this order:
+//
+//   1. an explicit WORKFLOW_STUDIO_PLAYWRIGHT_MODULE, then
+//   2. a `playwright` or `playwright-core` resolvable from the component.
+//
+// The fallback is the same pair the bounded browser tests already try, so the
+// module the gate certifies and the module those tests load are one module
+// rather than two independent resolutions. When nothing resolves the gate says
+// how to obtain one instead of only reporting that a variable is unset.
+export const BROWSER_MODULE_FALLBACKS = Object.freeze([
+  "playwright",
+  "playwright-core",
+]);
+
+// `npx` unpacks packages into a content-addressed cache that npm evicts
+// without warning. A path under it works until it does not, which has already
+// failed this gate twice for no product reason, so the remedy names it.
+const TRANSIENT_MODULE_CACHE = /[/\\]_npx[/\\]/;
+
+export const BROWSER_MODULE_REMEDY =
+  "Install one next to the component and re-run, for example " +
+  "`npm install --no-save playwright-core`, or set " +
+  "WORKFLOW_STUDIO_PLAYWRIGHT_MODULE to the index.mjs of a Playwright " +
+  "checkout that persists. Do not point it inside an `_npx` cache: npm " +
+  "evicts that directory and the gate then fails for no product reason.";
+
+function browserModuleSpecifier(candidate, cwd) {
+  return isAbsolute(candidate) || candidate.startsWith(".")
+    ? pathToFileURL(resolve(cwd, candidate)).href
+    : candidate;
+}
+
+async function loadBrowserChromium(specifier) {
+  const loaded = await import(specifier);
+  return loaded.chromium || loaded.default?.chromium;
+}
+
+export async function resolveBrowserModule(
+  configuredModule,
+  { cwd = process.cwd() } = {},
+) {
+  const configured =
+    typeof configuredModule === "string" && configuredModule.length > 0
+      ? configuredModule
+      : null;
+
+  if (configured) {
+    const specifier = browserModuleSpecifier(configured, cwd);
+    let chromium;
+    try {
+      chromium = await loadBrowserChromium(specifier);
+    } catch (error) {
+      const transient = TRANSIENT_MODULE_CACHE.test(configured)
+        ? " That path is inside an `npx` cache, which npm evicts."
+        : "";
+      throw new Error(
+        `WORKFLOW_STUDIO_PLAYWRIGHT_MODULE could not be imported: ${error.message}.` +
+          `${transient} ${BROWSER_MODULE_REMEDY}`,
+        { cause: error },
+      );
+    }
+    assert(
+      chromium && typeof chromium.launch === "function",
+      "WORKFLOW_STUDIO_PLAYWRIGHT_MODULE must export Playwright chromium.",
+    );
+    return { specifier, chromium, source: "configured" };
+  }
+
+  const failures = [];
+  for (const candidate of BROWSER_MODULE_FALLBACKS) {
+    try {
+      const chromium = await loadBrowserChromium(candidate);
+      if (chromium && typeof chromium.launch === "function") {
+        return { specifier: candidate, chromium, source: "resolved" };
+      }
+      failures.push(`${candidate} does not export Playwright chromium`);
+    } catch (error) {
+      failures.push(`${candidate}: ${error.message}`);
+    }
+  }
+  throw new Error(
+    "No Playwright module is available for the bounded browser gate. " +
+      `WORKFLOW_STUDIO_PLAYWRIGHT_MODULE is unset and neither ${BROWSER_MODULE_FALLBACKS.join(
+        " nor ",
+      )} resolves from ${cwd} (${failures.join("; ")}). ${BROWSER_MODULE_REMEDY}`,
+  );
+}
+
 export async function assertConfiguredBrowserModule(
   configuredModule,
   { cwd = process.cwd() } = {},
 ) {
-  assert(
-    typeof configuredModule === "string" && configuredModule.length > 0,
-    "WORKFLOW_STUDIO_PLAYWRIGHT_MODULE is required.",
-  );
-  const specifier =
-    isAbsolute(configuredModule) || configuredModule.startsWith(".")
-      ? pathToFileURL(resolve(cwd, configuredModule)).href
-      : configuredModule;
-  let loaded;
+  await resolveBrowserModule(configuredModule, { cwd });
+}
+
+// An explicit executable still wins, but when it is absent the executable the
+// resolved module itself points at is the only one guaranteed to match that
+// module's Chromium revision. The caller still proves it is executable.
+export function resolveChromiumExecutable(configuredExecutable, chromium) {
+  if (
+    typeof configuredExecutable === "string" &&
+    configuredExecutable.length > 0
+  ) {
+    return configuredExecutable;
+  }
+  let derived = "";
   try {
-    loaded = await import(specifier);
+    derived = chromium?.executablePath?.() || "";
   } catch (error) {
     throw new Error(
-      `WORKFLOW_STUDIO_PLAYWRIGHT_MODULE could not be imported: ${error.message}`,
+      "WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE is unset and the resolved Playwright " +
+        `module cannot name its own Chromium: ${error.message}. ` +
+        BROWSER_MODULE_REMEDY,
       { cause: error },
     );
   }
-  const chromium = loaded.chromium || loaded.default?.chromium;
   assert(
-    chromium && typeof chromium.launch === "function",
-    "WORKFLOW_STUDIO_PLAYWRIGHT_MODULE must export Playwright chromium.",
+    derived,
+    "WORKFLOW_STUDIO_CHROMIUM_EXECUTABLE is unset and the resolved Playwright " +
+      "module names no Chromium executable. Set it to a Chromium build whose " +
+      "revision matches that module. " +
+      BROWSER_MODULE_REMEDY,
   );
+  return derived;
 }
 
 export function fixedNodeTestEnvironment(environment = process.env) {
