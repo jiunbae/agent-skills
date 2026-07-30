@@ -100,6 +100,25 @@ empty `[Unreleased]` section above it.
   publish the `@open330/agt` npm package.
 
 ### Fixed
+- air-workbench: the published AIR schema now has to keep offering the widened
+  node `assertion`, and the rule that binds an edge's assertion to its
+  endpoints' is enumerated as a runtime-only rule. Widening the enum left the
+  member with no schema-level coverage at all — every golden is `declared` or
+  `observed` — so the schema could have been re-narrowed to a const with the
+  whole suite green (RPF-182).
+- air-workbench: the README's declared-versus-inferred table left out
+  `assertion`, the field that actually carries the distinction, and stated that
+  the word `declared` reaches the inspector "only as a fallback for an edge
+  that carries no provenance". That stopped being true when the node inspector
+  gained an Assertion row. The spec's own status date also still read
+  2026-07-24 after the document changed, so two different specifications
+  published at one stable URI under one date (RPF-183).
+- air-workbench: a partial catalog no longer tells the reader to "Refresh to
+  retry" when a refresh reads the same roots and reports the same result. Of
+  the codes a catalog can publish only the time limit depends on what the run
+  cost; the rest are configured bounds or configuration faults. The code that
+  stopped the scan now reaches the prose instead of appearing only as a bare
+  entry in `limit_codes` (RPF-184).
 - air-workbench: the release gate's browser inputs are no longer a path that
   evaporates. `WORKFLOW_STUDIO_PLAYWRIGHT_MODULE` had twice been recorded
   pointing inside an `npx` cache that npm evicts, failing a release run for no

@@ -24,6 +24,7 @@ import {
   markApprovedPlanDownloaded,
   markPromotedDraftDownloaded,
   moveNode,
+  partialCatalogRemedy,
   promoteToSkillDraft,
   removeEdge,
   selectNode,
@@ -2212,7 +2213,7 @@ async function loadCatalogs({ refresh = false } = {}) {
       } Refresh to retry.`;
     } else if (truncated) {
       catalogStatusMessage =
-        `${nextResources.length} resource${nextResources.length === 1 ? "" : "s"} loaded · partial catalog. Refresh to retry.`;
+        `${nextResources.length} resource${nextResources.length === 1 ? "" : "s"} loaded · partial catalog. ${partialCatalogRemedy(skills, sessions)}`;
     } else {
       catalogStatusMessage = nextResources.length
         ? `${nextResources.length} resource${nextResources.length === 1 ? "" : "s"}`

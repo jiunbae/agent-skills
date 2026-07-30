@@ -372,19 +372,28 @@ everywhere:
 
 | | Declared (rungs 1-5) | Inferred (rung 6) |
 |---|---|---|
+| node `assertion` | `declared` | `inferred` |
+| edge `assertion` | `declared` | `inferred` |
 | `confidence.level` | `structural` | `heuristic` |
 | node `confidence.reason` | "Mapped from a fence-aware workflow heading." | "Inferred from an ordinary top-level section; the source declares no workflow." |
 | edge `confidence.reason` | "Heading order within the same workflow region." | "Inferred from document order; the source declares no dependency." |
 | edge `provenance` in the artifact and CLI JSON | `imported` | `inferred` |
 | extra edge fields | none | `source_provenance: "inferred"`, `source_confidence: 0.5` |
 | browser inspector **Provenance** field | `imported` | `inferred` |
+| browser inspector **Assertion** field (nodes only) | `declared` | `inferred` |
 
-Note the vocabulary: the artifact, the CLI and the inspector all spell a
-declared edge `imported`, never "declared" — the word `declared` appears in the
-inspector only as a fallback for an edge that carries no provenance at all, and
-a round-tripped edge restored from `workflow-studio:v1` metadata reads
-`managed`. Treat an `inferred` / `heuristic` edge as a proposal to review, never
-as an ordering the Skill author committed to.
+`assertion` is the load-bearing one: it is the field that says whether the
+author committed to this step, and an edge may not assert a `declared` order
+between nodes whose existence as steps was itself `inferred`. Artifacts that
+claim it are rejected, so the certainty a node disclaims cannot be smuggled
+back in through the edge that joins it.
+
+Note the vocabulary, which differs between the two fields. `assertion` uses
+`declared`; `provenance` never does — the artifact, the CLI and the inspector
+all spell a declared edge's *provenance* `imported`, and a round-tripped edge
+restored from `workflow-studio:v1` metadata reads `managed`. Treat an
+`inferred` / `heuristic` edge as a proposal to review, never as an ordering the
+Skill author committed to.
 
 ### When nothing is recognized
 

@@ -1,6 +1,6 @@
 # AIR 1.0.0
 
-Status: project specification, 2026-07-24.
+Status: project specification, 2026-07-30.
 
 AIR is the **Agent Intermediate Representation** used by AIR Workbench. This
 document defines AIR 1.0.0. AIR is a project format. It does not claim IANA

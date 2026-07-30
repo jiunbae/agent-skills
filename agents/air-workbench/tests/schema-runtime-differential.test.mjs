@@ -986,6 +986,26 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
 
   const semanticOnlyNegatives = [
     {
+      // RPF-172 widened the node `assertion` enum and added the MUST at
+      // spec/AIR-1.0.0.md:116-119 binding an edge's assertion to its
+      // endpoints'. The published JSON Schema cannot express a cross-member
+      // rule, so it accepts the inconsistency and only the runtime rejects it.
+      // That is precisely the differential this gate exists to enumerate, and
+      // it was the one rule the widening left unenumerated.
+      label: "workflow edge claims a declared order between inferred nodes",
+      source: workflow,
+      // The schema accepts this envelope, which is also the only schema-level
+      // exercise of the widened node member: every golden is declared or
+      // observed, so without this case `assertion: "inferred"` on a node is
+      // never once put through the published schema.
+      message: "Workflow edge 0 is invalid.",
+      mutate(artifact) {
+        for (const node of artifact.body.graph.nodes) {
+          node.assertion = "inferred";
+        }
+      },
+    },
+    {
       label: "workflow node order is not its array position",
       source: workflow,
       mutate(artifact) {
@@ -1228,6 +1248,16 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
       "AIR_SEMANTIC_INVALID",
       `${scenario.label}: explicit semantic disposition`,
     );
+    if (scenario.message) {
+      // Several rules share AIR_SEMANTIC_INVALID, so a case can pass for the
+      // wrong reason — the source re-derivation rule in particular rejects any
+      // hand-mutated graph. Pin the rule that is meant to fire.
+      assert.throws(
+        () => validateAirArtifact(artifact),
+        (error) => error?.message === scenario.message,
+        `${scenario.label}: rejected, but not by the rule under test`,
+      );
+    }
     if (scenario.createBody) {
       const body = emptySessionBody();
       scenario.createBody(body);
@@ -1343,6 +1373,23 @@ test("published AIR schemas and runtime have an explicit bounded differential", 
     workflowSchema.$defs.edge.properties.evidence_refs.maxItems,
     1_000,
   );
+  // RPF-172. The published schema must offer both members, and must not have
+  // been re-narrowed to a const, or an inferred node becomes unpublishable
+  // again without any runtime test noticing.
+  for (const member of ["node", "edge"]) {
+    const assertionSchema =
+      workflowSchema.$defs[member].properties.assertion;
+    assert.deepEqual(
+      assertionSchema.enum,
+      ["declared", "inferred"],
+      `${member} assertion must publish exactly the widened closed set`,
+    );
+    assert.equal(
+      assertionSchema.const,
+      undefined,
+      `${member} assertion must not be re-pinned to a single value`,
+    );
+  }
   const envelopeSchema = documents.find((document) =>
     document.$id.endsWith("/air.schema.json"));
   assert.equal(

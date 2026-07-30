@@ -3309,3 +3309,26 @@ export function traceSummaryMetrics(state) {
   });
   return metrics;
 }
+
+// Of the codes a catalog can publish, only the time limit depends on what the
+// run happened to cost; every other one is a configured bound or a
+// configuration fault, and a refresh walks the same roots and reports the same
+// result. Telling the reader to refresh in those cases directs them at an
+// action that reproduces the state they are trying to escape.
+export const REFRESH_CLEARABLE_LIMIT_CODES = Object.freeze([
+  "AIR_CATALOG_TIME_LIMIT",
+]);
+
+export function partialCatalogRemedy(skills, sessions) {
+  const clearable = new Set(REFRESH_CLEARABLE_LIMIT_CODES);
+  const distinct = [
+    ...new Set([
+      ...(Array.isArray(skills?.limit_codes) ? skills.limit_codes : []),
+      ...(Array.isArray(sessions?.limit_codes) ? sessions.limit_codes : []),
+    ].filter((code) => typeof code === "string" && code.length > 0)),
+  ];
+  if (!distinct.length || distinct.every((code) => clearable.has(code))) {
+    return "Refresh to retry.";
+  }
+  return `Reached ${distinct.join(", ")}; refreshing reads the same roots and reports the same result. Change the roots or the bound that stopped it.`;
+}

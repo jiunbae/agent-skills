@@ -29,6 +29,7 @@ import {
   markApprovedPlanDownloaded,
   markPromotedDraftDownloaded,
   moveNode,
+  partialCatalogRemedy,
   projectAirArtifact,
   promoteToSkillDraft,
   removeEdge,
@@ -3327,4 +3328,61 @@ test("an open document contributes its real path to the Skill search index", asy
     false,
     "an unopened resource contributes no path it does not have",
   );
+});
+
+test("a partial catalog does not offer a refresh that cannot clear it", async () => {
+  // R42-MA-10 / RPF-169. The status line promised "Refresh to retry" for every
+  // incomplete catalog, including causes a refresh re-reads identically — the
+  // reader was directed at the action that reproduces the state. The bare
+  // limit code, which is the only thing that says what actually stopped the
+  // scan, never reached any prose at all.
+  assert.equal(partialCatalogRemedy({}, {}), "Refresh to retry.");
+  assert.equal(
+    partialCatalogRemedy({ limit_codes: [] }, { limit_codes: [] }),
+    "Refresh to retry.",
+  );
+  assert.equal(
+    partialCatalogRemedy({ limit_codes: ["AIR_CATALOG_TIME_LIMIT"] }, {}),
+    "Refresh to retry.",
+    "a time limit genuinely can differ on the next run",
+  );
+
+  for (const code of [
+    "AIR_CATALOG_PLUGIN_DISCOVERY_PARTIAL",
+    "AIR_CATALOG_DEPTH_LIMIT",
+    "AIR_CATALOG_ROOT_LIMIT",
+    "AIR_CATALOG_RECORD_LIMIT",
+    "AIR_CATALOG_ENTRY_LIMIT",
+    "AIR_CATALOG_CANDIDATE_LIMIT",
+    "AIR_CATALOG_TOTAL_BYTES_LIMIT",
+  ]) {
+    const message = partialCatalogRemedy({ limit_codes: [code] }, {});
+    assert.match(message, new RegExp(code), `${code} must reach the prose`);
+    assert.doesNotMatch(
+      message,
+      /Refresh to retry/u,
+      `${code}: a refresh reads the same roots and cannot clear it`,
+    );
+  }
+
+  // A mixed set is only refresh-clearable if every member is.
+  const mixed = partialCatalogRemedy(
+    { limit_codes: ["AIR_CATALOG_TIME_LIMIT"] },
+    { limit_codes: ["AIR_CATALOG_DEPTH_LIMIT"] },
+  );
+  assert.doesNotMatch(mixed, /Refresh to retry/u);
+  assert.match(mixed, /AIR_CATALOG_TIME_LIMIT, AIR_CATALOG_DEPTH_LIMIT/u);
+
+  // Codes are de-duplicated across the two catalogs, and non-strings ignored.
+  assert.match(
+    partialCatalogRemedy(
+      { limit_codes: ["AIR_CATALOG_DEPTH_LIMIT", "", null, 7] },
+      { limit_codes: ["AIR_CATALOG_DEPTH_LIMIT"] },
+    ),
+    /Reached AIR_CATALOG_DEPTH_LIMIT;/u,
+  );
+
+  // The status line must consume it rather than re-hardcoding the promise.
+  const editor = await readFile(new URL("editor.mjs", ASSET_ROOT), "utf8");
+  assert.match(editor, /partial catalog\. \$\{partialCatalogRemedy\(skills, sessions\)\}/u);
 });
