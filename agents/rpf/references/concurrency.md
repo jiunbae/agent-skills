@@ -11,7 +11,9 @@ Terms used below:
 - `RUN_ID` — this run's identity, `rpf-<tool>-<UTC timestamp>-<4 hex>`,
   for example `rpf-claude-20260729T101500Z-9f3a`.
 - Managed block — the region between `<!-- rpf:managed:start -->` and
-  `<!-- rpf:managed:end -->`. RPF writes only inside it.
+  `<!-- rpf:managed:end -->`. After initial publication, RPF writes only inside
+  it; a new pointer may populate the template's authored sections before its
+  first atomic publication.
 
 ## Identity and path resolution
 
@@ -22,13 +24,14 @@ against the primary checkout (`git rev-parse --git-common-dir` → its parent)
 before deciding that peers are coordinating.
 
 Compute `RUN_ID` once per invocation and reuse it in the run registry, work
-claims, decision log, artifact filenames, and the cycle report.
+claims, decision log, artifact filenames, and cycle report. Record the target
+ref and absolute integration-worktree path in the run registry.
 
 A run's registry row carries a **900 s lease**, refreshed at every phase
-boundary and at every claim renewal. A row whose lease has expired is not a
-peer: it is the residue of a run that crashed or was killed, and any run holding
-the write lock may remove it. Keep the run lease shorter than the work-claim
-lease so a dead run stops blocking convergence before its claims expire.
+boundary and before half the lease elapses during long work. A row whose lease
+has expired is not a peer: it is crash residue, and any lock holder may remove
+it. Keep the run lease shorter than the work-claim lease so a dead run stops
+blocking convergence before its claims expire.
 
 ## Sidecar files
 
@@ -134,6 +137,21 @@ every write is also validated against the content observed at read time.
 7. Release the lock. Keep the post-write hash as the new `HASH_READ` and as the
    `POINTER_HASH` reported for the cycle.
 
+## Invocation-coordinator writes
+
+The main invocation coordinator follows the same lock, ownership check,
+compare-and-swap, atomic publication, and readback protocol. Outside a flat
+topology cycle, it may write only to:
+
+- publish a new bootstrapped pointer or add missing managed sections and columns;
+- create or refresh its own active-run row before a controller starts; and
+- remove its own row and release its own claims after the stop decision.
+
+It never merges findings, marks work `done` or `deferred`, or edits authored sections.
+After an abnormal stop, it may reset this run's remaining `active` rows to
+`pending` while clearing ownership; it never marks them `done`. This narrow
+cleanup authority also applies after a malformed controller report.
+
 ## Merge rules
 
 Merges must be deterministic so that two different tools resolve the same
@@ -146,16 +164,51 @@ conflict the same way.
 - **`RPF-LOCKED`** — never modified under any merge outcome.
 - **Work queue** — keyed by work ID; take the union. For a row present in both
   versions, the row with the higher `Rev` wins. On equal `Rev`, keep the more
-  conservative status (anything unfinished beats `done`) and log the conflict
-  in the decision log. Never delete an unfinished row that another run added.
-- **Feedback, decision log, verification evidence** — append-only. Union by
-  `(ID or cycle, run, content hash)`; never rewrite or renumber existing rows.
+  conservative status in this order: `blocked`, `active`, `pending`,
+  `integrated`, `deferred`, `done`. If status also ties, choose the row whose
+  exact UTF-8 row SHA-256 sorts first. Log both row hashes and the rejected row.
+  Never delete unfinished peer work.
+- **Current understanding** — union evidence-bearing entries by content hash.
+  Preserve contradictory entries and append a decision-log conflict rather than
+  choosing one silently; sort the result by content hash.
+- **Goal gaps** — keyed by gap ID; take the union. Higher `Rev` wins; on equal
+  `Rev`, `open` beats `resolved`; if status ties, use the same row-hash
+  tie-break as the work queue.
+- **Feedback, decision log, refuted findings, verification evidence, cycle
+  telemetry** — append-only. Union by `(ID or cycle, run, content hash)`; never
+  rewrite or renumber existing rows. Sort the union bytewise by that tuple.
 - **Deferred findings** — union by finding ID. Never let a merge drop a
-  deferred record or lower its recorded severity.
-- **Counters** — `Total cycles` and `Cycles allocated` take the maximum of the
-  two versions, never the local value alone. `Pointer revision` is the maximum
-  plus one.
-- **Active runs** — union by run ID; drop only rows whose lease has expired.
+  deferred record or lower its severity or confidence. For duplicate IDs, take
+  the higher severity and confidence and union distinct evidence, reason, reopen,
+  and rule text in bytewise content-hash order.
+- **Counters** — `Total cycles`, `Cycles allocated`, `Last completed cycle`,
+  `Review input revision`, and `User instruction epoch` take the maximum.
+  `Pointer revision` is the maximum plus one.
+- **Active runs** — union by run ID; on duplicates take the row with the later
+  lease expiry; if expiry ties, use the row-hash tie-break. Drop only expired
+  rows and sort the union by run ID.
+- **Derived state** — set `Last writer` to the publishing run. Recompute
+  `Status` from merged stop conditions and live rows other than the publishing
+  run using this precedence: `waiting-user`, `blocked`, `limit-reached`,
+  `waiting-peers`, `converged`, `running`. For `Next action`, choose unfinished
+  work by numeric `Prio` ascending, severity (`critical` through `low`), then ID
+  bytewise; otherwise choose open gaps by ID, peer waiting, gates, then
+  convergence. Never copy either scalar from a stale version.
+
+## Review-input revisions
+
+Increment `Review input revision` once, under the pointer lock, for a write that
+changes any authored goal, policy, or completion criterion; current
+understanding; gap identity or text; structural work fields (`ID`, `Sev`,
+`Prio`, `Deps`, `Task`, `Acceptance criteria`); or deferred, refuted, feedback,
+or decision content. Do not increment it for status, owner, lease, evidence,
+counter, active-run, verification, or telemetry-only changes.
+
+Allocate `User instruction epoch` under the same lock for every new
+conversational instruction recorded in Feedback. A detected relevant human or
+foreign-agent pointer edit increments `Review input revision` when it is merged.
+These counters fence next-cycle prefetch without treating routine execution
+bookkeeping as stale review input.
 
 ## Cycle number allocation
 
@@ -171,17 +224,16 @@ session — that read may already be stale.
 Claims stop two runs from implementing the same item or fighting over the same
 files.
 
-- A run may claim only items whose status is `pending` and whose `Owner` is
-  empty or whose `Claim expires` has passed.
+- A run may claim only items whose status is `pending`, every `Deps` item is
+  `integrated` or `done`, and `Owner` is empty or `Claim expires` has passed.
 - Claiming writes `Owner = RUN_ID` and `Claim expires = now + 1800 s`, under
   the write lock, in the same transaction that reads the queue.
-- Renew claims at each phase boundary **and whenever more than half the lease
-  has elapsed**, while the item is still `active`. Phase 3 can run far longer
-  than one lease with no phase boundary inside it, so a wave that outlives half
-  a lease renews before continuing — otherwise the claim silently expires and a
-  peer starts the same item while a worker is still editing its files.
+- Renew claims at each phase boundary and **before** half the lease elapses while
+  an item is `active`; refresh the shorter run lease independently before 450 s.
+- After targeted checks and integration, atomically mark the item `integrated`,
+  release its claim, and claim the new ready frontier under the same lock.
 - Release claims — clear `Owner` and `Claim expires` — when the item reaches
-  `done`, `blocked`, or `deferred`, and when the run exits for any reason.
+  `integrated`, `done`, `blocked`, or `deferred`, and when the run exits.
 - Reclaiming an expired claim is allowed; record it in the decision log.
 - Register the file globs a run intends to write in its registry row. Before
   starting work, compare against peers' claimed paths: on overlap, leave the
@@ -201,16 +253,23 @@ and continue. A peer is already shipping the same commits.
 
 ## Git contention
 
-Concurrent runs share one working tree unless they were given worktrees.
+Record the original target ref before work begins. When another run is live or
+the primary checkout is dirty, create a dedicated integration worktree on a
+unique `RUN_ID` branch and integrate this run's accepted diffs only there. Never
+run repository-wide gates against a shared dirty checkout.
 
-- Stage by explicit path. Never `git add -A` or `git commit -a` — those sweep
-  in a peer's in-flight edits.
+- Stage by explicit path. Never `git add -A` or `git commit -a`.
 - Treat an existing `.git/index.lock` as a peer mid-commit: back off and retry
   up to 60 s rather than deleting it.
-- On push rejection, `git pull --rebase` and retry at most twice. Never
-  force-push and never bypass hooks without explicit user authorization.
+- Run full gates against a committed `GATE_HEAD_SHA` in the integration
+  worktree. Push only that green commit to the recorded target ref by normal
+  fast-forward. If the target advanced, rebase onto its fetched head and rerun
+  every gate against the new committed HEAD before retrying, at most twice.
+- Never force-push or bypass hooks without explicit user authorization.
 - If a rebase conflicts in files this run does not own, abort the rebase and
   report the conflict instead of resolving a peer's changes.
+- Remove a dedicated integration worktree only after its commits are reachable
+  from the target ref; preserve it and report its path after a failed push.
 
 ## Peers and convergence
 
@@ -219,6 +278,12 @@ repository. Count live peer rows in the run registry — rows other than your ow
 whose lease has not expired — as `ACTIVE_PEERS`. When every other convergence
 condition holds but `ACTIVE_PEERS > 0`, stop with status `waiting-peers` and
 preserve the next action, rather than claiming `converged`.
+
+Read-only next-cycle prefetch agents spawned by a cycle controller are child
+tasks of that run, not peer RPF runs. They receive no active-run row or work
+claim, write only their uniquely named review artifact, and never decide
+convergence. The producing controller remains responsible for them and must not
+exit while one can still write an artifact.
 
 Garbage-collect expired registry rows whenever you hold the write lock, and
 always remove your own row before the run exits.

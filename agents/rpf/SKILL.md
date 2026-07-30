@@ -1,22 +1,21 @@
 ---
 name: rpf
-description: Runs an explicit pointer-document-driven review, plan, work, and feedback loop with multiple agents, continuously updating the same living plan or policy document until its goals converge or 128 cycles are reached. Safe for concurrent runs from different tools against one pointer. Use only when the user explicitly invokes `$rpf`; never trigger implicitly for ordinary review, planning, implementation, commit, or deployment requests.
-tags: [loop, multi-agent, pointer, review, planning, concurrency]
+description: Runs an explicit pointer-document-driven review, plan, work, and feedback loop with multiple agents, scheduling independent review, verification, and implementation work concurrently and pipelining revision-fenced read-only preparation between cycles until the living plan or policy converges or 128 cycles are reached. Safe for concurrent runs from different tools against one pointer. Use only when the user explicitly invokes `$rpf`; never trigger implicitly for ordinary review, planning, implementation, commit, or deployment requests.
 ---
 
 # RPF — pointer-driven review, plan, work, feedback
 
 Use one living pointer document as the source of truth. Re-read it throughout
 the run, compare the repository against it, update it with feedback and plans,
-dispatch work to multiple agents, record evidence, and repeat.
+schedule independent work across multiple agents, record evidence, and repeat.
 
 Mechanics live in `references/`, loaded when you need the how:
 
 - [references/concurrency.md](references/concurrency.md) — the pointer write
   lock, compare-and-swap writes, merge rules, work claims, deploy exclusion,
   git contention. **Read this before the first pointer write.**
-- [references/orchestration.md](references/orchestration.md) — persona lenses,
-  finding schema, adversarial verification, artifacts and retention.
+- [references/orchestration.md](references/orchestration.md) — personas,
+  delegation, rolling scheduling, cycle prefetch, verification, and artifacts.
 - [references/detection.md](references/detection.md) — gate and deployment
   detection catalogs, and the deployment questions.
 
@@ -52,12 +51,13 @@ Before reviewing or changing code:
    on the same file.
 2. If it does not exist, create its parent directory and instantiate
    [assets/pointer-template.md](assets/pointer-template.md).
-3. Populate initial goals, policies, completion criteria, and repository
-   context from the bootstrap directive, applicable project documents, and
-   evidence in the repository. Do not invent product decisions.
+3. For a new pointer, populate initial goals, policies, completion criteria, and
+   repository context before first publication. For an existing pointer,
+   preserve authored content and put new context or proposals in the managed
+   block. Do not invent product decisions.
 4. If an existing document lacks the `rpf:managed` block from the template,
    append that block without replacing its authored content. If it has an older
-   managed block, add missing sections in place rather than replacing the block.
+   block, add missing managed fields, sections, and table columns in place.
 5. Read the resulting document, record its content hash, and register this run
    in the pointer's active-runs table under the write lock.
 6. Immediately tell the user, localized to their language:
@@ -79,28 +79,30 @@ Treat the pointer as the living source of truth for:
 
 - goals, policies, constraints, and completion criteria;
 - current understanding and goal gaps;
-- pending, active, blocked, deferred, and completed work;
+- pending, active, integrated, blocked, deferred, and completed work;
 - deferred findings with the evidence and conditions that reopen them;
 - feedback from reviewers and users;
 - decisions with reasons;
 - implementation and verification evidence;
+- cycle-level delegation, parallelism, serialization, and prefetch telemetry;
 - active runs, total cycle count, current status, and next action.
 
-Allow the document to evolve when evidence changes the plan, policy, or goal,
-but preserve user intent and record every material change in its decision log.
-Never silently weaken completion criteria. Never change text marked
-`RPF-LOCKED` without explicit user authorization.
+Evolve managed plans when evidence changes. Record proposed goal, policy, or
+completion-criteria changes in the managed block for user authorization; never
+rewrite authored sections or weaken criteria silently. Never change
+`RPF-LOCKED` text without explicit user authorization.
 
 Writer rules:
 
-- Within a run, the cycle controller is the only agent that writes the pointer.
-  Reviewers, planners, workers, and verifiers return proposals and evidence.
+- The invocation coordinator may create and register the run before a cycle and
+  clean up its row and claims after stopping. During a cycle, the active
+  controller is the only pointer writer. Other agents return proposals.
 - Across runs, every write takes the pointer write lock, re-reads, compares the
   hash against the last read, merges when it differs, writes atomically, and
   verifies the readback. The full protocol is in `references/concurrency.md`.
 - Treat the newest user-authored instruction as authoritative.
-- Use stable work IDs such as `RPF-001`, allocated under the write lock. Never
-  silently delete an unfinished item, including one a peer run added.
+- Allocate stable work IDs such as `RPF-001` and gap IDs such as `GAP-001` under
+  the write lock. Never silently delete unfinished peer work or gaps.
 
 Do not create a new plan document each cycle. Review evidence goes under
 `.context/reviews/`; plans and operational state stay in `POINTER_DOC`.
@@ -128,16 +130,16 @@ Read `references/concurrency.md` before the first write of the run.
 
 ## Adapt to the host
 
-- Run every outer cycle in a fresh native subagent context.
-- Use Claude `Agent`/`Task`, Codex collaboration agents, or the host's
-  equivalent.
-- Respect concurrency limits and batch independent agents when necessary.
+- Select nested topology when a fresh controller can spawn children; otherwise use flat topology. Keep controllers serial and pipeline only revision-fenced read-only preparation.
+- Use Claude `Agent`/`Task`, Codex collaboration agents, or the host's equivalent.
+- Follow the orchestration reference's cost-aware delegation policy and rolling
+  scheduler; keep useful slots occupied without inventing work for parallelism.
 - Map reviewer roles to the persona library; otherwise use a general-purpose
   agent with the persona lens injected.
 - Use native task tracking when available, one task per cycle.
 - Use Ralph for implementation when the host exposes it (a `ralph` skill or
   slash command); otherwise use the host's native implementation workflow.
-- Stop with a clear capability error if fresh subagents are unavailable.
+- Stop with a clear capability error if fresh worker subagents are unavailable.
 
 ## Pre-loop setup
 
@@ -162,26 +164,29 @@ mode, and deploy command before cycle 1.
 
 ## Orchestrator loop
 
-The main session only orchestrates:
+The main session orchestrates; in flat topology it is also the active controller:
 
 1. For each invocation cycle `i` from 1 through `N`:
    - re-read `POINTER_DOC`;
-   - spawn one fresh cycle controller with the prompt below;
-   - wait for completion;
-   - parse the cycle report;
+   - discover any next-cycle prefetch artifacts produced by the previous cycle;
+   - execute through the selected topology: spawn and wait for a nested cycle
+     controller, or follow the controller procedure directly in flat topology;
+   - parse or produce the cycle report;
    - re-read the pointer and check that its `Pointer revision` and hash match
      the reported `POINTER_REV` and `POINTER_HASH`, allowing for a peer write
      after the controller finished;
    - report the cycle outcome to the user in the fixed format below;
    - evaluate stop conditions.
-2. Never parallelize outer cycles within this invocation.
+2. Never run two full cycle controllers concurrently within this invocation.
+   Safe stage-level overlap comes from validated next-cycle prefetch, not from
+   multiple controllers writing, integrating, or judging convergence at once.
 3. After stopping, summarize convergence, unresolved items, deferred findings,
    evidence, commits, and deployment.
 4. Run the end-only deploy pass only when selected and at least one cycle
    pushed commits.
 
-The controller allocates `TOTAL_CYCLE` itself under the write lock; the main
-session never writes the pointer.
+The active controller allocates `TOTAL_CYCLE`. Main writes only as the flat
+controller or invocation coordinator, within the narrow writer rules above.
 
 Per-cycle user report, one message, no extra commentary:
 
@@ -189,6 +194,8 @@ Per-cycle user report, one message, no extra commentary:
 RPF cycle <i>/<N> (total <TOTAL_CYCLE>) — <SUMMARY>
   feedback: <NEW_FEEDBACK>  gaps: <GOAL_GAPS>  pending: <PENDING_TASKS>
   pointer: rev <POINTER_REV> (<MATERIAL_POINTER_CHANGES> material)  peers: <ACTIVE_PEERS>  claim conflicts: <CLAIM_CONFLICTS>
+  agents: <REVIEW_AGENTS>/<VERIFY_AGENTS>/<WORK_AGENTS> review/verify/work  peak: <PEAK_PARALLEL>  local: <LOCAL_UNITS>
+  pipeline: <PREFETCH>  serialized: <SERIALIZATION_REASONS>
   commits: <COMMITS>  gate-fixes: <GATE_FIXES>  gates: <green|red>  deploy: <DEPLOY>
   status: <STATUS>  errors: <ERRORS>
   changes:
@@ -205,7 +212,7 @@ user — or by a peer run — while the cycle runs before continuing.
 
 For new conversational instructions:
 
-- record them in the pointer feedback and work queue;
+- allocate `User instruction epoch` under the lock, then record them in feedback and work;
 - if work has not begun, include them in the current plan;
 - otherwise queue them for the next cycle;
 - never bypass review and planning;
@@ -213,10 +220,11 @@ For new conversational instructions:
 
 ## Cycle controller prompt
 
-Pass this structure with all placeholders resolved:
+Pass this structure to a nested controller, or follow it directly in flat
+topology, with every placeholder resolved:
 
 ```text
-You are the fresh cycle controller for invocation cycle <i>/<N> in:
+You are the active cycle controller for invocation cycle <i>/<N> in:
   <absolute repository path>
 
 RUN_ID:       <run id>
@@ -226,6 +234,7 @@ REVIEW_DIR:   .context/reviews
 GATES:        <exact configured commands>
 DEPLOY_MODE:  <per-cycle | end-only | none>
 DEPLOY_CMD:   <exact command or "">
+PREFETCH_ARTIFACTS: <absolute paths from the previous cycle or "none">
 
 Read <SKILL_DIR>/references/concurrency.md before your first pointer write and
 <SKILL_DIR>/references/orchestration.md before Phase 1 fan-out. They are
@@ -242,7 +251,10 @@ TOTAL_CYCLE = Cycles allocated + 1, write back the incremented counter and this
 run's active-runs row, release the lock. Use that number for artifact names.
 Garbage-collect expired peer rows while you hold the lock.
 
-Execute Phases 1 through 4 strictly in order.
+Respect the dependency barriers between Phases 1 through 4, but pipeline
+independent work inside a phase and stream completed outputs into their next
+eligible stage. Follow the scheduling, delegation, and prefetch rules in the
+orchestration reference.
 
 =========================
 PHASE 1 — REVIEW AND FEEDBACK
@@ -254,18 +266,20 @@ goals, policies, constraints, work state, and completion criteria.
 
 Select reviewer lenses from the persona library per the orchestration
 reference, plus the two native lenses (pointer alignment, plan/doc
-consistency). Run them in parallel up to the host limit and batch the rest.
+consistency). Validate any PREFETCH_ARTIFACTS first and count each reusable
+artifact as a completed reviewer unit. Schedule the remaining independent
+reviewer units up to the useful host limit and batch the rest.
 
-Each reviewer reads POINTER_DOC, inspects its complete relevant inventory,
+Each newly scheduled reviewer reads POINTER_DOC, inspects its complete relevant inventory,
 cites exact evidence, distinguishes findings from unverified risks, returns
 findings in the schema from the orchestration reference, and writes
 <REVIEW_DIR>/R<TOTAL_CYCLE>-<persona>.md. That artifact is a reviewer's only
 write: reviewers never edit source, POINTER_DOC, or git state.
 
-Then run the kill gate: every critical and high finding is handed to an
-independent verifier instructed to refute it, preferably from a different model
-family. Batch-verify medium and low. Default to rejected when a claim cannot be
-grounded in code. Write verdicts to <REVIEW_DIR>/R<TOTAL_CYCLE>-verify.md.
+As each reviewer finishes, immediately schedule its kill-gate work while other
+reviewers continue. Verify critical and high individually and batch medium and
+low as the orchestration reference requires. Verifiers return verdicts; the
+controller writes <REVIEW_DIR>/R<TOTAL_CYCLE>-verify.md after all are terminal.
 
 Retry one reviewer failure once, dedup surviving findings by root_cause, note
 cross-reviewer agreement as raised confidence, and write
@@ -279,7 +293,7 @@ PHASE 2 — PLAN AND POINTER UPDATE
 Take the write lock, re-read, merge, and update the pointer:
 
 - refine current understanding and goal gaps;
-- add or update stable work items with dependencies, severity, and acceptance
+- add or update stable work items with dependency IDs, severity, and acceptance
   criteria;
 - update decisions with reasons and evidence;
 - preserve unresolved, blocked, and deferred work, including peer runs';
@@ -304,20 +318,25 @@ Do not implement during this phase.
 PHASE 3 — MULTI-AGENT WORK
 =========================
 
-Re-read POINTER_DOC. Select the highest-priority ready work whose claims are
-free, and claim it under the write lock with an expiring lease. Skip items
-whose file globs collide with a live peer claim and count those in
+Re-read POINTER_DOC. Build the ready frontier: the maximal useful set of
+highest-priority ready items whose dependencies are satisfied and whose claims
+are free. Claim that frontier under the write lock with expiring leases. Skip
+items whose file globs collide with a live peer claim and count those in
 CLAIM_CONFLICTS. Register your own claimed globs.
 
-Partition claimed items by file ownership and dependency: independent items run
-in parallel up to the host limit, dependent items in sequential waves, with
-worktrees or equivalent isolation where write ranges may overlap. Give each
-worker the pointer path, exact work IDs, acceptance criteria, owned files, and
-required checks. Workers never edit POINTER_DOC, commit, push, or deploy.
+Run the claimed DAG through the orchestration reference's rolling scheduler,
+using worktrees or equivalent isolation where writes may overlap. Give each
+worker the pointer path, work IDs, acceptance criteria, owned files, and checks.
+Workers never edit POINTER_DOC, commit, push, or deploy.
 
 Use Ralph when the host exposes it, otherwise native implementation agents.
-Wait for workers, inspect their actual diffs and evidence, reject overlapping or
-out-of-scope work, integrate accepted changes, and run targeted checks.
+As each worker finishes, inspect its actual diff and evidence, run its targeted
+checks, reject out-of-scope work, and serialize integration. Under one pointer
+lock, mark accepted work `integrated`, release its claim, and claim the newly
+ready frontier before dispatching it without an unrelated worker barrier.
+
+When useful capacity remains and another cycle is likely, prefetch read-only
+review exactly as the orchestration reference specifies.
 
 Take the write lock and update work statuses, implementation evidence, and
 claim leases. Preserve unrelated user and peer changes.
@@ -326,18 +345,18 @@ claim leases. Preserve unrelated user and peer changes.
 PHASE 4 — VERIFY, FEEDBACK, DELIVER
 =========================
 
-Run independent verification against the pointer's acceptance and completion
-criteria. Run every configured gate against the integrated repository.
-Error-level failures are blocking. Fix root causes rather than weakening tests,
-gates, or types, and never add a suppression the repository's own rules do not
-authorize; quote the rule in the commit body when one does. Route discovered
-failures back into pointer feedback and work items.
+Verify acceptance criteria in the fenced integration worktree, then commit
+accepted code locally in fine-grained units by explicit path. Follow repository
+commit policy; if unspecified, use semantic messages with gitmoji and GPG.
 
-Commit and push accepted code in fine-grained units, staging explicit paths
-only — never `git add -A`, because peers may have edits in the tree. Follow
-repository commit and signing policy; if unspecified, use semantic messages
-with gitmoji and GPG signing. On push rejection, pull --rebase and retry at most
-twice. Never force-push or bypass hooks without explicit authorization.
+Run every gate against the committed `GATE_HEAD_SHA`, concurrently only when
+safe. Error failures block push. Fix root causes; never weaken checks or add
+suppressions unless a repository rule authorizes them, and cite it in the commit.
+Route failures into pointer feedback. Push only the green commit; after a rebase,
+rerun every gate before retrying, at most twice. Never force-push or bypass hooks
+without explicit authorization.
+Mark `integrated` work `done` only after acceptance and gates pass; otherwise
+reset affected work and dependents to `pending` or `blocked` with evidence.
 
 For per-cycle deployment, deploy only after commits are pushed and every gate is
 green, and only while holding the deploy exclusion lock. If a peer holds it,
@@ -353,7 +372,9 @@ Take the write lock for the final cycle write and update:
 - decisions and policy or plan refinements;
 - material pointer change count;
 - total cycle count, next action, and RPF status;
-- this run's active-runs row (remove it if the run is ending).
+- delegation counts, peak parallelism, serialization reasons, and prefetch
+  disposition;
+- this run's active-runs row, refreshed for the coordinator's stop decision.
 
 Material changes are goal, policy, plan, task, feedback, decision, and evidence
 changes. Cycle counters, timestamps, hashes, claim leases, active-run rows,
@@ -376,9 +397,17 @@ POINTER_REV: <integer after the final write>
 POINTER_HASH: <sha256 of the pointer after the final write>
 ACTIVE_PEERS: <integer live peer runs>
 CLAIM_CONFLICTS: <integer items skipped for peer claims>
+REVIEW_AGENTS: <integer reviewer agents launched this cycle>
+VERIFY_AGENTS: <integer finding or acceptance verifier agents launched this cycle>
+WORK_AGENTS: <integer implementation agents launched this cycle>
+RUNNABLE_UNITS: <integer substantive units considered for delegation>
+LOCAL_UNITS: <integer runnable units performed by the controller>
+PEAK_PARALLEL: <integer maximum simultaneously active child agents>
+SERIALIZATION_REASONS: <comma-separated dependency | overlap | host-limit | trivial-work | controller-only | none>
+PREFETCH: <reused=<integer>;produced=<integer>;discarded=<none|reasons>>
 NEW_FEEDBACK: <integer>
 GOAL_GAPS: <integer unresolved>
-PENDING_TASKS: <integer pending, active, or blocked>
+PENDING_TASKS: <integer pending, active, integrated, or blocked>
 MATERIAL_POINTER_CHANGES: <integer>
 COMMITS: <integer pushed>
 GATE_FIXES: <integer>
@@ -434,8 +463,8 @@ At the limit, set pointer status to `limit-reached` and preserve the next
 action. A later invocation with the same pointer resumes instead of starting
 over.
 
-Whatever the stop reason, remove this run's active-runs row and release its
-claims and locks before reporting.
+Whatever the stop reason, the invocation coordinator removes this run's row and
+releases its claims and locks under the write protocol before reporting.
 
 ## End-only deployment
 

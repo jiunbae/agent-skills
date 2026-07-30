@@ -1,6 +1,6 @@
 interface:
   display_name: "RPF"
-  short_description: "Drive multi-agent work from one living pointer document, safely shared across concurrent runs"
-  default_prompt: "Use $rpf to create or load a pointer document and iteratively review, plan, work, and incorporate feedback until its goals converge."
+  short_description: "Run a pipelined multi-agent pointer convergence loop"
+  default_prompt: "Use $rpf to run a cost-aware multi-agent review, plan, work, and feedback loop until the pointer goals converge."
 policy:
   allow_implicit_invocation: false

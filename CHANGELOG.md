@@ -43,6 +43,16 @@ empty `[Unreleased]` section above it.
   `~/.agents/skills`. Marker, error-code, environment-variable and legacy hash
   spellings intentionally keep the historical `workflow-studio` name so existing
   artifacts stay valid.
+- `agents/rpf` now schedules review, adversarial verification, implementation,
+  and targeted checks as rolling ready queues, and runs safe independent quality
+  gates concurrently instead of waiting at avoidable whole-wave barriers.
+  Delegation remains a cost-aware preference rather than a minimum-agent quota,
+  while cycle telemetry records runnable and local units, agent counts, peak
+  parallelism, and serialization reasons. Capability-based nested and flat
+  topologies preserve native fan-out on hosts with different delegation models.
+  A revision-fenced read-only prefetch can overlap the current cycle with
+  preparation for the next one; full cycle controllers, pointer writes,
+  integration, and convergence remain serial.
 - `agents/rpf` now treats concurrent access to one pointer document as a
   first-class case: several RPF runs from different tools (Claude Code, Codex,
   another IDE agent) or a human editor may hold the same `POINTER_DOC` at once.

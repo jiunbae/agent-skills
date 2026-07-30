@@ -1,8 +1,148 @@
 # RPF orchestration reference
 
-How Phase 1 fans out, what a finding must contain, how findings survive
-verification, and where artifacts live. The workflow, the pointer contract, and
-the stop conditions stay in `SKILL.md`.
+How RPF schedules agents, pipelines safe preparation, verifies findings, and
+stores artifacts. The workflow, pointer contract, and stop conditions stay in
+`SKILL.md`.
+
+## Contents
+
+- [Orchestration topology](#orchestration-topology)
+- [Scheduling and delegation](#scheduling-and-delegation)
+- [Rolling scheduler](#rolling-scheduler)
+- [Revision-fenced next-cycle prefetch](#revision-fenced-next-cycle-prefetch)
+- [Reviewer lenses](#reviewer-lenses-come-from-the-persona-library)
+- [Finding verification and aggregation](#finding-schema)
+- [Artifacts and retention](#artifacts-and-retention)
+- [Worker isolation](#worker-isolation)
+
+## Orchestration topology
+
+Choose topology from host capability, not product name:
+
+- **Nested:** when a fresh cycle controller can spawn and supervise child
+  agents, main launches one controller and waits for its cycle report.
+- **Flat:** when child agents cannot spawn children, main acts as the active
+  cycle controller and directly launches fresh reviewers, verifiers, workers,
+  and prefetch agents. Main follows the same controller prompt, single-writer
+  rule, report schema, and stop conditions.
+
+Prefer the topology that preserves native fan-out. Do not place scheduling
+inside a controller that cannot delegate, and do not fall back to role-playing
+multiple reviewers in one context merely to preserve the nested shape. Run only
+one active controller per invocation in either topology.
+
+## Scheduling and delegation
+
+A **runnable unit** is a substantive reviewer lens, finding-verification batch,
+implementation item, or acceptance-verification task whose dependencies are
+satisfied. Recompute runnable units whenever an agent finishes, a finding passes
+the kill gate, a diff integrates, or a claim changes.
+
+At each scheduling point:
+
+1. Enumerate runnable units and group those that can execute without shared
+   mutable state.
+2. Keep pointer writes, claim allocation, diff integration, commits, pushes,
+   deployment, and convergence decisions in the cycle controller.
+3. Prefer a native subagent for independent units that require meaningful
+   repository inspection, independent judgment, isolated writes, or non-trivial
+   verification. Work locally when the unit is trivial, tightly coupled to
+   controller state, or cheaper than delegation overhead.
+4. Launch independent agents together when the host supports batched spawn, then
+   refill useful slots as results arrive. Respect the host limit and any
+   configured token or cost bound.
+5. Never split or invent work merely to increase agent count.
+
+This is a scheduling preference, not a minimum-agent quota. A cycle with little
+independent work may correctly use few or no child agents, but its report must
+make that decision visible.
+
+Record:
+
+- `REVIEW_AGENTS`, `VERIFY_AGENTS`, and `WORK_AGENTS`: agents actually launched
+  in each category; a reused prefetch artifact is not a newly launched agent.
+- `RUNNABLE_UNITS`: distinct substantive units considered for delegation.
+- `LOCAL_UNITS`: runnable units the controller completed itself.
+- `PEAK_PARALLEL`: maximum child agents simultaneously active.
+- `SERIALIZATION_REASONS`: the actual constraints that prevented otherwise
+  useful overlap: `dependency`, `overlap`, `host-limit`, `trivial-work`, or
+  `controller-only`; use `none` when none applied.
+
+## Rolling scheduler
+
+Use dependency barriers, not whole-phase waiting:
+
+- **Review:** launch independent lenses together. As each reviewer returns,
+  enqueue its findings for adversarial verification while other reviewers keep
+  running. Phase 2 still waits until all selected review and kill-gate units are
+  terminal, because planning must account for every surviving finding.
+- **Implementation:** claim a maximal useful ready frontier. As each isolated
+  worker returns, verify its diff, integrate one accepted diff at a time, update
+  the DAG, then under one pointer lock mark it `integrated`, release its claim,
+  and claim the newly ready frontier. Dispatch without unrelated barriers.
+- **Verification:** start targeted verification when each worker completes.
+  Independent non-mutating gates may run concurrently against the same immutable
+  `HEAD`; gates that share outputs or depend on one another remain serial.
+
+Refresh the 900 s run lease before 450 s and each 1800 s work claim before 900 s
+while this scheduler is active. Do not rely on phase boundaries alone.
+
+## Revision-fenced next-cycle prefetch
+
+Pipeline cycles by preparing read-only review for the next controller, not by
+running multiple full cycle controllers concurrently. Prefetch is optional:
+launch it only when another cycle is likely, useful capacity remains, and an
+immutable snapshot plus a scope disjoint from active write claims are available.
+
+Each prefetch reviewer:
+
+- reads an immutable worktree or equivalent snapshot at `BASE_HEAD_SHA`;
+- captures `Review input revision` and `User instruction epoch` from the pointer;
+- declares exact path globs in `SCOPE`, hashes the sorted matched path names and
+  bytes as `SCOPE_HASH`, and records excluded active claims in `EXCLUDED_PATHS`;
+- writes only `R<TOTAL_CYCLE>-next-<persona>.md`, using this YAML frontmatter
+  before its normal finding payload:
+
+```yaml
+---
+rpf_prefetch: 1
+run_id: "rpf-codex-20260730T120000Z-a1b2"
+source_cycle: 12
+persona: security-reviewer
+base_head_sha: "<40-or-64-hex commit>"
+base_pointer_rev: 7
+review_input_rev: 4
+user_instruction_epoch: 2
+scope: ["src/auth/**", "tests/auth/**"]
+scope_hash: "<sha256>"
+excluded_paths: ["src/billing/**"]
+---
+```
+
+For `SCOPE_HASH`, expand the globs against repository-relative regular files,
+including untracked but non-ignored files. Sort POSIX-style paths bytewise; for
+each, append `path`, `NUL`, SHA-256 of its bytes, and `LF`, then SHA-256 the
+concatenation. This makes additions, removals, and content changes observable.
+
+The reviewer never edits source, `POINTER_DOC`, git state, claims, or run
+registration.
+
+At the start of the next cycle, reuse a prefetch artifact only when:
+
+1. `rpf_prefetch` is `1`, `run_id` matches, `source_cycle` is the immediately
+   preceding cycle from this invocation, and `base_pointer_rev` is not greater
+   than the current pointer revision;
+2. current `Review input revision` and `User instruction epoch` exactly match;
+3. the base commit exists and recomputing `scope_hash` by the algorithm above
+   produces the recorded value; and
+4. no live peer claim intersects `scope`.
+
+Treat a reusable artifact as one completed reviewer unit, then run its findings
+through the current cycle's kill gate. If any fence fails or cannot be checked,
+record the reason under `PREFETCH.discarded` and schedule that reviewer normally.
+Prefetch agents belong to the producing controller, are not peer RPF runs, and
+do not participate in convergence. Full cycle controllers, pointer writes,
+integration, and convergence remain serial within one invocation.
 
 ## Reviewer lenses come from the persona library
 
@@ -103,6 +243,8 @@ guard or caller that makes it safe.
   bare "looks fine".
 - A refuted finding is recorded as refuted with its evidence. It is not
   silently dropped, and it does not become a deferred item either.
+- Verifiers return structured verdicts to the controller and never append to a
+  shared artifact. The controller alone writes `R<TOTAL_CYCLE>-verify.md`.
 
 ## Aggregation
 
@@ -178,7 +320,8 @@ Phase 3 workers implement claimed work items. Give each worker the pointer path
 gates it must pass. Workers never edit `POINTER_DOC`, never commit, never push,
 and never deploy — the cycle controller integrates.
 
-Partition by file ownership: independent items run in parallel up to the host
-limit, dependent items run in sequential waves. Use worktrees or equivalent
-isolation when write ranges may overlap. Respect peer runs' claimed paths as
-described in `concurrency.md`.
+Partition by file ownership and run the ready frontier through the rolling
+scheduler above. Use worktrees or equivalent isolation when write ranges may
+overlap. Respect peer runs' claimed paths as described in `concurrency.md`.
+When a peer is live or the primary checkout is dirty, integrate into the run's
+dedicated worktree; repository-wide gates never run in the shared checkout.

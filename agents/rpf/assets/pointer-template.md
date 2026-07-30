@@ -18,7 +18,7 @@
 
 - [ ] Goals are satisfied with cited repository evidence.
 - [ ] No actionable feedback or unresolved goal gaps remain.
-- [ ] No pending, active, or blocked work remains.
+- [ ] No pending, active, integrated, or blocked work remains.
 - [ ] All configured quality gates pass.
 
 <!-- rpf:managed:start -->
@@ -30,6 +30,8 @@
 - Total cycles: 0
 - Cycles allocated: 0
 - Last completed cycle: 0
+- Review input revision: 0
+- User instruction epoch: 0
 - Next action: Inspect the repository and refine this pointer from evidence.
 
 ## Active runs
@@ -38,8 +40,8 @@ Rows are garbage-collected once `Lease expires` has passed. A run removes its
 own row before exiting. `Cycle` is the run's current `TOTAL_CYCLE`; review
 artifact retention must not delete a cycle a live row still holds.
 
-| Run ID | Tool | Cycle | Phase | Lease expires (UTC) | Claimed work | Claimed paths |
-|---|---|---|---|---|---|---|
+| Run ID | Tool | Cycle | Phase | Lease expires (UTC) | Target ref | Integration path | Claimed work | Claimed paths |
+|---|---|---|---|---|---|---|---|---|
 
 ## Current understanding
 
@@ -47,17 +49,22 @@ artifact retention must not delete a cycle a live row still holds.
 
 ## Goal gaps
 
-- Pending initial review.
+| ID | Status | Rev | Gap | Evidence |
+|---|---|---:|---|---|
+| GAP-001 | open | 0 | Pending initial review. | Bootstrap |
 
 ## Work queue
 
-| ID | Status | Sev | Prio | Owner | Claim expires (UTC) | Rev | Task | Acceptance criteria | Evidence |
-|---|---|---|---|---|---|---|---|---|---|
+| ID | Status | Sev | Prio | Deps | Owner | Claim expires (UTC) | Rev | Task | Acceptance criteria | Evidence |
+|---|---|---|---|---|---|---|---|---|---|---|
 
-Statuses: `pending`, `active`, `blocked`, `deferred`, `done`.
-`Sev`: `critical`, `high`, `medium`, `low`. `Owner` is the claiming `Run ID`;
-clear it and `Claim expires` when the item leaves `active`. `Rev` is the pointer
-revision at the last update to the row and decides merge conflicts.
+Statuses: `pending`, `active`, `integrated`, `blocked`, `deferred`, `done`.
+`Sev`: `critical`, `high`, `medium`, `low`. `Prio` is a non-negative integer;
+lower runs first. `Deps` is comma-separated work IDs or `-`. `Owner` is the
+claiming `Run ID`; clear it and `Claim expires` when the item leaves `active`.
+`integrated` means implementation and targeted checks passed, so dependents may
+start, but final acceptance is still pending. `Rev` is the pointer revision at
+the last row update and decides merge conflicts.
 
 ## Deferred findings
 
@@ -94,4 +101,12 @@ Also record merge conflicts, claim takeovers, and stale lock takeovers here.
 
 | Cycle | Run | Work ID or criterion | Evidence | Result |
 |---|---|---|---|---|
+
+## Cycle telemetry
+
+This is operational evidence, not a parallelism quota. `Serialization` records
+why otherwise useful overlap did not occur.
+
+| Cycle | Run | Review agents | Verify agents | Work agents | Runnable | Local | Peak | Serialization | Prefetch |
+|---|---|---:|---:|---:|---:|---:|---:|---|---|
 <!-- rpf:managed:end -->
