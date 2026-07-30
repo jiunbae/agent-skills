@@ -11,10 +11,15 @@ historical entry that predates the CalVer tags and is left as written.
 
 ## [Unreleased]
 
-Nothing below has been tagged. The most recent `v*` tag is `v2026.02.19.1`
-(2026-02-19) and every entry in this section landed after it. When the next `v*`
+Nothing below has been tagged. The most recent `v*` tag is `v2026.07.30.1`
+(2026-07-30) and every entry in this section landed after it. When the next `v*`
 tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
+
+## [2026.07.30.1] - 2026-07-30
+
+Everything below landed after `v2026.02.19.1` (2026-02-19) — 167 commits,
+including the whole of AIR Workbench.
 
 ### Added
 - Safe remote installer for the `agent-skills` repository.
