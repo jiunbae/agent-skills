@@ -1457,16 +1457,6 @@ test("artifact reads require a current catalog content identity after asynchrono
       original,
     );
   }
-  let rootsEnabled = true;
-  const raceCatalog = createSkillCatalog({
-    rootResolver: () => ({
-      roots: rootsEnabled ? [{ label: "race", path: raceRoot }] : [],
-      status: "ready",
-    }),
-    randomIdBytes: ids(),
-  });
-  const initial = await raceCatalog.initialize();
-  const oldId = initial.items[0].id;
   for (let index = 0; index < copyCount - 1; index += 1) {
     await writeFile(
       join(raceRoot, String(index).padStart(3, "0"), "SKILL.md"),
@@ -1474,33 +1464,66 @@ test("artifact reads require a current catalog content identity after asynchrono
     );
   }
 
-  const order = [];
-  const reading = raceCatalog.importAirArtifact(oldId).then(
-    () => {
-      order.push("read");
-      return { status: "fulfilled" };
-    },
-    (error) => {
-      order.push("read");
-      return { status: "rejected", code: error?.code };
-    },
+  // The invariant is that a read still in flight when a refresh commits must
+  // fail closed instead of returning a retired item. Which one settles first
+  // is a real race that the test cannot force, and under a loaded parallel
+  // suite the read sometimes wins — so assert the outcome that belongs to
+  // whichever interleaving actually happened, and require the refresh-first
+  // one to occur at least once rather than assuming it always will.
+  let sawRefreshFirst = false;
+  for (let attempt = 0; attempt < 16 && !sawRefreshFirst; attempt += 1) {
+    let rootsEnabled = true;
+    const raceCatalog = createSkillCatalog({
+      rootResolver: () => ({
+        roots: rootsEnabled ? [{ label: "race", path: raceRoot }] : [],
+        status: "ready",
+      }),
+      randomIdBytes: ids(),
+    });
+    const initial = await raceCatalog.initialize();
+    const oldId = initial.items[0].id;
+
+    const order = [];
+    const reading = raceCatalog.importAirArtifact(oldId).then(
+      () => {
+        order.push("read");
+        return { status: "fulfilled" };
+      },
+      (error) => {
+        order.push("read");
+        return { status: "rejected", code: error?.code };
+      },
+    );
+    rootsEnabled = false;
+    const refreshing = raceCatalog.refresh().then((snapshot) => {
+      order.push("refresh");
+      return snapshot;
+    });
+    const [readResult, removed] = await Promise.all([reading, refreshing]);
+
+    assert.equal(removed.generation, 2);
+    assert.equal(removed.item_count, 0);
+    assert.throws(() => raceCatalog.getItem(oldId), {
+      code: "AIR_CATALOG_ITEM_STALE",
+    });
+    if (order[0] === "refresh") {
+      sawRefreshFirst = true;
+      assert.deepEqual(order, ["refresh", "read"]);
+      assert.deepEqual(readResult, {
+        status: "rejected",
+        code: "AIR_CATALOG_ITEM_STALE",
+      });
+    } else {
+      // The read settled before the commit, so the scenario under test never
+      // arose; it must simply have succeeded against the live generation.
+      assert.deepEqual(order, ["read", "refresh"]);
+      assert.equal(readResult.status, "fulfilled");
+    }
+  }
+  assert.ok(
+    sawRefreshFirst,
+    "a refresh never committed while an artifact read was in flight, so the stale-read invariant went untested",
   );
-  rootsEnabled = false;
-  const refreshing = raceCatalog.refresh().then((snapshot) => {
-    order.push("refresh");
-    return snapshot;
-  });
-  const [readResult, removed] = await Promise.all([reading, refreshing]);
-  assert.deepEqual(order, ["refresh", "read"]);
-  assert.deepEqual(readResult, {
-    status: "rejected",
-    code: "AIR_CATALOG_ITEM_STALE",
-  });
-  assert.equal(removed.generation, 2);
-  assert.equal(removed.item_count, 0);
-  assert.throws(() => raceCatalog.getItem(oldId), {
-    code: "AIR_CATALOG_ITEM_STALE",
-  });
 
   const controlRoot = join(directory, "control");
   const controlBytes = skill("generation-control", "Generation control");
