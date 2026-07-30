@@ -313,7 +313,13 @@ function normalizeRoot(root, probed = false) {
     );
   }
   const mayBeOptional = probed === true || PROBE_ROOTS.has(root);
-  if (!mayBeOptional && root.optional !== undefined) {
+  // RPF-180: what must not be caller-settable is *optionality*, which is the
+  // value `true`. Rejecting `optional !== undefined` also rejected
+  // `optional: false` — the safe value, and the one every serialized form of
+  // `resolveSessionRoots()` output carries — so a caller could no longer copy,
+  // filter, structured-clone or round-trip the roots it had just been given.
+  // Admission rested on object identity, which no serialization preserves.
+  if (!mayBeOptional && root.optional === true) {
     throw new TypeError(
       "Session root optional is not caller-settable; only the probe locations from resolveSessionRoots() are optional.",
     );

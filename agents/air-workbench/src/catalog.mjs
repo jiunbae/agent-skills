@@ -147,8 +147,33 @@ const CATALOG_RELATIVE_LABEL_BYTES = 1024;
 // rather than guessed. Refusal is always omission, never a throw and never a
 // truncation, because a disclosure convenience must not become a catalog
 // outage.
+// RPF-177: a root shallow enough that "relative to it" reconstructs the
+// machine's own directory structure cannot produce a display label. With the
+// root at `/` the label *is* the absolute path minus its leading separator,
+// and with the root at `/Users` or `/home` the first segment is the account
+// name. The guard below refuses a leading separator; this one refuses the
+// case where the separator was merely the part that got removed.
+const CATALOG_RELATIVE_LABEL_MIN_ROOT_SEGMENTS = 2;
+
+// The other half of the same guard. A within-root location for a Skill is
+// shallow by construction: a grouped repository root publishes exactly
+// `<group>/<skill>`, a user root publishes `<skill>`, and a plugin root a
+// little more. A label many segments deep is not a location inside a root, it
+// is a filesystem path that happened to be measured from one, so it is omitted
+// for the same reason an absolute path is.
+const CATALOG_RELATIVE_LABEL_MAX_SEGMENTS = 4;
+
+function rootSegmentDepth(root) {
+  return root
+    .split(sep)
+    .filter((segment) => segment !== "" && segment !== ".").length;
+}
+
 function rootRelativeLabel(allowedRoot, parentRealpath) {
   if (typeof allowedRoot !== "string" || typeof parentRealpath !== "string") {
+    return null;
+  }
+  if (rootSegmentDepth(allowedRoot) < CATALOG_RELATIVE_LABEL_MIN_ROOT_SEGMENTS) {
     return null;
   }
   const label = relative(allowedRoot, parentRealpath);
@@ -160,6 +185,7 @@ function rootRelativeLabel(allowedRoot, parentRealpath) {
   ))) {
     return null;
   }
+  if (segments.length > CATALOG_RELATIVE_LABEL_MAX_SEGMENTS) return null;
   const posix = segments.join("/");
   if (Buffer.byteLength(posix, "utf8") > CATALOG_RELATIVE_LABEL_BYTES) {
     return null;
@@ -284,6 +310,34 @@ function pushUniqueRoot(roots, seen, root) {
   if (seen.has(key)) return;
   seen.add(key);
   roots.push(root);
+}
+
+// RPF-178: a published item names its origin only as `(source_kind,
+// source_label)`, and the Workbench joins items back to roots on exactly that
+// pair. Two distinct roots sharing one pair therefore make one root silently
+// overwrite the other, and an item supplied by a `missing` root reads as
+// observed by a `ready` one. `sanitizeLabel` admits the very shape
+// `defaultRootLabel` produces, so a caller-supplied label can collide with a
+// derived one, and callers may simply supply the same label twice. Uniqueness
+// is settled here, on the one list every root source converges into, rather
+// than in any single discovery path.
+function withUniqueSourceLabels(roots) {
+  const taken = new Set();
+  return roots.map((root) => {
+    const key = (value) => `${root.kind}\0${value}`;
+    if (!taken.has(key(root.label))) {
+      taken.add(key(root.label));
+      return root;
+    }
+    let label = defaultRootLabel(root.kind, root.path);
+    for (let attempt = 1; taken.has(key(label)); attempt += 1) {
+      label = `${root.kind}-${sha256(
+        Buffer.from(`${resolve(root.path)}\0${attempt}`, "utf8"),
+      ).slice(0, 16)}`;
+    }
+    taken.add(key(label));
+    return { ...root, label };
+  });
 }
 
 function mergedEnabledPluginLimits(overrides = {}) {
@@ -1327,7 +1381,9 @@ async function canonicalRootAuthorityMatches(root, state) {
 
 async function canonicalRoots(roots, state) {
   const canonical = [];
-  for (const root of roots.slice(0, state.limits.maxRoots)) {
+  for (const root of withUniqueSourceLabels(
+    roots.slice(0, state.limits.maxRoots),
+  )) {
     const rootState = {
       source_label: root.label,
       source_kind: root.kind,

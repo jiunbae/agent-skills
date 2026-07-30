@@ -3137,3 +3137,91 @@ test("a symlinked Skill directory labels against the target root, never above it
   assert.doesNotMatch(encoded, /\.\./u);
   assert.equal(encoded.includes(directory), false);
 });
+
+test("a label too deep to be a within-root location is omitted, not published", async (t) => {
+  // RPF-177: `relative_path` promises a location *within* a root. Nothing
+  // bounded it, so a root shallow enough that "relative to it" reconstructs
+  // the machine's directory structure published that structure verbatim — with
+  // the root at `/` the label is the absolute path minus its leading
+  // separator, and the leading-separator guard never fires because the
+  // separator is exactly the part `relative()` removed.
+  const directory = await mkdtemp(join(tmpdir(), "air-deep-label-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await put(
+    join(directory, "near", "SKILL.md"),
+    skill("near-skill", "A skill at a within-root location"),
+  );
+  await put(
+    join(directory, "a", "b", "c", "d", "e", "SKILL.md"),
+    skill("deep-skill", "A skill whose location is a filesystem path"),
+  );
+  const catalog = createSkillCatalog({
+    roots: [{ label: "user-root", kind: "user", path: directory }],
+    randomIdBytes: ids(),
+  });
+  const snapshot = await catalog.initialize();
+  const byName = new Map(snapshot.items.map((item) => [item.name, item]));
+  assert.equal(byName.size, 2, "both Skills must still be discovered");
+
+  // The shallow one still discloses where it is.
+  assert.equal(byName.get("near-skill").relative_path, "near");
+  // The deep one is discovered, named and openable — only the label is gone.
+  assert.equal(
+    Object.hasOwn(byName.get("deep-skill"), "relative_path"),
+    false,
+    "a label deeper than a within-root location must be omitted",
+  );
+  assert.equal(byName.get("deep-skill").name, "deep-skill");
+
+  // Omission is omission: never a truncation, never a partial path.
+  const encoded = JSON.stringify(snapshot);
+  assert.equal(encoded.includes(await realpath(directory)), false);
+  assert.doesNotMatch(encoded, /"relative_path":"a\/b/u);
+  assert.equal(snapshot.truncated, false);
+  assert.deepEqual(snapshot.roots[0].diagnostics, []);
+});
+
+test("two roots never publish the same source label for a consumer to join on", async (t) => {
+  // RPF-178: a published item names its origin only as `(source_kind,
+  // source_label)`, and the Workbench joins on exactly that pair. A
+  // caller-supplied label is allowed to take the very shape the derived
+  // fallback produces, so two distinct roots could mint one pair and one would
+  // silently overwrite the other — an item from a missing root then reads as
+  // observed by a ready one.
+  const directory = await mkdtemp(join(tmpdir(), "air-label-collision-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const alpha = join(directory, "alpha");
+  const beta = join(directory, "beta");
+  await put(join(alpha, "one", "SKILL.md"), skill("alpha-one", "Alpha skill"));
+  await put(join(beta, "two", "SKILL.md"), skill("beta-two", "Beta skill"));
+
+  // Both roots ask to be called the same thing.
+  const catalog = createSkillCatalog({
+    roots: [
+      { label: "shared-label", kind: "user", path: alpha },
+      { label: "shared-label", kind: "user", path: beta },
+    ],
+    randomIdBytes: ids(),
+  });
+  const snapshot = await catalog.initialize();
+  assert.equal(snapshot.item_count, 2);
+  assert.equal(snapshot.roots.length, 2, "both roots must still be published");
+
+  const pairs = snapshot.roots.map((root) => `${root.source_kind}\0${root.source_label}`);
+  assert.equal(
+    new Set(pairs).size,
+    pairs.length,
+    `every published (kind, label) pair must be unique; got ${JSON.stringify(pairs)}`,
+  );
+
+  // And every item's declared origin resolves to exactly one published root.
+  const published = new Set(pairs);
+  for (const item of snapshot.items) {
+    for (const source of item.source_labels) {
+      assert.ok(
+        published.has(`${source.kind}\0${source.label}`),
+        `item source ${source.kind}/${source.label} must name a published root`,
+      );
+    }
+  }
+});

@@ -100,15 +100,74 @@ test("AIR 1 schemas and OpenAPI publish one exact closed project contract", asyn
     description:
       "Display-only label, relative to the root that observed the record, published under the same local-only disclosure as an AIR locator. It is never authority, is never an addressable locator, and is never accepted as client input; selection remains by opaque item ID. The server emits it only when the relative form is non-empty, non-absolute, and free of \"..\", \".\", and empty segments, never publishes an absolute path or any path above the observing root, omits it rather than truncating or failing, and sheds it under response-byte pressure. It is identical on loopback and on an explicit --host 0.0.0.0 bind.",
   });
-  for (const [name, schema] of Object.entries(openapi.components.schemas)) {
-    if (!/^Session/u.test(name)) continue;
-    const properties = Object.keys(schema.properties ?? {});
-    assert.deepEqual(
-      properties.filter((key) => /(^|_)(path|paths|relative_path)$/u.test(key)),
-      [],
-      `session schema ${name} must not publish a path-like field`,
-    );
+  // RPF-181: this assertion used to read only the top-level `properties` of
+  // schemas whose *name* began with `Session`, which nine mutations out of ten
+  // walked straight past: a nested object, an array item, a `$defs` entry, an
+  // `allOf` branch, a differently-named schema pulled in by `$ref`, or the same
+  // field spelled `directory` or `locator` — the two spellings `sessions.mjs`
+  // actually uses internally. It now walks the whole schema graph reachable
+  // from the session surface and checks a vocabulary, not one spelling.
+  const PATH_LIKE = /(^|_)(paths?|dir|directory|directories|locator|root|roots|source_root|realpath|filename|file|cwd)$/u;
+  const schemasByName = openapi.components.schemas;
+  const sessionRoots = Object.keys(schemasByName).filter((name) =>
+    /^Session/u.test(name),
+  );
+  assert.ok(sessionRoots.length >= 3, "the session surface must be non-trivial");
+
+  const offenders = [];
+  const visited = new Set();
+  const walk = (node, trail) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const [index, entry] of node.entries()) {
+        walk(entry, `${trail}[${index}]`);
+      }
+      return;
+    }
+    if (typeof node.$ref === "string") {
+      const referenced = node.$ref.replace("#/components/schemas/", "");
+      if (
+        node.$ref.startsWith("#/components/schemas/") &&
+        !visited.has(referenced)
+      ) {
+        visited.add(referenced);
+        walk(schemasByName[referenced], `${trail} -> ${referenced}`);
+      }
+      return;
+    }
+    for (const key of ["properties", "patternProperties", "$defs"]) {
+      for (const [name, child] of Object.entries(node[key] ?? {})) {
+        if (key === "properties" && PATH_LIKE.test(name)) {
+          offenders.push(`${trail}.${name}`);
+        }
+        walk(child, `${trail}.${name}`);
+      }
+    }
+    for (const key of [
+      "items",
+      "additionalProperties",
+      "unevaluatedProperties",
+      "contains",
+      "not",
+      "if",
+      "then",
+      "else",
+    ]) {
+      if (typeof node[key] === "object") walk(node[key], `${trail}.${key}`);
+    }
+    for (const key of ["allOf", "anyOf", "oneOf", "prefixItems"]) {
+      walk(node[key], `${trail}.${key}`);
+    }
+  };
+  for (const name of sessionRoots) {
+    visited.add(name);
+    walk(schemasByName[name], name);
   }
+  assert.deepEqual(
+    offenders,
+    [],
+    `the session surface must publish no path-like field; found ${offenders.join(", ")}`,
+  );
   const sessionItems =
     openapi.components.schemas.SessionCatalog.properties.items;
   assert.equal(sessionItems.uniqueItems, true);

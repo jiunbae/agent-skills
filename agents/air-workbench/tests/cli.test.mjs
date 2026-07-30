@@ -864,16 +864,25 @@ test("run maps SIGINT and SIGTERM to AbortSignal cancellation and saves traces",
     // here was a guess that lost under load: the signal arrived at its default
     // disposition and the child died on `SIGINT` instead of exiting cleanly,
     // which flaked the release gate.
+    // RPF-179: the wait must not be able to leak the child. When the deadline
+    // assertion fired, `child.kill` below was skipped, the wrapper and its
+    // agent were orphaned, and `node --test` never exited — a ten-second
+    // failure became an indefinite release-gate hang.
     const deadline = Date.now() + 10_000;
-    for (;;) {
-      try {
-        await readFile(readyPath);
-        break;
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-        assert.ok(Date.now() < deadline, `${signal} agent never started`);
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    try {
+      for (;;) {
+        try {
+          await readFile(readyPath);
+          break;
+        } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+          assert.ok(Date.now() < deadline, `${signal} agent never started`);
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+        }
       }
+    } catch (error) {
+      child.kill("SIGKILL");
+      throw error;
     }
     child.kill(signal);
     const ended = await new Promise((resolvePromise, rejectPromise) => {

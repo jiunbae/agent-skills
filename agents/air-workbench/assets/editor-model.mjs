@@ -556,6 +556,13 @@ function airWorkflowProjection(artifact) {
           }
         : undefined,
       provenance: String(firstDefined(node?.provenance, node?.assertion, "declared")),
+      // RPF-172: carry the published assertion through the projection so a
+      // reopened artifact still knows the node was inferred, and so the
+      // inspector can show the artifact's own word rather than a proxy.
+      assertion: String(firstDefined(node?.assertion, node?.provenance, "declared")),
+      ...(node?.source_provenance === "inferred"
+        ? { source_provenance: "inferred" }
+        : {}),
       editable_fields: ["title", "body"],
       editable: { fields: ["title", "body"], structural: true },
     };
@@ -2468,6 +2475,11 @@ function airWorkflowBody(state, original) {
   const sourceId = String(firstDefined(originalSource.source_id, "source-skill"));
   const sourceMaps = candidateSourceMaps(state, candidateBytes, sourceId);
   const inbound = new Set(state.edges.map((edge) => edge.to));
+  const inferredNodeIds = new Set(
+    state.nodes
+      .filter((node) => airNodeAssertion(node) === "inferred")
+      .map((node) => node.id),
+  );
   return {
     source: {
       source_id: sourceId,
@@ -2488,13 +2500,16 @@ function airWorkflowBody(state, original) {
       entry_node_ids: state.nodes
         .filter((node) => !inbound.has(node.id))
         .map((node) => node.id),
+      // RPF-172: the browser builds AIR too, and hardcoding `declared` here
+      // reproduced the same overstatement the server had. Both halves now
+      // derive the assertion from the same evidence.
       nodes: state.nodes.map((node, order) => ({
         id: node.id,
         kind: "step",
         order,
         title: node.title,
         body: node.body,
-        assertion: "declared",
+        assertion: airNodeAssertion(node),
         confidence: clone(node.confidence),
         evidence_refs: clone(asArray(node.evidence_refs)),
       })),
@@ -2504,7 +2519,11 @@ function airWorkflowBody(state, original) {
         to: edge.to,
         kind: edge.kind,
         assertion:
-          edge.assertion === "inferred" || edge.provenance === "inferred"
+          edge.assertion === "inferred" ||
+          edge.provenance === "inferred" ||
+          // An order between inferred nodes is not a declared order.
+          inferredNodeIds.has(edge.from) ||
+          inferredNodeIds.has(edge.to)
             ? "inferred"
             : "declared",
         confidence: clone(edge.confidence),
@@ -2515,6 +2534,17 @@ function airWorkflowBody(state, original) {
     opaque_ranges: airOpaqueRanges(candidateBytes, sourceMaps),
     diagnostics: clone(asArray(original.body?.diagnostics)),
   };
+}
+
+// RPF-172: the browser's single answer to "did the recognizer read this node
+// or guess it?", mirroring `nodeAssertion` in `src/air.mjs`. A node the ladder
+// inferred keeps saying so through projection, edit and re-publication.
+function airNodeAssertion(node) {
+  return node?.source_provenance === "inferred" ||
+    node?.provenance === "inferred" ||
+    node?.assertion === "inferred"
+    ? "inferred"
+    : "declared";
 }
 
 function airDomainDigest(domain, value) {

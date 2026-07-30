@@ -113,7 +113,10 @@
           "maxLength": 33554432
         },
         "assertion": {
-          "const": "declared"
+          "enum": [
+            "declared",
+            "inferred"
+          ]
         },
         "confidence": {
           "$ref": "https://open330.github.io/air/schema/1.0.0/air.schema.json#/$defs/confidence"

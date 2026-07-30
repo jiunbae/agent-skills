@@ -54,8 +54,8 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
   "air-cli-server.test.mjs": 13,
   "air-spec.test.mjs": 2,
-  "air.test.mjs": 19,
-  "catalog.test.mjs": 46,
+  "air.test.mjs": 22,
+  "catalog.test.mjs": 48,
   "cli.test.mjs": 18,
   "core.test.mjs": 46,
   "editor.test.mjs": 65,
@@ -66,7 +66,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "schema-runtime-differential.test.mjs": 1,
   "server.test.mjs": 12,
   "session-api.test.mjs": 13,
-  "sessions.test.mjs": 48,
+  "sessions.test.mjs": 49,
 });
 const NON_TEXT_EXTENSIONS = new Set([
   ".7z",
@@ -257,7 +257,7 @@ async function verifyPackageAndSource() {
   });
   accessSync(browserEnvironment.executable, fsConstants.X_OK);
   for (const [name, expectedTests] of [
-    ["browser-air-workbench.mjs", 5],
+    ["browser-air-workbench.mjs", 6],
     ["browser-r10.mjs", 1],
     ["browser-exact-bound.mjs", 1],
   ]) {

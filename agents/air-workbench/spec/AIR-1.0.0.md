@@ -105,9 +105,23 @@ The workflow body is exactly `source`, `graph`, `source_maps`,
 authority and is omitted by default; an optional locator is explicitly
 `local-only` or `redacted`.
 
-Nodes are declared `step` records in canonical array order. Edges are
-`sequence` or `parallel` records and explicitly distinguish declared and
-inferred assertions. Confidence never changes an assertion. Every byte range
+Nodes are `step` records in canonical array order. Nodes and edges both
+explicitly distinguish `declared` and `inferred` assertions, from the same
+closed two-value set. A node is `declared` when the recognizer read it from an
+explicit structure the author wrote — an exact `## Workflow` heading, an
+explicit step number, or a declared ordered list. A node is `inferred` when the
+recognizer synthesized it, as the document-order rung does over ordinary prose
+sections that declare no workflow at all.
+
+An edge MUST NOT assert `declared` when either endpoint node asserts
+`inferred`: an order between steps whose existence was guessed at is itself
+guessed at. Producers MUST emit this consistency and validators MUST reject its
+violation.
+
+Confidence never changes an assertion. `confidence.rule_id` names the
+recognizer rule that produced the item, and `confidence.level` grades it, so a
+reader can tell *which* rule fired and how sure it is; neither may be used to
+soften an assertion that is already false. Every byte range
 is zero-based, half-open, and measured over UTF-8 bytes. Source-map spans plus
 opaque ranges MUST form an exact, non-overlapping partition of the source.
 Opaque hashes are ordinary SHA-256 over their exact ranges.
@@ -314,6 +328,35 @@ be inspected and value-preserved read-only, but mutation requires an exact
 supported schema and all required extensions. An unknown major is bounded
 metadata/download-only and otherwise produces
 `AIR_UNSUPPORTED_VERSION`.
+
+### 6.1 Recorded amendment: the workflow node `assertion` set
+
+The workflow node `assertion` was originally pinned to the single value
+`declared`. It is now the same closed two-value set the workflow edge has
+always carried, `declared` and `inferred`. This amendment does **not** move
+`air_version`, and the reasoning is recorded here rather than assumed.
+
+A version bump exists to tell a reader that the contract changed. Nothing
+changed about what this contract *means*. Emitting `declared` for a node the
+recognizer synthesized was already a violation of this document — the sentence
+above forbidding confidence from softening an assertion made that output
+non-conforming when it was written. Correcting a producer that was not
+conforming is not a new contract; every artifact that was genuinely valid under
+`1.0.0` is still valid, byte for byte, because the accepted value set was
+widened and never narrowed, and because no new vocabulary was introduced:
+`inferred` is already an AIR 1 assertion value on workflow edges and on trace
+`temporal` edges.
+
+The remaining asymmetry is deliberate. A reader pinned to the original node
+`const` will reject an artifact whose node asserts `inferred`. That rejection
+is the correct outcome and is why no bump is warranted: such a reader cannot
+represent an inferred node, and the only alternative available to it is to read
+the node as `declared`, which is precisely the falsehood this amendment
+removes. Failing closed on an artifact it cannot represent truthfully is
+required behaviour, not a compatibility break.
+
+The set stays closed. There is no third value and no open string, so a reader
+that accepts this amendment still validates a bounded vocabulary.
 
 Extension keys are absolute HTTPS URIs or reverse-DNS owner names containing a
 dot. Values are bounded JSON data. Extensions cannot shadow or change core

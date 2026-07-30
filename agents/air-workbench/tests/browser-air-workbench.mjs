@@ -2702,6 +2702,187 @@ test("AIR Workbench resource roving model remains bounded at 1,000 rows", async 
   }
 });
 
+test("AIR Workbench shows on screen whether a step was read or guessed at", async (t) => {
+  // RPF-172: a user must be able to tell a structure the recognizer read from
+  // one it synthesized. The prose fixture declares no workflow at all, so its
+  // nodes exist only through the inferring rung; the declared fixture numbers
+  // its steps explicitly.
+  const runtime = await browserRuntime();
+  if (runtime.skip) {
+    t.skip(runtime.skip);
+    return;
+  }
+  const inferredSkill = importSkillBytes(
+    Buffer.from(
+      `---\nname: prose-only\ndescription: A skill that declares no workflow.\n---\n\n# Prose Only\n\n## Purpose\n\nWhy this exists.\n\n## Inputs\n\nWhat it needs.\n\n## Outputs\n\nWhat it returns.\n`,
+      "utf8",
+    ),
+    { sourcePath: "prose-only/SKILL.md" },
+  );
+  const declaredSkill = importSkillBytes(
+    Buffer.from(
+      `---\nname: declared-flow\ndescription: A skill that declares its workflow.\n---\n\n# Declared Flow\n\n## Workflow\n\n### Step 1: Gather\n\nGather inputs.\n\n### Step 2: Emit\n\nEmit outputs.\n`,
+      "utf8",
+    ),
+    { sourcePath: "declared-flow/SKILL.md" },
+  );
+  // The artifact the browser receives must already carry the honest assertion.
+  const inferredAir = migrateLegacyToAir(inferredSkill);
+  assert.deepEqual(
+    [...new Set(inferredAir.body.graph.nodes.map((node) => node.assertion))],
+    ["inferred"],
+    "the prose-only artifact must publish inferred nodes",
+  );
+  assert.deepEqual(
+    [...new Set(inferredAir.body.graph.edges.map((edge) => edge.assertion))],
+    ["inferred"],
+    "an edge between inferred nodes cannot claim to be declared",
+  );
+  assert.deepEqual(
+    [
+      ...new Set(
+        migrateLegacyToAir(declaredSkill).body.graph.nodes.map(
+          (node) => node.assertion,
+        ),
+      ),
+    ],
+    ["declared"],
+    "an explicitly numbered workflow is still declared",
+  );
+
+  const { catalog, sessionRegistry } = await fixtures();
+  const studio = createStudioServer({
+    artifact: inferredAir,
+    assetsDir: ASSETS_DIR,
+    schemasDir: SCHEMAS_DIR,
+    catalog,
+    sessionRegistry,
+    host: "127.0.0.1",
+    port: 0,
+  });
+  const address = await studio.listen();
+  const instance = await runtime.chromium.launch({
+    executablePath: runtime.executablePath,
+    headless: true,
+  });
+  const context = await instance.newContext({
+    viewport: { width: 1440, height: 900 },
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(`console: ${message.text()}`);
+  });
+  try {
+    await page.goto(
+      `http://127.0.0.1:${address.port}/?token=${
+        encodeURIComponent(studio.token)
+      }&initial=explicit`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page.locator(".react-flow.air-flow-ready").waitFor({ state: "visible" });
+    assert.equal(await page.locator(".react-flow__node").count(), 3);
+
+    await page.locator(".react-flow__node").first().click();
+    await page.locator("#nodeAssertion").waitFor({ state: "visible" });
+
+    assert.equal(
+      await page.locator("#nodeAssertion").getAttribute("data-assertion"),
+      "inferred",
+      "an inferred node must say so in the inspector",
+    );
+    const assertionText =
+      (await page.locator("#nodeAssertion").textContent()) ?? "";
+    assert.match(assertionText, /inferred/u);
+    assert.match(
+      assertionText,
+      /the source declares no workflow/u,
+      "the reason must be spelled out, not left to the colour",
+    );
+    // The rung that produced the node is nameable on screen, and the level
+    // grades it.
+    const confidenceText =
+      (await page.locator("#nodeConfidence").textContent()) ?? "";
+    assert.match(confidenceText, /heuristic/u);
+    assert.match(
+      confidenceText,
+      /rule section\.order/u,
+      "the user can see which rung produced this node",
+    );
+    assert.equal(
+      await page.locator("#nodeProvenance").getAttribute("data-provenance"),
+      "inferred",
+    );
+    // Colour is a redundant cue, never the only one: the styled attribute is
+    // present alongside the spelled-out text.
+    assert.equal(
+      await page.locator("#nodeAssertion").evaluate(
+        (element) => getComputedStyle(element).color,
+      ),
+      await page.locator("#nodeConfidence").evaluate(
+        (element) => getComputedStyle(element).color,
+      ),
+      "the inferred assertion carries the same uncertainty cue as its level",
+    );
+
+    // A declared structure reads differently on the same screen.
+    const declaredStudio = createStudioServer({
+      artifact: migrateLegacyToAir(declaredSkill),
+      assetsDir: ASSETS_DIR,
+      schemasDir: SCHEMAS_DIR,
+      catalog,
+      sessionRegistry,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    const declaredAddress = await declaredStudio.listen();
+    const declaredPage = await context.newPage();
+    declaredPage.on("pageerror", (error) =>
+      errors.push(`pageerror: ${error.message}`),
+    );
+    declaredPage.on("console", (message) => {
+      if (message.type() === "error") errors.push(`console: ${message.text()}`);
+    });
+    try {
+      await declaredPage.goto(
+        `http://127.0.0.1:${declaredAddress.port}/?token=${
+          encodeURIComponent(declaredStudio.token)
+        }&initial=explicit`,
+        { waitUntil: "domcontentloaded" },
+      );
+      await declaredPage.locator(".react-flow.air-flow-ready")
+        .waitFor({ state: "visible" });
+      assert.equal(await declaredPage.locator(".react-flow__node").count(), 2);
+      await declaredPage.locator(".react-flow__node").first().click();
+      await declaredPage.locator("#nodeAssertion").waitFor({ state: "visible" });
+      assert.equal(
+        await declaredPage.locator("#nodeAssertion")
+          .getAttribute("data-assertion"),
+        "declared",
+        "an explicitly numbered step must not be labelled inferred",
+      );
+      assert.match(
+        (await declaredPage.locator("#nodeAssertion").textContent()) ?? "",
+        /read from an explicit structure/u,
+      );
+      assert.match(
+        (await declaredPage.locator("#nodeConfidence").textContent()) ?? "",
+        /structural/u,
+      );
+    } finally {
+      await declaredPage.close();
+      await declaredStudio.close();
+    }
+
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+    await instance.close();
+    await studio.close();
+  }
+});
+
 test("AIR Workbench finds a Skill by the directory label the catalog discloses", async (t) => {
   const runtime = await browserRuntime();
   if (runtime.skip) {

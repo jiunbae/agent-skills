@@ -100,6 +100,38 @@ empty `[Unreleased]` section above it.
   publish the `@open330/agt` npm package.
 
 ### Fixed
+- air-workbench: a step the recognizer *inferred* is no longer published as a
+  record the author *declared*. The AIR workflow node `assertion` was pinned to
+  the single value `declared`, so the ten of thirty-two repository Skills whose
+  graph exists only through the document-order rung claimed more certainty than
+  their source supports. `assertion` is now the same closed two-value set the
+  edge has always carried, an edge may no longer assert a declared order
+  between inferred nodes, and the node inspector spells out which of the two it
+  is and which recognizer rule produced it. `air_version` deliberately does not
+  move; the reasoning is recorded in `spec/AIR-1.0.0.md` §6.1. Every existing
+  `.air.json`, the `.air.md` carrier and the legacy bridge still validate and
+  round-trip byte-identically (RPF-172).
+- air-workbench: one ordinary `edit-node`, saved and reimported, no longer
+  destroys the record that a graph was inferred. The managed payload persisted
+  the edge's inference marker but had no node-level equivalent, so a rung-6
+  node silently became `explicit · managed.v1` (RPF-173).
+- air-workbench: the catalog's display-only `relative_path` is now bounded to a
+  location that is genuinely *inside* a root. Nothing stopped a root shallow
+  enough that "relative to it" reconstructs the machine's directory structure
+  from publishing it verbatim — with the root at `/` the label was the absolute
+  path minus its leading separator, so the leading-separator guard never fired
+  (RPF-177).
+- air-workbench: two Skill roots can no longer publish the same
+  `(source_kind, source_label)` pair. A published item names its origin only by
+  that pair and the Workbench joins on exactly it, so a collision made one root
+  silently overwrite the other and an item from a `missing` root read as
+  observed by a `ready` one (RPF-178).
+- air-workbench: a session root may again be copied, filtered or serialized and
+  handed back. The guard against caller-set optionality rejected
+  `optional: false` — the safe value, carried by every serialized form of
+  `resolveSessionRoots()` output — because admission rested on object identity.
+  Claiming `optional: true` is still refused however the root was obtained
+  (RPF-180).
 - korean-editor: `analyze_korean.py` no longer reports editorial signals from
   code fences, inline code, URLs, link destinations, or front matter. A Python
   comment reading `# 결론적으로 이 코드는 되어진다` previously produced two

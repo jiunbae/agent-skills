@@ -111,8 +111,40 @@ function normalizeDiagnostic(diagnostic) {
   };
 }
 
+// RPF-172: one place decides whether a graph item was read from the source or
+// guessed at, so the node and edge answers can never drift apart. The
+// recognition ladder marks only its inferring rung (`section.order`) with
+// `source_provenance`; rungs 1-5 read an explicit structure — an exact
+// `## Workflow` heading, an explicit step number, or a declared ordered list —
+// and stay `declared`.
+function nodeAssertion(node) {
+  return node?.source_provenance === "inferred" ||
+    node?.provenance === "inferred"
+    ? "inferred"
+    : "declared";
+}
+
+function edgeAssertion(edge, inferredNodeIds) {
+  if (
+    edge?.source_provenance === "inferred" ||
+    edge?.provenance === "inferred"
+  ) {
+    return "inferred";
+  }
+  // An order asserted between nodes that were themselves inferred is not a
+  // declared order, however the edge was produced.
+  return inferredNodeIds.has(edge?.from) || inferredNodeIds.has(edge?.to)
+    ? "inferred"
+    : "declared";
+}
+
 function workflowBody(workflow) {
   const sourceId = "source-skill";
+  const inferredNodeIds = new Set(
+    workflow.graph.nodes
+      .filter((node) => nodeAssertion(node) === "inferred")
+      .map((node) => node.id),
+  );
   return {
     source: {
       source_id: sourceId,
@@ -136,7 +168,11 @@ function workflowBody(workflow) {
         order,
         title: node.title,
         body: node.body,
-        assertion: "declared",
+        // RPF-172: a node the recognition ladder inferred says so. Rung 6
+        // synthesizes a step from an ordinary prose heading the author never
+        // declared a step, and labelling that `declared` made the artifact
+        // claim more certainty than the source supports.
+        assertion: nodeAssertion(node),
         confidence: clone(node.confidence),
         evidence_refs: [],
       })),
@@ -145,11 +181,9 @@ function workflowBody(workflow) {
         from: edge.from,
         to: edge.to,
         kind: edge.kind,
-        assertion:
-          edge.source_provenance === "inferred" ||
-          edge.provenance === "inferred"
-            ? "inferred"
-            : "declared",
+        // RPF-172: an edge cannot claim a declared order between nodes whose
+        // very existence as steps was inferred.
+        assertion: edgeAssertion(edge, inferredNodeIds),
         confidence: clone(edge.confidence),
         evidence_refs: [],
       })),
@@ -775,6 +809,7 @@ function validateWorkflowBody(artifact) {
     AIR_LIMITS.graphItems,
   );
   const nodeIds = [];
+  const inferredNodeIds = new Set();
   for (const [index, node] of nodes.entries()) {
     record(
       node,
@@ -788,9 +823,14 @@ function validateWorkflowBody(artifact) {
     if (
       node.kind !== "step" ||
       node.order !== index ||
-      node.assertion !== "declared"
+      // RPF-172: a closed enum, exactly as the edge's has always been. It is
+      // widened, never opened: no third value and no free string.
+      !["declared", "inferred"].includes(node.assertion)
     ) {
       throw airError("AIR_SEMANTIC_INVALID", `Workflow node ${index} is invalid.`);
+    }
+    if (node.assertion === "inferred") {
+      inferredNodeIds.add(node.id);
     }
     text(node.title, `workflow node ${index} title`, {
       maximum: AIR_LIMITS.title,
@@ -823,7 +863,12 @@ function validateWorkflowBody(artifact) {
     if (
       edgeIds.has(edge.id) ||
       !["sequence", "parallel"].includes(edge.kind) ||
-      !["declared", "inferred"].includes(edge.assertion)
+      !["declared", "inferred"].includes(edge.assertion) ||
+      // RPF-172: an order cannot be declared between nodes whose existence as
+      // steps was itself inferred. Rejecting it here stops an artifact from
+      // claiming, through the edge, the certainty the node just disclaimed.
+      (edge.assertion === "declared" &&
+        (inferredNodeIds.has(edge.from) || inferredNodeIds.has(edge.to)))
     ) {
       throw airError("AIR_SEMANTIC_INVALID", `Workflow edge ${index} is invalid.`);
     }

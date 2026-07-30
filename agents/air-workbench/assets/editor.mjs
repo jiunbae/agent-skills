@@ -712,6 +712,18 @@ function renderInspector() {
     element("nodeConfidence").dataset.confidenceLevel = String(
       node.confidence.level ?? "unknown",
     );
+    // RPF-172: the artifact's own word for whether this step was read or
+    // guessed at, spelled out rather than left for the reader to infer from
+    // the confidence level.
+    const assertion =
+      node.assertion === "inferred" || node.provenance === "inferred"
+        ? "inferred"
+        : "declared";
+    element("nodeAssertion").textContent =
+      assertion === "inferred"
+        ? "inferred — the recognizer synthesized this step; the source declares no workflow"
+        : "declared — read from an explicit structure in the source";
+    element("nodeAssertion").dataset.assertion = assertion;
     element("nodeProvenance").textContent = node.provenance;
     element("nodeProvenance").dataset.provenance = String(node.provenance);
     element("nodeMapping").textContent =

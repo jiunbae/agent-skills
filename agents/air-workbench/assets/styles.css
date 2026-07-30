@@ -851,6 +851,7 @@ fieldset {
    a redundant cue that the reading is uncertain, never the only cue. */
 #nodeConfidence[data-confidence-level="heuristic"],
 #nodeConfidence[data-confidence-level="unknown"],
+#nodeAssertion[data-assertion="inferred"],
 #nodeProvenance[data-provenance="inferred"],
 #edgeProvenance[data-provenance="inferred"] {
   color: var(--warning);

@@ -1191,3 +1191,162 @@ test("AIR integrity, closed roots, required extensions, and versions fail safely
     "AIR_UNSUPPORTED_VERSION",
   );
 });
+
+test("a node the recognizer inferred is published as inferred, not declared", () => {
+  // RPF-172: AIR pinned the node assertion to the const `declared`, so a node
+  // the document-order rung synthesized from an ordinary prose heading was
+  // published as a record the author had declared. Measured on 10 of the 32
+  // repository Skills. The enum is now the same closed two-value set the edge
+  // has always carried.
+  const prose = Buffer.from(
+    `---\nname: prose-only\ndescription: declares no workflow\n---\n\n## Purpose\n\nWhy.\n\n## Inputs\n\nWhat.\n\n## Outputs\n\nWhen.\n`,
+    "utf8",
+  );
+  const inferred = importSkillBytesAsAir(prose, {
+    sourcePath: "prose-only/SKILL.md",
+  });
+  validateAirArtifact(inferred);
+  assert.deepEqual(
+    [...new Set(inferred.body.graph.nodes.map((node) => node.assertion))],
+    ["inferred"],
+  );
+  // The rung that fired is nameable, and confidence grades it without being
+  // asked to soften the assertion.
+  for (const node of inferred.body.graph.nodes) {
+    assert.equal(node.confidence.level, "heuristic");
+    assert.equal(node.confidence.rule_id, "section.order");
+  }
+  // An order between inferred nodes is itself inferred.
+  assert.deepEqual(
+    [...new Set(inferred.body.graph.edges.map((edge) => edge.assertion))],
+    ["inferred"],
+  );
+
+  // Rungs that read an explicit structure keep asserting `declared`.
+  const declaredSources = {
+    "workflow.children": `## Workflow\n\n### Gather\n\nOne.\n\n### Emit\n\nTwo.\n`,
+    "numbered.h2": `## Step 1: Gather\n\nOne.\n\n## Step 2: Emit\n\nTwo.\n`,
+    "workflow.ordered-list": `## Workflow\n\n1. Gather inputs\n2. Emit outputs\n`,
+    "numbered.h3": `## Notes\n\n### Step 1: Gather\n\nOne.\n\n### Step 2: Emit\n\nTwo.\n`,
+  };
+  for (const [rule, body] of Object.entries(declaredSources)) {
+    const artifact = importSkillBytesAsAir(
+      Buffer.from(
+        `---\nname: declared\ndescription: declares its workflow\n---\n\n${body}`,
+        "utf8",
+      ),
+      { sourcePath: "declared/SKILL.md" },
+    );
+    validateAirArtifact(artifact);
+    assert.deepEqual(
+      [...new Set(artifact.body.graph.nodes.map((node) => node.assertion))],
+      ["declared"],
+      `${rule} reads an explicit structure and must stay declared`,
+    );
+    for (const node of artifact.body.graph.nodes) {
+      assert.equal(node.confidence.level, "structural");
+    }
+    for (const edge of artifact.body.graph.edges) {
+      assert.equal(edge.assertion, "declared");
+    }
+  }
+});
+
+test("the widened node assertion stays a closed set and binds the edges to it", () => {
+  // RPF-172: widened, never opened. And an edge may not out-claim its nodes.
+  const prose = Buffer.from(
+    `---\nname: prose-only\ndescription: declares no workflow\n---\n\n## Purpose\n\nWhy.\n\n## Inputs\n\nWhat.\n\n## Outputs\n\nWhen.\n`,
+    "utf8",
+  );
+  const base = importSkillBytesAsAir(prose, {
+    sourcePath: "prose-only/SKILL.md",
+  });
+
+  // Tampering alone is already refused by the content digest: the assertion is
+  // inside the sealed projection, so it cannot be edited in place at all.
+  const tampered = JSON.parse(JSON.stringify(base));
+  tampered.body.graph.nodes[0].assertion = "declared";
+  expectCode(() => validateAirArtifact(tampered), "AIR_INTEGRITY_MISMATCH");
+
+  // And with the seal recomputed, so a well-formed producer could genuinely
+  // emit it, the semantic rule still refuses every value outside the set.
+  for (const forged of ["observed", "assumed", "", "DECLARED", null]) {
+    const copy = JSON.parse(JSON.stringify(base));
+    copy.body.graph.nodes[0].assertion = forged;
+    expectCode(
+      () => validateAirArtifact(resealContent(copy)),
+      "AIR_SEMANTIC_INVALID",
+    );
+  }
+
+  // An edge cannot claim a declared order between inferred nodes.
+  const inconsistent = JSON.parse(JSON.stringify(base));
+  inconsistent.body.graph.edges[0].assertion = "declared";
+  expectCode(
+    () => validateAirArtifact(resealContent(inconsistent)),
+    "AIR_SEMANTIC_INVALID",
+  );
+
+  // A wholly declared graph is unaffected by that rule.
+  const declared = importSkillBytesAsAir(
+    Buffer.from(
+      `---\nname: declared\ndescription: declares its workflow\n---\n\n## Workflow\n\n### Gather\n\nOne.\n\n### Emit\n\nTwo.\n`,
+      "utf8",
+    ),
+    { sourcePath: "declared/SKILL.md" },
+  );
+  validateAirArtifact(declared);
+  assert.equal(declared.body.graph.edges[0].assertion, "declared");
+});
+
+test("widening the node assertion leaves every existing artifact valid", async () => {
+  // RPF-172: the accepted value set was widened and never narrowed, which is
+  // the whole justification for not moving `air_version`. Proven, not asserted.
+  const goldens = [
+    "examples/synthetic-trace.air.json",
+    "examples/synthetic-plan.air.json",
+    "examples/hello-agent/workflow.air.json",
+  ];
+  for (const relative of goldens) {
+    const raw = await readFile(resolve(import.meta.dirname, "..", relative));
+    const parsed = JSON.parse(raw.toString("utf8"));
+    validateAirArtifact(parsed);
+    assert.deepEqual(
+      Buffer.from(`${JSON.stringify(parsed, null, 2)}\n`, "utf8"),
+      raw,
+      `${relative} must still round-trip byte-identically`,
+    );
+  }
+
+  const carrierPath = resolve(
+    import.meta.dirname,
+    "../examples/hello-agent/workflow.air.md",
+  );
+  const carrierBytes = await readFile(carrierPath);
+  const decoded = decodeAirMarkdownArtifact(carrierBytes.toString("utf8"));
+  validateAirArtifact(decoded.artifact);
+  assert.equal(
+    Buffer.from(encodeAirMarkdownArtifact(decoded.artifact), "utf8").equals(
+      carrierBytes,
+    ),
+    true,
+    "the .air.md carrier must still round-trip byte-identically",
+  );
+  assert.deepEqual(
+    [
+      ...new Set(
+        decoded.artifact.body.graph.nodes.map((node) => node.assertion),
+      ),
+    ],
+    ["declared"],
+    "an artifact written before the amendment keeps its declared nodes",
+  );
+
+  // The legacy bridge is unaffected in both directions.
+  const back = migrateLegacyToAir(airToLegacy(decoded.artifact));
+  validateAirArtifact(back);
+  assert.deepEqual(
+    [...new Set(back.body.graph.nodes.map((node) => node.assertion))],
+    ["declared"],
+  );
+});

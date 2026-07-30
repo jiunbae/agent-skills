@@ -2489,3 +2489,62 @@ test("the session catalog byte ceiling publishes the catalog limit it enforces",
   assert.ok(Buffer.byteLength(JSON.stringify(catalog), "utf8") <= budget);
   assertPublishedIncompleteness(catalog, dirs);
 });
+
+test("the roots a caller was just given survive being copied or serialized", async (t) => {
+  // RPF-180: what must not be caller-settable is *optionality*, the value
+  // `true`. The guard rejected `optional !== undefined`, so it also rejected
+  // `optional: false` — the safe value, and the one every serialized form of
+  // `resolveSessionRoots()` output carries. Admission rested on object
+  // identity, which no copy, filter or `structuredClone` preserves, so a
+  // caller could not round-trip the roots it had just been handed through a
+  // config file or a worker message.
+  const dirs = await fixture(t);
+  await writeFile(join(dirs.codex, "ok.jsonl"), `{"prompt":"${SENTINEL}"}\n`);
+
+  // Explicitly declaring a configured root non-optional is the safe direction
+  // and must be accepted.
+  const explicit = createSessionRegistry({
+    roots: [{ path: dirs.codex, provider: "codex", optional: false }],
+    randomBytes: deterministicRandom(),
+  });
+  const explicitCatalog = await explicit.catalog({ refresh: true });
+  assert.equal(explicitCatalog.truncated, false);
+  assert.equal(explicitCatalog.items.length >= 1, true);
+
+  // The roots a caller was handed can be serialized and handed back. A copy is
+  // a configured root, not a probe location, so it must declare the safe value
+  // — and declaring it must be accepted rather than rejected.
+  const probeRoots = resolveSessionRoots({ home: dirs.root, cwd: dirs.root });
+  assert.equal(probeRoots.length > 0, true);
+  const roundTripped = JSON.parse(JSON.stringify(probeRoots)).map((root) => ({
+    ...root,
+    optional: false,
+  }));
+  assert.doesNotThrow(() =>
+    createSessionRegistry({
+      roots: roundTripped,
+      randomBytes: deterministicRandom(),
+    }),
+  );
+
+  // Optionality itself is still not caller-settable, however the root was
+  // obtained. A serialized probe root has lost the identity that authorized
+  // it, so re-claiming `true` is refused exactly as an invented root is.
+  for (const claimed of [
+    JSON.parse(JSON.stringify(probeRoots)),
+    [{
+      path: join(dirs.root, "absent-and-claimed-optional"),
+      provider: "claude",
+      optional: true,
+    }],
+  ]) {
+    assert.throws(
+      () =>
+        createSessionRegistry({
+          roots: claimed,
+          randomBytes: deterministicRandom(),
+        }),
+      (error) => error instanceof TypeError && /optional/u.test(error.message),
+    );
+  }
+});
