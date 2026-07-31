@@ -36,6 +36,18 @@ including the whole of AIR Workbench.
   footnotes, and warns when a Latin-script product or API name changes.
 
 ### Changed
+- `agents/rpf` now keeps `POINTER_DOC` as a self-sufficient hot control-plane
+  index and the sole state manifest/commit point while allowing cold or unusually
+  detailed managed records to move, when lifecycle and observed reread cost
+  justify it, into optional immutable revisioned shards in a directory derived
+  from the pointer path. Compaction has no hard byte threshold and existing
+  inline pointers remain valid. Root-resident high-watermarks and compact
+  representation/evidence indexes preserve stable IDs and prevent stale merge
+  resurrection; copy-on-write shards publish before a root-last CAS. Controllers
+  now give child roles exact digest-checked state bundles, forbid state-directory
+  scans, and fence prefetch against its precise reviewer-visible state. Durable
+  shard cleanup is live-reader-safe, best-effort, and separate from raw review
+  artifact retention (RPF-188).
 - Renamed the AIR Workbench package directory from `agents/workflow-studio` to
   `agents/air-workbench`, matching the name both READMEs already list. The
   documented `./install.sh agents/air-workbench` now works; previously only

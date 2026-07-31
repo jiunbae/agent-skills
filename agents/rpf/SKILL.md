@@ -5,17 +5,18 @@ description: Runs an explicit pointer-document-driven review, plan, work, and fe
 
 # RPF — pointer-driven review, plan, work, feedback
 
-Use one living pointer document as the source of truth. Re-read it throughout
-the run, compare the repository against it, update it with feedback and plans,
-schedule independent work across multiple agents, record evidence, and repeat.
+Use one living pointer as the self-sufficient hot control-plane index and source
+of truth. Re-read it throughout the run, update plans, schedule independent
+work, record evidence, and repeat. It may manifest immutable detail shards
+without making them another commit point.
 
 Mechanics live in `references/`, loaded when you need the how:
 
 - [references/concurrency.md](references/concurrency.md) — the pointer write
-  lock, compare-and-swap writes, merge rules, work claims, deploy exclusion,
-  git contention. **Read this before the first pointer write.**
+  lock, compare-and-swap and shard publication, merge rules, work claims,
+  deploy exclusion, and git contention. **Read this before the first write.**
 - [references/orchestration.md](references/orchestration.md) — personas,
-  delegation, rolling scheduling, cycle prefetch, verification, and artifacts.
+  state bundles, delegation, rolling scheduling, prefetch, and artifacts.
 - [references/detection.md](references/detection.md) — gate and deployment
   detection catalogs, and the deployment questions.
 
@@ -48,7 +49,10 @@ Before reviewing or changing code:
 
 1. Resolve `POINTER_DOC` to an absolute path. When the repository uses git
    worktrees, resolve against the primary checkout so concurrent runs converge
-   on the same file.
+   on the same file. Derive `STATE_DIR` by removing its final `.md` suffix
+   (`.context/rpf.md` → `.context/rpf/`). Create it only while publishing a
+   shard candidate; outside the GC exception in the concurrency reference,
+   never scan it and read only root-manifest selections.
 2. If it does not exist, create its parent directory and instantiate
    [assets/pointer-template.md](assets/pointer-template.md).
 3. For a new pointer, populate initial goals, policies, completion criteria, and
@@ -75,17 +79,23 @@ write. It does not claim an operating-system background file watcher.
 
 ## Pointer contract
 
-Treat the pointer as the living source of truth for:
+`POINTER_DOC` is the sole manifest and commit point. It must remain sufficient
+without shard reads for:
 
 - goals, policies, constraints, and completion criteria;
-- current understanding and goal gaps;
-- pending, active, integrated, blocked, deferred, and completed work;
-- deferred findings with the evidence and conditions that reopen them;
-- feedback from reviewers and users;
-- decisions with reasons;
-- implementation and verification evidence;
-- cycle-level delegation, parallelism, serialization, and prefetch telemetry;
-- active runs, total cycle count, current status, and next action.
+- concise consolidated current understanding and every open goal gap;
+- every pending, active, integrated, or blocked work row and its dependencies;
+- live runs, claims, counters, current status, and next action;
+- deferred findings and reopen conditions; and
+- compact root-only indexes needed to prevent duplicate/refuted work and prove
+  completion, including stable IDs, dispositions, and evidence references.
+
+Keep detailed or cold managed history inline, or store it in immutable
+revisioned shards under `STATE_DIR` when lifecycle and observed reread cost
+justify compaction. No byte size is a validity limit and existing inline
+pointers remain valid. The root manifest names each shard by exact path,
+SHA-256, and covered record IDs. Read only exact controller-resolved state
+bundles; never enumerate or scan `STATE_DIR` for ordinary state discovery.
 
 Evolve managed plans when evidence changes. Record proposed goal, policy, or
 completion-criteria changes in the managed block for user authorization; never
@@ -102,10 +112,12 @@ Writer rules:
   verifies the readback. The full protocol is in `references/concurrency.md`.
 - Treat the newest user-authored instruction as authoritative.
 - Allocate stable work IDs such as `RPF-001` and gap IDs such as `GAP-001` under
-  the write lock. Never silently delete unfinished peer work or gaps.
+  the write lock from root-resident high-watermarks. Initialize missing
+  high-watermarks from every existing ID before allocation or compaction. Never
+  silently delete unfinished peer work or gaps.
 
-Do not create a new plan document each cycle. Review evidence goes under
-`.context/reviews/`; plans and operational state stay in `POINTER_DOC`.
+Do not create a plan document each cycle. Put raw reviews in `.context/reviews/`
+and hot plans/coordination in `POINTER_DOC`; only manifested detail may use `STATE_DIR`.
 
 ## Concurrent runs
 
@@ -145,9 +157,9 @@ Read `references/concurrency.md` before the first write of the run.
 
 Perform once per invocation:
 
-1. Read repository instructions according to host precedence, including
-   `AGENTS.md`, `CLAUDE.md`, `.context/**`, `.cursorrules`, `CONTRIBUTING.md`,
-   and relevant `docs/` policies.
+1. Read repository instructions by host precedence: `AGENTS.md`, `CLAUDE.md`,
+   relevant `.context/**` outside `STATE_DIR` and raw `.context/reviews/`
+   (`REVIEW_DIR`), `.cursorrules`, `CONTRIBUTING.md`, and `docs/` policies.
 2. Create or load and announce `POINTER_DOC`; register this run.
 3. Read its saved total cycle count, resume state, and live peer runs.
 4. Detect quality gates and deployment targets using the catalogs in
@@ -229,6 +241,7 @@ You are the active cycle controller for invocation cycle <i>/<N> in:
 
 RUN_ID:       <run id>
 POINTER_DOC:  <absolute pointer path>
+STATE_DIR:    <absolute state directory derived from POINTER_DOC>
 SKILL_DIR:    <absolute path to this skill directory>
 REVIEW_DIR:   .context/reviews
 GATES:        <exact configured commands>
@@ -240,11 +253,12 @@ Read <SKILL_DIR>/references/concurrency.md before your first pointer write and
 <SKILL_DIR>/references/orchestration.md before Phase 1 fan-out. They are
 binding.
 
-The pointer document is the living source of truth and is shared with other
-agents. Re-read it before every phase and immediately before every write. You
-are the only writer inside this run; other agents in this run return proposed
-changes and evidence instead of editing it. Agents outside this run may edit it
-at any time, so every write is lock-guarded, hash-checked, and merged.
+The pointer is the sole state manifest and is shared with other agents. Re-read
+it before every phase and immediately before every write. You are the only
+writer inside this run; other agents return proposals. Agents outside this run
+may edit it at any time, so every write is locked, hash-checked, and merged.
+Resolve each child role's exact hash-bearing STATE_BUNDLE from the root
+manifest by the orchestration reference; children must not scan STATE_DIR.
 
 Allocate TOTAL_CYCLE now: take the pointer write lock, re-read, set
 TOTAL_CYCLE = Cycles allocated + 1, write back the incremented counter and this
@@ -255,11 +269,7 @@ Respect the dependency barriers between Phases 1 through 4, but pipeline
 independent work inside a phase and stream completed outputs into their next
 eligible stage. Follow the scheduling, delegation, and prefetch rules in the
 orchestration reference.
-
-=========================
 PHASE 1 — REVIEW AND FEEDBACK
-=========================
-
 Read POINTER_DOC, repository instructions, relevant project documentation,
 code, tests, and current git state. Review the repository against the pointer's
 goals, policies, constraints, work state, and completion criteria.
@@ -270,8 +280,8 @@ consistency). Validate any PREFETCH_ARTIFACTS first and count each reusable
 artifact as a completed reviewer unit. Schedule the remaining independent
 reviewer units up to the useful host limit and batch the rest.
 
-Each newly scheduled reviewer reads POINTER_DOC, inspects its complete relevant inventory,
-cites exact evidence, distinguishes findings from unverified risks, returns
+Each newly scheduled reviewer uses the immutable root payload and shards in its
+exact STATE_BUNDLE, inspects its complete relevant inventory, cites evidence, returns
 findings in the schema from the orchestration reference, and writes
 <REVIEW_DIR>/R<TOTAL_CYCLE>-<persona>.md. That artifact is a reviewer's only
 write: reviewers never edit source, POINTER_DOC, or git state.
@@ -285,11 +295,7 @@ Retry one reviewer failure once, dedup surviving findings by root_cause, note
 cross-reviewer agreement as raised confidence, and write
 <REVIEW_DIR>/R<TOTAL_CYCLE>-merged.md including an AGENT FAILURES section.
 Delete review artifacts older than the last 5 cycles.
-
-=========================
 PHASE 2 — PLAN AND POINTER UPDATE
-=========================
-
 Take the write lock, re-read, merge, and update the pointer:
 
 - refine current understanding and goal gaps;
@@ -314,10 +320,7 @@ rewrites, or feature ideas there.
 
 Do not implement during this phase.
 
-=========================
 PHASE 3 — MULTI-AGENT WORK
-=========================
-
 Re-read POINTER_DOC. Build the ready frontier: the maximal useful set of
 highest-priority ready items whose dependencies are satisfied and whose claims
 are free. Claim that frontier under the write lock with expiring leases. Skip
@@ -326,8 +329,8 @@ CLAIM_CONFLICTS. Register your own claimed globs.
 
 Run the claimed DAG through the orchestration reference's rolling scheduler,
 using worktrees or equivalent isolation where writes may overlap. Give each
-worker the pointer path, work IDs, acceptance criteria, owned files, and checks.
-Workers never edit POINTER_DOC, commit, push, or deploy.
+worker the pointer path, exact STATE_BUNDLE, work IDs, acceptance criteria,
+owned files, and checks. Workers never edit state, commit, push, or deploy.
 
 Use Ralph when the host exposes it, otherwise native implementation agents.
 As each worker finishes, inspect its actual diff and evidence, run its targeted
@@ -341,10 +344,7 @@ review exactly as the orchestration reference specifies.
 Take the write lock and update work statuses, implementation evidence, and
 claim leases. Preserve unrelated user and peer changes.
 
-=========================
 PHASE 4 — VERIFY, FEEDBACK, DELIVER
-=========================
-
 Verify acceptance criteria in the fenced integration worktree, then commit
 accepted code locally in fine-grained units by explicit path. Follow repository
 commit policy; if unspecified, use semantic messages with gitmoji and GPG.

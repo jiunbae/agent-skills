@@ -32,7 +32,31 @@
 - Last completed cycle: 0
 - Review input revision: 0
 - User instruction epoch: 0
+- State manifest revision: 0
+- Work ID high-watermark: 0
+- Gap ID high-watermark: 1
 - Next action: Inspect the repository and refine this pointer from evidence.
+
+This document is the self-sufficient hot control-plane index and the only
+manifest/commit point. Authored intent, live coordination, every nonterminal
+scheduling or convergence input, and compact anti-duplication and completion-
+evidence indexes remain inline. Detailed or cold managed records may stay
+inline indefinitely or move to immutable shards; sharding is never required by
+a byte limit.
+
+## State shard manifest
+
+`STATE_DIR` is derived from this pointer's resolved path. Paths below are
+POSIX-style paths relative to that directory. A shard is committed state only
+when this manifest references its exact digest. `Covers` is a comma-separated,
+bytewise-sorted list of exact root keys: an ordinary table row's `ID` or a
+durable index `Record ID`. It is a validation field, not a discovery query.
+`Purpose` is human-readable and never drives loading.
+Every `Detail shard` or `Shard ID` cell contains exactly one manifest
+`Shard ID`, or `-`; it never contains a path.
+
+| Shard ID | Kind | Rev | SHA-256 | Path | Covers | Purpose |
+|---|---|---:|---|---|---|---|
 
 ## Active runs
 
@@ -49,14 +73,14 @@ artifact retention must not delete a cycle a live row still holds.
 
 ## Goal gaps
 
-| ID | Status | Rev | Gap | Evidence |
-|---|---|---:|---|---|
-| GAP-001 | open | 0 | Pending initial review. | Bootstrap |
+| ID | Status | Rev | Gap | Evidence | Detail shard |
+|---|---|---:|---|---|---|
+| GAP-001 | open | 0 | Pending initial review. | Bootstrap | - |
 
 ## Work queue
 
-| ID | Status | Sev | Prio | Deps | Owner | Claim expires (UTC) | Rev | Task | Acceptance criteria | Evidence |
-|---|---|---|---|---|---|---|---|---|---|---|
+| ID | Status | Sev | Prio | Deps | Owner | Claim expires (UTC) | Rev | Task | Acceptance criteria | Evidence | Detail shard |
+|---|---|---|---|---|---|---|---|---|---|---|---|
 
 Statuses: `pending`, `active`, `integrated`, `blocked`, `deferred`, `done`.
 `Sev`: `critical`, `high`, `medium`, `low`. `Prio` is a non-negative integer;
@@ -64,7 +88,20 @@ lower runs first. `Deps` is comma-separated work IDs or `-`. `Owner` is the
 claiming `Run ID`; clear it and `Claim expires` when the item leaves `active`.
 `integrated` means implementation and targeted checks passed, so dependents may
 start, but final acceptance is still pending. `Rev` is the pointer revision at
-the last row update and decides merge conflicts.
+the last row update and decides merge conflicts. Keep every nonterminal row
+here. A terminal row may be represented by a compact durable-record index row
+after its optional detail shard is committed.
+
+## Durable record index
+
+This root-only index is the representation ledger and survives compaction.
+Keep stable IDs, dispositions/results, enough evidence to prevent duplicate
+work and prove completion, and an optional manifest `Shard ID` for detail.
+For append-only history without a native ID, use the stable merge key defined
+in the concurrency reference; changing its content creates a new record.
+
+| Record ID | Kind | Rev | Disposition or result | Compact evidence | Shard ID |
+|---|---|---:|---|---|---|
 
 ## Deferred findings
 
@@ -72,16 +109,16 @@ Every finding that is not scheduled is recorded here. Severity is never lowered
 to justify deferral, and security, correctness, or data-loss findings appear
 here only with a quoted repository rule that permits it.
 
-| ID | Sev | Confidence | Evidence (file:line) | Reason | Reopen when | Repo rule |
-|---|---|---|---|---|---|---|
+| ID | Sev | Confidence | Evidence (file:line) | Reason | Reopen when | Repo rule | Detail shard |
+|---|---|---|---|---|---|---|---|
 
 ## Refuted findings
 
 Findings that failed the adversarial kill gate. Kept so later cycles do not
 re-raise them without new evidence.
 
-| Cycle | ID | Claim | Refuting evidence |
-|---|---|---|---|
+| Cycle | ID | Claim | Refuting evidence | Detail shard |
+|---|---|---|---|---|
 
 ## Feedback
 

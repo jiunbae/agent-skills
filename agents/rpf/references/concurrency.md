@@ -5,9 +5,24 @@ may target the same `POINTER_DOC` at the same time. The pointer is the shared
 mutable state, so every writer follows this protocol. It is file-based and
 tool-neutral on purpose: correctness must not depend on which host is running.
 
+## Contents
+
+- [Identity and path resolution](#identity-and-path-resolution)
+- [Sidecar files and locks](#sidecar-files)
+- [Compare-and-swap and shards](#compare-and-swap-write)
+- [Invocation-coordinator writes](#invocation-coordinator-writes)
+- [Merge and revisions](#merge-rules)
+- [Cycle allocation and work claims](#cycle-number-allocation)
+- [Deploy and Git contention](#deploy-exclusion)
+- [Peers and convergence](#peers-and-convergence)
+
 Terms used below:
 
 - `POINTER_DOC` — absolute path to the pointer document.
+- `STATE_DIR` — sibling state directory formed by removing the final `.md`
+  suffix from resolved `POINTER_DOC`; `.context/rpf.md` maps to `.context/rpf/`.
+- State manifest — the root-resident table of immutable shard paths, revisions,
+  SHA-256 digests, covered logical records, and non-normative purposes.
 - `RUN_ID` — this run's identity, `rpf-<tool>-<UTC timestamp>-<4 hex>`,
   for example `rpf-claude-20260729T101500Z-9f3a`.
 - Managed block — the region between `<!-- rpf:managed:start -->` and
@@ -22,6 +37,11 @@ A copy in another checkout or git worktree is a *different* pointer and gives
 no mutual exclusion. When the repository uses worktrees, resolve the pointer
 against the primary checkout (`git rev-parse --git-common-dir` → its parent)
 before deciding that peers are coordinating.
+
+`POINTER_DOC` is the self-sufficient hot control-plane projection and the sole
+manifest and commit point. `STATE_DIR` is not independently discoverable state:
+an unmanifested file there is invisible. Create it only to publish a shard
+candidate under the write protocol; never scan it merely because it is derived.
 
 Compute `RUN_ID` once per invocation and reuse it in the run registry, work
 claims, decision log, artifact filenames, and cycle report. Record the target
@@ -127,15 +147,108 @@ every write is also validated against the content observed at read time.
 3. Re-read the pointer and compute `HASH_NOW`.
 4. If `HASH_NOW != HASH_READ`, apply the merge rules below against the current
    content instead of overwriting it.
-5. Increment `Pointer revision`, set `Last writer` to `RUN_ID`, and write
-   atomically: write `<dir>/.rpf.<RUN_ID>.tmp`, re-verify lock ownership as
-   described above, then `mv -f` the temporary file over the pointer. Rename
-   within a directory is atomic; in-place truncation is not.
+5. Publish any new immutable shards by the protocol below. Increment `Pointer
+   revision`, set `Last writer` to `RUN_ID`, and write
+   `<dir>/.rpf.<RUN_ID>.tmp`. Re-verify lock ownership, then re-hash the current
+   root and compare it to `HASH_NOW`; on change, discard the root temporary,
+   merge from the new root, and retry. Finally `mv -f` the temporary over the
+   pointer. Rename within a directory is atomic; in-place truncation is not.
 6. Re-read and verify the file hashes to what you just wrote. A mismatch means
    another writer clobbered the window: merge once more, and if it happens
    again, release the lock and report `blocked: concurrent pointer writer`.
 7. Release the lock. Keep the post-write hash as the new `HASH_READ` and as the
    `POINTER_HASH` reported for the cycle.
+
+## Optional immutable state shards
+
+Use shards only for cold history or unusually detailed managed records when
+their lifecycle and observed repeated-read cost justify it. This is advisory:
+there is no hard byte threshold, large live state may remain inline, and old
+inline pointers require no migration. Compaction is an optional Phase 2
+representation decision: never trigger it automatically from a size or cost
+measurement, and never require it for convergence. Never shard authored intent;
+active runs or claims; counters, status, or next action; open gaps; nonterminal
+work scheduling, dependency, or acceptance fields; deferred reopen inputs; or
+compact anti-duplication and completion-evidence indexes. Supplemental
+nonterminal detail may use an explicit root `Detail shard` reference.
+
+### Copy-on-write publication
+
+The pointer lock remains the sole writer coordinator and the root is published
+last:
+
+1. Under the lock, re-read and deterministically merge the root. Choose the
+   next pointer revision; advance `State manifest revision` only when its rows
+   change.
+2. Render each shard as a complete immutable revision. Use a unique path such
+   as `<kind>-r<root-rev>-<digest-prefix>.md`, write a temporary inside
+   `STATE_DIR`, re-check lock ownership, atomically rename it, and verify its
+   SHA-256. Never overwrite a published shard.
+3. Update root compact indexes and construct the manifest from only the shards
+   referenced by their winning representations or live root detail references.
+   `Covers` is the bytewise-sorted exact list of those root record IDs;
+   `Purpose` is non-normative prose and never selects state.
+4. Perform the root-last compare-and-swap and readback above. Only that root
+   publication commits the shards. A failed CAS can leave invisible orphans;
+   do not repair correctness by editing them in place.
+
+Compaction is a representation transition, not deletion. For terminal Work or
+Gap records, write a root durable-index row with the same logical ID and a
+higher `Rev`; it suppresses an inline representation at a lower `Rev`, while a
+higher inline `Rev` wins. An equal-`Rev` representation conflict keeps the
+currently published root, records both forms, and sets `blocked`. For compacted
+append-only superseded Understanding, Feedback, Decision, Refuted,
+Verification, or Telemetry history, use its exact stable merge key below as
+`Record ID`; that durable row suppresses the identical inline key regardless
+of the inline schema lacking `Rev`. Append-only content
+never mutates: changed content is a new key and record. The durable row's `Rev`
+orders only competing compact representations.
+
+At equal durable `Rev`, different shard IDs or digests keep the currently
+published root representation, log both hashes, and set `blocked`; never choose
+silently by row hash. Otherwise apply the row-hash tie-break. Recompute the
+manifest from winning references; do not union stale unreferenced manifest
+rows. A concise consolidated current understanding, live/nonterminal fields,
+and deferred reopen records remain root-resident; only superseded understanding
+history is compactable.
+
+`Work ID high-watermark` and `Gap ID high-watermark` live only in the root,
+max-merge like other counters, and advance under the lock before allocating an
+ID. Before allocation or the first compaction of an older pointer that lacks
+them, initialize each from the maximum numeric suffix among root row/index IDs
+and manifest `Covers` IDs; never open shards or scan `STATE_DIR`. Format new IDs
+with at least three digits, allowing them to grow beyond 999.
+
+### Fenced reads
+
+The controller reads a logical state snapshot as follows:
+
+1. Read root bytes, `Pointer revision`, `State manifest revision`, and hash.
+2. Select the exact root rows required by the role, then follow only their
+   explicit `Detail shard` or `Shard ID` references. Require each referenced
+   manifest row's `Covers` list to contain that root record ID. Reject absolute
+   paths, traversal, or paths outside `STATE_DIR`; never use `Purpose` to load.
+3. Sort selected manifest paths bytewise, read only those files, and verify
+   each digest. Never list, glob, or scan `STATE_DIR` to discover state.
+4. Re-read the root. Use the captured bytes only when its revision, manifest
+   revision, and hash are unchanged; otherwise discard everything and retry.
+
+Pass ordinary reviewer, verifier, and worker children the exact captured root
+bytes, their hash and fence, and the bytewise path-ordered `(path, SHA-256)`
+shard set as `STATE_BUNDLE`. A child hashes that supplied payload instead of
+re-reading the mutable pointer, validates every shard, and returns its fence.
+Prefetch alone receives the canonical reviewer projection defined in
+`orchestration.md`; it never receives the full root. Reject results whose
+relevant root payload or shard set changed. Root-only roles use no shards.
+
+Durable shards are not raw review artifacts and are never subject to the
+five-cycle review retention rule. Cleanup is best-effort and irrelevant to
+correctness: delete only unreferenced immutable files, only while holding the
+pointer lock, when no peer run is live and no child or local reader still holds
+an older root fence. The controller tracks each dispatched child fence until a
+terminal acknowledgement. Listing `STATE_DIR` solely to identify unreferenced
+immutable files under these cleanup conditions is the only enumeration
+exception; listed bytes never become state. Conservative retention is valid.
 
 ## Invocation-coordinator writes
 
@@ -169,21 +282,35 @@ conflict the same way.
   exact UTF-8 row SHA-256 sorts first. Log both row hashes and the rejected row.
   Never delete unfinished peer work.
 - **Current understanding** — union evidence-bearing entries by content hash.
-  Preserve contradictory entries and append a decision-log conflict rather than
-  choosing one silently; sort the result by content hash.
+  Preserve contradictory current entries and append a decision-log conflict
+  rather than choosing one silently; sort by content hash. Then let a durable
+  `understanding:(content hash)` key suppress only an explicitly superseded
+  inline entry. Keep a concise consolidated current understanding in the root.
 - **Goal gaps** — keyed by gap ID; take the union. Higher `Rev` wins; on equal
   `Rev`, `open` beats `resolved`; if status ties, use the same row-hash
   tie-break as the work queue.
 - **Feedback, decision log, refuted findings, verification evidence, cycle
-  telemetry** — append-only. Union by `(ID or cycle, run, content hash)`; never
-  rewrite or renumber existing rows. Sort the union bytewise by that tuple.
+  telemetry** — append-only; never rewrite or renumber an inline row. Stable
+  merge keys are `understanding:(content hash)`,
+  `feedback:(ID):(content hash)`,
+  `decision:(Rev):(Cycle):(Run):(content hash)`,
+  `refuted:(Cycle):(ID):(content hash)`,
+  `verification:(Cycle):(Run):(Work ID or criterion):(content hash)`, and
+  `telemetry:(Cycle):(Run):(content hash)`. Union and sort bytewise by those
+  keys. Here `content hash` is SHA-256 of the exact UTF-8 inline row or entry
+  bytes. A durable-index row with the exact key suppresses its inline copy.
+- **Durable record index** — keyed by logical record ID. Union it with inline
+  representations using the compaction rule above. Derive the state manifest
+  from winning references; an unreferenced shard row is not resurrected.
 - **Deferred findings** — union by finding ID. Never let a merge drop a
   deferred record or lower its severity or confidence. For duplicate IDs, take
   the higher severity and confidence and union distinct evidence, reason, reopen,
   and rule text in bytewise content-hash order.
 - **Counters** — `Total cycles`, `Cycles allocated`, `Last completed cycle`,
-  `Review input revision`, and `User instruction epoch` take the maximum.
-  `Pointer revision` is the maximum plus one.
+  `Review input revision`, `User instruction epoch`, `State manifest revision`,
+  and both ID high-watermarks take the maximum. Increment the merged state
+  manifest revision once when its derived rows differ from the currently
+  published root. `Pointer revision` is the maximum plus one.
 - **Active runs** — union by run ID; on duplicates take the row with the later
   lease expiry; if expiry ties, use the row-hash tie-break. Drop only expired
   rows and sort the union by run ID.
@@ -201,8 +328,10 @@ Increment `Review input revision` once, under the pointer lock, for a write that
 changes any authored goal, policy, or completion criterion; current
 understanding; gap identity or text; structural work fields (`ID`, `Sev`,
 `Prio`, `Deps`, `Task`, `Acceptance criteria`); or deferred, refuted, feedback,
-or decision content. Do not increment it for status, owner, lease, evidence,
-counter, active-run, verification, or telemetry-only changes.
+or decision content. Also increment it when a manifest transition changes the
+canonical reviewer payload or a selected shard digest. Do not increment it for
+status, owner, lease, evidence, counter, active-run, verification, or
+telemetry-only changes outside that reviewer-visible transition.
 
 Allocate `User instruction epoch` under the same lock for every new
 conversational instruction recorded in Feedback. A detected relevant human or
@@ -239,6 +368,14 @@ files.
   starting work, compare against peers' claimed paths: on overlap, leave the
   item `pending` for the peer and pick the next ready item. Count each such
   skip in `CLAIM_CONFLICTS`.
+
+Use one conservative overlap rule for claims and prefetch scopes. Normalize
+patterns to repository-relative POSIX form and reject absolute paths or `..`.
+For each pattern, take the literal prefix before its first `*`, `?`, or `[`.
+An empty prefix overlaps everything. Two exact patterns overlap only when equal;
+otherwise they overlap when either literal prefix is a byte prefix of the
+other. This may serialize disjoint globs, but never lets hosts disagree on a
+possibly unsafe overlap.
 
 ## Deploy exclusion
 

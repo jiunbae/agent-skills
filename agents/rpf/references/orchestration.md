@@ -9,6 +9,7 @@ stores artifacts. The workflow, pointer contract, and stop conditions stay in
 - [Orchestration topology](#orchestration-topology)
 - [Scheduling and delegation](#scheduling-and-delegation)
 - [Rolling scheduler](#rolling-scheduler)
+- [State-bundle loading](#state-bundle-loading)
 - [Revision-fenced next-cycle prefetch](#revision-fenced-next-cycle-prefetch)
 - [Reviewer lenses](#reviewer-lenses-come-from-the-persona-library)
 - [Finding verification and aggregation](#finding-schema)
@@ -87,6 +88,39 @@ Use dependency barriers, not whole-phase waiting:
 Refresh the 900 s run lease before 450 s and each 1800 s work claim before 900 s
 while this scheduler is active. Do not rely on phase boundaries alone.
 
+## State-bundle loading
+
+The controller always reads the self-sufficient root pointer. For a reviewer,
+verifier, worker, or prefetch unit, select the required root rows first, then
+follow only their explicit `Detail shard` or `Shard ID` references. Validate
+that each manifest `Covers` list contains the referring record ID; `Purpose`
+is non-normative and never selects state. Sort selected paths bytewise.
+Preserve cost-aware scheduling: an empty bundle is normal, and shard
+availability never creates a runnable unit.
+
+Pass a `STATE_BUNDLE` containing captured `POINTER_REV`, `POINTER_HASH`,
+`STATE_MANIFEST_REV`, immutable `ROOT_PAYLOAD` bytes plus
+`ROOT_PAYLOAD_SHA256`, and a bytewise path-ordered list of exact
+STATE_DIR-relative paths and SHA-256 digests. Validate it by `concurrency.md`
+before dispatch. For ordinary reviewer, verifier, and worker units,
+`ROOT_PAYLOAD` is the exact captured root bytes. Children hash it, read only
+declared shards, validate digests, and return the fence; they never re-read the
+mutable pointer as task state or scan `STATE_DIR`. Prefetch uses only the
+canonical reviewer projection below. On relevant change, resolve a fresh
+bundle and retry or merge the result as the phase permits.
+
+Role minima are normative:
+
+- reviewer — authored criteria and the lens/scope root rows, including every
+  referenced open gap, live/deferred item, decision, refutation, and evidence;
+- verifier — the assigned finding, cited evidence, and associated work or
+  decision rows;
+- worker — `ID`, `Status`, `Sev`, `Prio`, `Deps`, `Task`, `Acceptance
+  criteria`, `Evidence`, and `Detail shard` for each claimed row and its full
+  transitive dependency closure, plus every referenced shard; and
+- prefetch — exactly the reviewer payload and shards hashed by
+  `REVIEW_STATE_HASH`, selected identically again on reuse.
+
 ## Revision-fenced next-cycle prefetch
 
 Pipeline cycles by preparing read-only review for the next controller, not by
@@ -98,6 +132,8 @@ Each prefetch reviewer:
 
 - reads an immutable worktree or equivalent snapshot at `BASE_HEAD_SHA`;
 - captures `Review input revision` and `User instruction epoch` from the pointer;
+- receives a `STATE_BUNDLE` whose root payload is the canonical reviewer
+  projection below, never the full root, and captures its manifest revision;
 - declares exact path globs in `SCOPE`, hashes the sorted matched path names and
   bytes as `SCOPE_HASH`, and records excluded active claims in `EXCLUDED_PATHS`;
 - writes only `R<TOTAL_CYCLE>-next-<persona>.md`, using this YAML frontmatter
@@ -111,8 +147,15 @@ source_cycle: 12
 persona: security-reviewer
 base_head_sha: "<40-or-64-hex commit>"
 base_pointer_rev: 7
+base_pointer_hash: "<sha256>"
 review_input_rev: 4
 user_instruction_epoch: 2
+state_manifest_rev: 3
+review_state_hash: "<sha256>"
+root_payload_sha256: "<sha256>"
+state_bundle:
+  - path: "evidence/evidence-r7-a1b2c3d4.md"
+    sha256: "<sha256>"
 scope: ["src/auth/**", "tests/auth/**"]
 scope_hash: "<sha256>"
 excluded_paths: ["src/billing/**"]
@@ -125,7 +168,25 @@ each, append `path`, `NUL`, SHA-256 of its bytes, and `LF`, then SHA-256 the
 concatenation. This makes additions, removals, and content changes observable.
 
 The reviewer never edits source, `POINTER_DOC`, git state, claims, or run
-registration.
+registration. It uses the declared review-state projection and selected shard
+bytes as its only pointer-state inputs; unrelated root bookkeeping is not an
+implicit input.
+
+The reviewer `ROOT_PAYLOAD` field set is authored Goal, Policies and
+constraints, and Completion criteria; Current understanding; gap ID, status,
+text, evidence, and detail shard; work `ID`, `Status`, `Sev`, `Prio`, `Deps`,
+`Task`, `Acceptance criteria`, `Evidence`, and `Detail shard`; and every field
+of selected Deferred, Refuted, Feedback, Decision, Durable record, and
+Verification evidence rows. It excludes leases, owners, claim expiries,
+counters, and telemetry. `REVIEW_STATE_HASH` is SHA-256 of these exact canonical
+`ROOT_PAYLOAD` bytes followed by each selected shard's relative path, `NUL`,
+digest, and `LF` in bytewise path order. For prefetch,
+`ROOT_PAYLOAD_SHA256` hashes exactly this root projection.
+
+Serialize that projection in the listed section/field order and pointer row
+order. For each value append stable row ID or scalar name, `NUL`, field name,
+`NUL`, exact logical cell/body UTF-8 bytes, and `LF`. For a row without an ID,
+use `<section>:<sha256-of-exact-row-bytes>`.
 
 At the start of the next cycle, reuse a prefetch artifact only when:
 
@@ -133,9 +194,13 @@ At the start of the next cycle, reuse a prefetch artifact only when:
    preceding cycle from this invocation, and `base_pointer_rev` is not greater
    than the current pointer revision;
 2. current `Review input revision` and `User instruction epoch` exactly match;
-3. the base commit exists and recomputing `scope_hash` by the algorithm above
+3. a freshly resolved reviewer bundle validates, and its root-payload hash,
+   bytewise ordered `(path, SHA-256)` list, and canonical `review_state_hash`
+   exactly match the artifact;
+4. the base commit exists and recomputing `scope_hash` by the algorithm above
    produces the recorded value; and
-4. no live peer claim intersects `scope`.
+5. no live peer claim intersects `scope` by the deterministic overlap rule in
+   `concurrency.md`.
 
 Treat a reusable artifact as one completed reviewer unit, then run its findings
 through the current cycle's kill gate. If any fence fails or cannot be checked,
@@ -296,8 +361,13 @@ worker per cycle:
 `TOTAL_CYCLE` is allocated under the pointer write lock, so filenames never
 collide between concurrent runs.
 
-Plans and operational state never go here — they belong in `POINTER_DOC`. Do
-not create a new plan document per cycle.
+Plans and operational state never go in `REVIEW_DIR`. Hot state belongs in
+`POINTER_DOC`; optional durable detail belongs only in root-manifested shards.
+Do not create a new plan document per cycle.
+
+Optional immutable shards under pointer-derived `STATE_DIR` are durable managed
+state, not review artifacts. The five-cycle rule below never deletes them;
+their live-reader-safe, best-effort cleanup follows `concurrency.md`.
 
 Retention: keep the **last 5 cycles** of review artifacts and delete older ones
 at the start of each cycle. Never delete artifacts for a cycle that a live run
@@ -316,9 +386,9 @@ ambiguous — 128 cycles of reviewer output is not incidental history.
 ## Worker isolation
 
 Phase 3 workers implement claimed work items. Give each worker the pointer path
-(read-only), its exact work IDs, acceptance criteria, owned file globs, and the
-gates it must pass. Workers never edit `POINTER_DOC`, never commit, never push,
-and never deploy — the cycle controller integrates.
+(read-only), exact `STATE_BUNDLE`, work IDs, acceptance criteria, owned file
+globs, and gates. Workers never edit state, commit, push, or deploy — the cycle
+controller integrates.
 
 Partition by file ownership and run the ready frontier through the rolling
 scheduler above. Use worktrees or equivalent isolation when write ranges may
