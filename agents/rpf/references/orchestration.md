@@ -93,10 +93,13 @@ while this scheduler is active. Do not rely on phase boundaries alone.
 The controller always reads the self-sufficient root pointer. For a reviewer,
 verifier, worker, or prefetch unit, select the required root rows first, then
 follow only their explicit `Detail shard` or `Shard ID` references. Validate
-that each manifest `Covers` list contains the referring record ID; `Purpose`
-is non-normative and never selects state. Sort selected paths bytewise.
-Preserve cost-aware scheduling: an empty bundle is normal, and shard
-availability never creates a runnable unit.
+the manifest identity rules in `concurrency.md`: collapse byte-identical rows,
+require exactly one canonical tuple row for each referenced ID, and reject a
+divergent duplicate ID or one path with conflicting digests. Then require each
+selected row's `Covers` list to contain the referring record ID; `Purpose` is
+non-normative and never selects state. Sort selected paths bytewise. Preserve
+cost-aware scheduling: an empty bundle is normal, and shard availability never
+creates a runnable unit.
 
 Pass a `STATE_BUNDLE` containing captured `POINTER_REV`, `POINTER_HASH`,
 `STATE_MANIFEST_REV`, immutable `ROOT_PAYLOAD` bytes plus
@@ -200,7 +203,8 @@ At the start of the next cycle, reuse a prefetch artifact only when:
 4. the base commit exists and recomputing `scope_hash` by the algorithm above
    produces the recorded value; and
 5. no live peer claim intersects `scope` by the deterministic overlap rule in
-   `concurrency.md`.
+   `concurrency.md`, including its ASCII-folded and conservative non-ASCII
+   collision checks.
 
 Treat a reusable artifact as one completed reviewer unit, then run its findings
 through the current cycle's kill gate. If any fence fails or cannot be checked,

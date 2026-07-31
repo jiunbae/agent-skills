@@ -54,6 +54,11 @@ durable index `Record ID`. It is a validation field, not a discovery query.
 `Purpose` is human-readable and never drives loading.
 Every `Detail shard` or `Shard ID` cell contains exactly one manifest
 `Shard ID`, or `-`; it never contains a path.
+Construct each `Shard ID` as `shard-` plus the full lowercase SHA-256 of the
+canonical `(Kind, Rev, SHA-256, Path, Covers)` tuple under the concurrency
+reference. One ID has one tuple for this pointer's lifetime. Collapse only
+byte-identical duplicate rows; reject remaining duplicate IDs and any path
+mapped to conflicting digests.
 
 | Shard ID | Kind | Rev | SHA-256 | Path | Covers | Purpose |
 |---|---|---:|---|---|---|---|

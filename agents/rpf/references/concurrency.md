@@ -187,7 +187,17 @@ last:
 3. Update root compact indexes and construct the manifest from only the shards
    referenced by their winning representations or live root detail references.
    `Covers` is the bytewise-sorted exact list of those root record IDs;
-   `Purpose` is non-normative prose and never selects state.
+   `Purpose` is non-normative prose and never selects state. Canonicalize
+   `Rev` as minimal unsigned decimal, the shard digest as lowercase hex, `Path`
+   as normalized POSIX relative form, and `Covers` as comma-separated exact IDs
+   without spaces. Construct `Shard ID` as `shard-` plus the full lowercase
+   SHA-256 of `rpf-shard-id-v1` followed by a NUL and each UTF-8 tuple field in
+   `(Kind, Rev, SHA-256, Path, Covers)` order encoded as
+   `<minimal-decimal-byte-length>:<exact-bytes>`. Never truncate this identity
+   digest. Collapse byte-identical duplicate manifest rows. After that
+   collapse, require exactly one row per ID; reject every remaining duplicate
+   ID, including one whose tuple diverges, and reject any one `Path` associated
+   with conflicting digests.
 4. Perform the root-last compare-and-swap and readback above. Only that root
    publication commits the shards. A failed CAS can leave invisible orphans;
    do not repair correctness by editing them in place.
@@ -225,9 +235,12 @@ The controller reads a logical state snapshot as follows:
 
 1. Read root bytes, `Pointer revision`, `State manifest revision`, and hash.
 2. Select the exact root rows required by the role, then follow only their
-   explicit `Detail shard` or `Shard ID` references. Require each referenced
-   manifest row's `Covers` list to contain that root record ID. Reject absolute
-   paths, traversal, or paths outside `STATE_DIR`; never use `Purpose` to load.
+   explicit `Detail shard` or `Shard ID` references. Collapse byte-identical
+   manifest rows, then require exactly one row matching each referenced ID and
+   its recomputed canonical tuple identity. Reject a divergent duplicate ID,
+   one path with conflicting digests, a `Covers` list that omits the referring
+   root record ID, absolute paths, traversal, or paths outside `STATE_DIR`;
+   never use `Purpose` to load.
 3. Sort selected manifest paths bytewise, read only those files, and verify
    each digest. Never list, glob, or scan `STATE_DIR` to discover state.
 4. Re-read the root. Use the captured bytes only when its revision, manifest
@@ -302,6 +315,12 @@ conflict the same way.
 - **Durable record index** — keyed by logical record ID. Union it with inline
   representations using the compaction rule above. Derive the state manifest
   from winning references; an unreferenced shard row is not resurrected.
+- **State shard manifest** — derive it from winning references and validate the
+  canonical identity rule above before publication. Collapse byte-identical
+  duplicate rows. If any duplicate ID remains, including one that maps to a
+  divergent tuple, or one path maps to conflicting digests, keep the valid
+  published root and block the candidate merge; never select a row by order or
+  `Purpose`.
 - **Deferred findings** — union by finding ID. Never let a merge drop a
   deferred record or lower its severity or confidence. For duplicate IDs, take
   the higher severity and confidence and union distinct evidence, reason, reopen,
@@ -372,10 +391,22 @@ files.
 Use one conservative overlap rule for claims and prefetch scopes. Normalize
 patterns to repository-relative POSIX form and reject absolute paths or `..`.
 For each pattern, take the literal prefix before its first `*`, `?`, or `[`.
-An empty prefix overlaps everything. Two exact patterns overlap only when equal;
-otherwise they overlap when either literal prefix is a byte prefix of the
-other. This may serialize disjoint globs, but never lets hosts disagree on a
-possibly unsafe overlap.
+An empty prefix overlaps everything. Retain the raw comparison: two exact
+patterns overlap when equal; otherwise they overlap when either literal prefix
+is a byte prefix of the other.
+
+Also derive a host-independent case-collision key by folding ASCII `A` through
+`Z` to `a` through `z` in each normalized exact pattern and literal prefix.
+Apply the same exact/prefix comparisons to those keys, and treat either the raw
+or folded result as overlap. Thus `src/Auth.ts` overlaps `src/auth.ts`, and
+`src/API/**` overlaps `src/api/v2/**`. When either compared literal prefix
+contains any non-ASCII byte, conservatively overlap them unless the repository
+pins one explicit Unicode folding algorithm and version; when pinned, apply
+that exact algorithm to the collision keys. For example, without such a pin,
+`src/Ä/**` overlaps `src/ä/**`, and `src/K/**` overlaps `src/k/**`. Never
+consult host filesystem behavior or Git `core.ignorecase`. This may serialize
+disjoint globs, but claims and prefetch make the same safe decision on every
+host.
 
 ## Deploy exclusion
 

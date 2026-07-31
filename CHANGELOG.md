@@ -48,6 +48,11 @@ including the whole of AIR Workbench.
   scans, and fence prefetch against its precise reviewer-visible state. Durable
   shard cleanup is live-reader-safe, best-effort, and separate from raw review
   artifact retention (RPF-188).
+- `agents/rpf` now gives immutable shard manifest rows full-length,
+  deterministic content-derived identities, rejects duplicate-ID or
+  path/digest ambiguity, and uses one host-independent ASCII-folded,
+  non-ASCII-conservative path overlap rule for both work claims and prefetch
+  scopes (RPF-190, RPF-191).
 - Renamed the AIR Workbench package directory from `agents/workflow-studio` to
   `agents/air-workbench`, matching the name both READMEs already list. The
   documented `./install.sh agents/air-workbench` now works; previously only
