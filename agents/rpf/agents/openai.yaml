@@ -1,6 +1,6 @@
 interface:
   display_name: "RPF"
-  short_description: "Run a pipelined multi-agent pointer convergence loop"
-  default_prompt: "Use $rpf to run a cost-aware multi-agent review, plan, work, and feedback loop until the pointer goals converge."
+  short_description: "Run a bounded, fail-closed review and fix loop"
+  default_prompt: "Use $rpf in audit mode for review/report-only work or full mode for explicitly authorized implementation, with protected intake, strict child results, exact source fences, and independent falsification."
 policy:
   allow_implicit_invocation: false
