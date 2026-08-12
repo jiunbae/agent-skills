@@ -3,18 +3,20 @@
 # vault-set.sh - Vaultwarden 시크릿 생성 스크립트
 #
 # 사용법:
-#   vault-set.sh login <name> --username <user> --password <pass> [--uri <url>] [--field key=value]
+#   vault-set.sh login <name> --username <user> --password-stdin [--uri <url>] [--field key=value]
 #   vault-set.sh note <name> --field <key=value> [--field key=value]
 #
 # 예시:
-#   vault-set.sh login "Service Login" --username "admin" --password "secret123"
-#   vault-set.sh note "API Keys" --field "api_key=sk-xxx" --field "account_id=123"
+#   printf '%s\n' "$PASSWORD" | vault-set.sh login "Service Login" --username "app" --password-stdin
+#   vault-set.sh note "Service Config" --field "region=us-east-1"
 #
 
-set -e
+set -euo pipefail
 
 # 기본 설정
-IAC_FOLDER_ID="${BW_FOLDER_ID:?Error: BW_FOLDER_ID not set}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./vault-common.sh
+source "$SCRIPT_DIR/vault-common.sh"
 
 # 색상 정의
 RED='\033[0;31m'
@@ -37,11 +39,10 @@ TYPES:
 OPTIONS:
     --username <user>       Username for login items
     --password-stdin        Read password from stdin (secure, recommended)
-    --password <pass>       Password (INSECURE: visible in ps/history, use --password-stdin)
     --uri <url>             Associated URL
     --field <key=value>     Custom field (can be repeated)
     --field-stdin <key>     Read field value from stdin (secure)
-    --folder <id>           Folder ID (default: IaC folder)
+    --folder <id>           Folder ID (default: BW_FOLDER_ID)
     --hidden                Make custom fields hidden (default: true)
 
 EXAMPLES:
@@ -52,10 +53,10 @@ EXAMPLES:
     # (password will be prompted securely)
 
     # SECURE: Pipe password from file or password manager
-    echo "$DB_PASSWORD" | vault-set.sh login "DB" --username "admin" --password-stdin
+    printf '%s\n' "$DB_PASSWORD" | vault-set.sh login "DB" --username "app" --password-stdin
 
     # SECURE: Create API key note with stdin
-    echo "sk-your-api-key" | vault-set.sh note "API Key" --field-stdin "api_key"
+    printf '%s\n' "$API_KEY" | vault-set.sh note "API Key" --field-stdin "api_key"
 
     # Create note with non-sensitive fields only
     vault-set.sh note "Service Config" \
@@ -63,7 +64,7 @@ EXAMPLES:
         --field "tier=production"
 
 SECURITY WARNING:
-    - NEVER use --password or --field with sensitive values in command line
+    - --password is rejected; never use --field with sensitive values
     - Command line arguments are visible in 'ps aux' and shell history
     - Use --password-stdin or --field-stdin for sensitive data
     - Or omit --password to be prompted securely
@@ -73,24 +74,8 @@ EOF
 
 # 세션 확인
 check_session() {
-    if [ -z "$BW_SESSION" ]; then
-        if [ -f ~/.bw_session ]; then
-            export BW_SESSION=$(cat ~/.bw_session)
-        else
-            echo -e "${RED}Error: BW_SESSION not set.${NC}" >&2
-            echo "Run: bw unlock --raw > ~/.bw_session" >&2
-            exit 1
-        fi
-    fi
-
-    # 세션 유효성 확인
     export NODE_NO_WARNINGS=1
-    local status=$(bw status 2>/dev/null | jq -r '.status')
-    if [ "$status" != "unlocked" ]; then
-        echo -e "${RED}Error: Vault is locked.${NC}" >&2
-        echo "Run: bw unlock --raw > ~/.bw_session" >&2
-        exit 1
-    fi
+    require_approved_unlocked_session || exit 1
 }
 
 # 비밀번호 프롬프트 (보안)
@@ -123,11 +108,16 @@ read_from_stdin() {
 }
 
 # 보안 경고 출력
-warn_insecure_usage() {
-    local option="$1"
-    echo -e "${YELLOW}⚠ WARNING: Using $option with value in command line is insecure.${NC}" >&2
-    echo -e "${YELLOW}  Values may be visible in 'ps aux' and shell history.${NC}" >&2
-    echo -e "${YELLOW}  Consider using --password-stdin or --field-stdin instead.${NC}" >&2
+reject_sensitive_field_argv() {
+    local field_name="${1%%=*}"
+    local lower_name
+    lower_name=$(printf '%s' "$field_name" | tr '[:upper:]' '[:lower:]')
+    case "$lower_name" in
+        *auth*|*credential*|*key*|*password*|*private*|*secret*|*token*)
+            echo -e "${RED}Error: sensitive fields must use --field-stdin.${NC}" >&2
+            exit 1
+            ;;
+    esac
 }
 
 # Login 아이템 생성
@@ -140,7 +130,7 @@ create_login() {
     local password_stdin=false
     local uri=""
     local fields=()
-    local folder_id="$IAC_FOLDER_ID"
+    local folder_id="${BW_FOLDER_ID:-}"
     local hidden=true
 
     while [[ $# -gt 0 ]]; do
@@ -154,19 +144,15 @@ create_login() {
                 shift
                 ;;
             --password)
-                warn_insecure_usage "--password"
-                password="$2"
-                shift 2
+                echo -e "${RED}Error: --password is rejected; use --password-stdin.${NC}" >&2
+                exit 1
                 ;;
             --uri)
                 uri="$2"
                 shift 2
                 ;;
             --field)
-                # 값에 '='가 포함된 민감한 데이터 경고
-                if [[ "$2" == *"key"* ]] || [[ "$2" == *"token"* ]] || [[ "$2" == *"secret"* ]] || [[ "$2" == *"password"* ]]; then
-                    warn_insecure_usage "--field"
-                fi
+                reject_sensitive_field_argv "$2"
                 fields+=("$2")
                 shift 2
                 ;;
@@ -188,6 +174,14 @@ create_login() {
                 ;;
         esac
     done
+
+    if [ -z "$folder_id" ]; then
+        echo -e "${RED}Error: --folder or BW_FOLDER_ID is required.${NC}" >&2
+        exit 1
+    fi
+
+    validate_server
+    check_session
 
     # 필수 값 확인
     if [ -z "$username" ]; then
@@ -210,42 +204,33 @@ create_login() {
     fi
 
     # JSON 생성
-    local fields_json="[]"
-    if [ ${#fields[@]} -gt 0 ]; then
-        fields_json=$(printf '%s\n' "${fields[@]}" | jq -R --arg type "$field_type" '
-            split("=") | {name: .[0], value: (.[1:] | join("=")), type: ($type | tonumber)}
-        ' | jq -s '.')
-    fi
-
-    local uris_json="[]"
-    if [ -n "$uri" ]; then
-        uris_json=$(jq -n --arg uri "$uri" '[{"uri": $uri}]')
-    fi
-
-    local item_json=$(jq -n \
-        --arg name "$name" \
-        --arg username "$username" \
-        --arg password "$password" \
-        --arg folder_id "$folder_id" \
-        --argjson uris "$uris_json" \
-        --argjson fields "$fields_json" \
-        '{
-            type: 1,
-            name: $name,
-            folderId: $folder_id,
-            login: {
-                username: $username,
-                password: $password,
-                uris: $uris
-            },
-            fields: $fields
-        }')
-
-    # 생성
-    echo "$item_json" | bw encode | bw create item > /dev/null
+    # Keep secret values on stdin rather than in jq or bw process arguments.
+    {
+        printf '%s\0' "$name" "$username" "$password" "$folder_id" "$uri" "$field_type"
+        if [ ${#fields[@]} -gt 0 ]; then
+            printf '%s\0' "${fields[@]}"
+        fi
+    } |
+        jq -Rs '
+            (split("\u0000") | .[:-1]) as $v |
+            {
+                type: 1,
+                name: $v[0],
+                folderId: $v[3],
+                login: {
+                    username: $v[1],
+                    password: $v[2],
+                    uris: (if $v[4] == "" then [] else [{uri: $v[4]}] end)
+                },
+                fields: ($v[6:] | map(
+                    split("=") |
+                    {name: .[0], value: (.[1:] | join("=")), type: ($v[5] | tonumber)}
+                ))
+            }
+        ' | bw encode | bw create item > /dev/null
 
     echo -e "${GREEN}✓${NC} Login item '${name}' created successfully."
-    echo "  Verify with: vault-get \"$name\""
+    echo "  Verify by retrieving only the required field into its consumer."
 }
 
 # Secure Note 생성
@@ -255,7 +240,7 @@ create_note() {
 
     local fields=()
     local field_stdin_key=""
-    local folder_id="$IAC_FOLDER_ID"
+    local folder_id="${BW_FOLDER_ID:-}"
     local hidden=true
 
     while [[ $# -gt 0 ]]; do
@@ -265,10 +250,7 @@ create_note() {
                 shift 2
                 ;;
             --field)
-                # 값에 민감한 키워드가 포함된 경우 경고
-                if [[ "$2" == *"key"* ]] || [[ "$2" == *"token"* ]] || [[ "$2" == *"secret"* ]] || [[ "$2" == *"password"* ]]; then
-                    warn_insecure_usage "--field"
-                fi
+                reject_sensitive_field_argv "$2"
                 fields+=("$2")
                 shift 2
                 ;;
@@ -291,9 +273,18 @@ create_note() {
         esac
     done
 
+    if [ -z "$folder_id" ]; then
+        echo -e "${RED}Error: --folder or BW_FOLDER_ID is required.${NC}" >&2
+        exit 1
+    fi
+
+    validate_server
+    check_session
+
     # stdin에서 필드 값 읽기
     if [ -n "$field_stdin_key" ]; then
-        local stdin_value=$(read_from_stdin)
+        local stdin_value
+        stdin_value=$(read_from_stdin)
         fields+=("${field_stdin_key}=${stdin_value}")
     fi
 
@@ -309,28 +300,24 @@ create_note() {
         field_type=0
     fi
 
-    # JSON 생성
-    local fields_json=$(printf '%s\n' "${fields[@]}" | jq -R --arg type "$field_type" '
-        split("=") | {name: .[0], value: (.[1:] | join("=")), type: ($type | tonumber)}
-    ' | jq -s '.')
-
-    local item_json=$(jq -n \
-        --arg name "$name" \
-        --arg folder_id "$folder_id" \
-        --argjson fields "$fields_json" \
-        '{
-            type: 2,
-            name: $name,
-            folderId: $folder_id,
-            secureNote: {type: 0},
-            fields: $fields
-        }')
-
-    # 생성
-    echo "$item_json" | bw encode | bw create item > /dev/null
+    # Keep secret values on stdin rather than in jq or bw process arguments.
+    printf '%s\0' "$name" "$folder_id" "$field_type" "${fields[@]}" |
+        jq -Rs '
+            (split("\u0000") | .[:-1]) as $v |
+            {
+                type: 2,
+                name: $v[0],
+                folderId: $v[1],
+                secureNote: {type: 0},
+                fields: ($v[3:] | map(
+                    split("=") |
+                    {name: .[0], value: (.[1:] | join("=")), type: ($v[2] | tonumber)}
+                ))
+            }
+        ' | bw encode | bw create item > /dev/null
 
     echo -e "${GREEN}✓${NC} Secure note '${name}' created successfully."
-    echo "  Verify with: vault-get \"$name\""
+    echo "  Verify by retrieving only the required field into its consumer."
 }
 
 # 메인
@@ -346,11 +333,9 @@ main() {
 
     case "$type" in
         login)
-            check_session
             create_login "$name" "$@"
             ;;
         note)
-            check_session
             create_note "$name" "$@"
             ;;
         help|--help|-h)

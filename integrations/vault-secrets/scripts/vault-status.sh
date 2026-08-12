@@ -10,7 +10,7 @@
 #   vault-status.sh login        # 새 로그인
 #
 
-set -e
+set -euo pipefail
 
 # 색상 정의
 RED='\033[0;31m'
@@ -21,20 +21,18 @@ NC='\033[0m'
 
 # 환경 설정
 export NODE_NO_WARNINGS=1
-SESSION_FILE="${BW_SESSION_FILE:-$HOME/.bw_session}"
-VAULT_URL="${BW_SERVER:-https://vault.example.com}"
-
-# 세션 로드
-load_session() {
-    if [ -z "$BW_SESSION" ] && [ -f "$SESSION_FILE" ]; then
-        export BW_SESSION=$(cat "$SESSION_FILE")
-    fi
-}
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./vault-common.sh
+source "$SCRIPT_DIR/vault-common.sh"
 
 # 상태 조회
 get_status() {
-    load_session
-    bw status 2>/dev/null || echo '{"status": "unauthenticated"}'
+    if ! load_session; then
+        echo '{"status": "unauthenticated"}'
+        return 0
+    fi
+    verify_persisted_server || return 1
+    printf '%s\n' "$VERIFIED_BW_STATUS"
 }
 
 # 전체 상태 표시
@@ -42,11 +40,10 @@ show_full_status() {
     echo -e "${BLUE}=== Vaultwarden Status ===${NC}"
     echo ""
 
-    local status_json=$(get_status)
-    local status=$(echo "$status_json" | jq -r '.status')
-    local server=$(echo "$status_json" | jq -r '.serverUrl // "N/A"')
-    local email=$(echo "$status_json" | jq -r '.userEmail // "N/A"')
-    local last_sync=$(echo "$status_json" | jq -r '.lastSync // "Never"')
+    local status_json status last_sync
+    status_json=$(get_status)
+    status=$(printf '%s' "$status_json" | jq -r '.status')
+    last_sync=$(printf '%s' "$status_json" | jq -r '.lastSync // "Never"')
 
     # 상태 아이콘
     local status_icon=""
@@ -63,14 +60,13 @@ show_full_status() {
     esac
 
     echo -e "Status:     ${status_icon} ${status}"
-    echo -e "Server:     ${server}"
-    echo -e "Email:      ${email}"
     echo -e "Last Sync:  ${last_sync}"
     echo ""
 
     # 세션 파일 정보
-    if [ -f "$SESSION_FILE" ]; then
-        local session_age=$(( $(date +%s) - $(stat -f%m "$SESSION_FILE" 2>/dev/null || stat -c%Y "$SESSION_FILE" 2>/dev/null || echo 0) ))
+    if [ -f "$VAULT_SESSION_FILE" ] && [ ! -L "$VAULT_SESSION_FILE" ]; then
+        local session_age
+        session_age=$(( $(date +%s) - $(stat_mtime "$VAULT_SESSION_FILE") ))
         local session_hours=$(( session_age / 3600 ))
         echo -e "Session File: ${GREEN}exists${NC} (${session_hours}h old)"
     else
@@ -95,9 +91,10 @@ show_full_status() {
 
 # 간단한 상태 확인
 check_status() {
-    local status_json=$(get_status)
-    local status=$(echo "$status_json" | jq -r '.status')
-    local last_sync=$(echo "$status_json" | jq -r '.lastSync // "Never"')
+    local status_json status last_sync
+    status_json=$(get_status)
+    status=$(printf '%s' "$status_json" | jq -r '.status')
+    last_sync=$(printf '%s' "$status_json" | jq -r '.lastSync // "Never"')
 
     echo "Session: ${status}, Last sync: ${last_sync}"
 
@@ -113,8 +110,9 @@ do_unlock() {
     echo -e "${BLUE}Unlocking vault...${NC}"
 
     # 기존 세션 확인
-    local status_json=$(get_status)
-    local status=$(echo "$status_json" | jq -r '.status')
+    local status_json status
+    status_json=$(get_status)
+    status=$(printf '%s' "$status_json" | jq -r '.status')
 
     if [ "$status" = "unlocked" ]; then
         echo -e "${GREEN}✓ Vault is already unlocked${NC}"
@@ -126,13 +124,18 @@ do_unlock() {
         return 1
     fi
 
+    if [ ! -t 0 ]; then
+        echo -e "${YELLOW}Unlock requires the user's interactive terminal.${NC}" >&2
+        echo "Ask the user to run: vault-status.sh unlock" >&2
+        return 1
+    fi
+
     # 잠금 해제
-    echo "Enter your master password:"
-    local session=$(bw unlock --raw)
+    local session
+    session=$(bw unlock --raw)
 
     if [ -n "$session" ]; then
-        echo "$session" > "$SESSION_FILE"
-        chmod 600 "$SESSION_FILE"
+        store_session "$session"
         export BW_SESSION="$session"
         echo -e "${GREEN}✓ Vault unlocked successfully${NC}"
     else
@@ -145,7 +148,8 @@ do_unlock() {
 do_sync() {
     load_session
 
-    local status=$(get_status | jq -r '.status')
+    local status
+    status=$(get_status | jq -r '.status')
     if [ "$status" != "unlocked" ]; then
         echo -e "${RED}Vault is not unlocked. Run: vault-status.sh unlock${NC}"
         return 1
@@ -159,21 +163,25 @@ do_sync() {
 # 로그인
 do_login() {
     echo -e "${BLUE}Logging into Vaultwarden...${NC}"
-    echo "Server: $VAULT_URL"
-
     # 서버 설정
-    bw config server "$VAULT_URL"
+    bw config server "$BW_SERVER"
+    verify_persisted_server || return 1
+
+    if [ ! -t 0 ]; then
+        echo -e "${YELLOW}Login requires the user's interactive terminal.${NC}" >&2
+        echo "Ask the user to run: vault-status.sh login" >&2
+        return 1
+    fi
 
     # 로그인
     echo "Enter your email:"
     read -r email
 
-    echo "Logging in as: $email"
-    local session=$(bw login "$email" --raw)
+    local session
+    session=$(bw login "$email" --raw)
 
     if [ -n "$session" ]; then
-        echo "$session" > "$SESSION_FILE"
-        chmod 600 "$SESSION_FILE"
+        store_session "$session"
         export BW_SESSION="$session"
         echo -e "${GREEN}✓ Logged in successfully${NC}"
     else
@@ -185,9 +193,10 @@ do_login() {
 # 로그아웃
 do_logout() {
     echo -e "${BLUE}Logging out...${NC}"
-    bw logout || true
-    rm -f "$SESSION_FILE"
-    unset BW_SESSION
+    if load_session && verify_persisted_server; then
+        bw logout || true
+    fi
+    discard_session_file
     echo -e "${GREEN}✓ Logged out${NC}"
 }
 
@@ -210,20 +219,20 @@ COMMANDS:
 EXAMPLES:
     # Check if vault is accessible
     if vault-status.sh check; then
-        vault-get "API Key" token
+        vault-get-field.sh "<item-name>" "<field-name>" | consumer-command
     fi
 
     # Unlock and sync
     vault-status.sh unlock && vault-status.sh sync
 
 ENVIRONMENT:
-    BW_SESSION_FILE   Session file path (default: ~/.bw_session)
-    BW_SERVER         Vault server URL (default: https://vault.example.com)
+    BW_SERVER         Must exactly match the approved HTTPS origin
 
 EOF
 }
 
 # 메인
+validate_server
 case "${1:-}" in
     "")
         show_full_status

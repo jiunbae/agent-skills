@@ -11,16 +11,16 @@ Obsidian Writer - 프로젝트 문서와 퍼블리시 아티클을 Vault에 저�
     ./obsidian-write.py --check-config
 
     # 문서 업로드 (프로젝트 자동 감지)
-    ./obsidian-write.py --title "문서 제목" --content "내용"
+    ./obsidian-write.py --title "문서 제목" --file "/path/to/document.md"
 
     # 프로젝트 명시
-    ./obsidian-write.py --title "문서 제목" --content "내용" --project "my-project"
+    ./obsidian-write.py --title "문서 제목" --file "/path/to/document.md" --project "my-project"
 
     # 하위 폴더 지정
-    ./obsidian-write.py --title "회의록" --content "내용" --subfolder "meetings"
+    ./obsidian-write.py --title "회의록" --stdin --subfolder "meetings"
 
     # articles/에 저장하고 docs.jiun.dev에 퍼블리시
-    ./obsidian-write.py --title "공개 문서" --content "내용" --publish
+    ./obsidian-write.py --title "공개 문서" --file "/path/to/document.md" --publish
 
     # 대화형 설정
     ./obsidian-write.py --setup
@@ -30,9 +30,98 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+
+
+class PathValidationError(ValueError):
+    """Raised when a caller-controlled path is unsafe."""
+
+
+def validate_path_value(
+    value: str, label: str, *, allow_nested: bool = False
+) -> str:
+    """Validate a portable relative path before touching the filesystem."""
+    if not isinstance(value, str) or not value.strip():
+        raise PathValidationError(f"{label} must not be empty")
+    if "\\" in value or "\x00" in value:
+        raise PathValidationError(f"{label} contains an invalid path separator")
+    if Path(value).is_absolute() or PureWindowsPath(value).is_absolute():
+        raise PathValidationError(f"{label} must be relative")
+
+    parts = value.split("/")
+    if not allow_nested and len(parts) != 1:
+        raise PathValidationError(f"{label} must be a single path component")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise PathValidationError(f"{label} contains an invalid path component")
+    if any(
+        any(ord(char) < 32 or ord(char) == 127 for char in part) for part in parts
+    ):
+        raise PathValidationError(f"{label} contains control characters")
+    return value
+
+
+def resolve_vault_root(vault_path: Path) -> Path:
+    """Return a canonical, non-root Vault directory without exposing its path."""
+    try:
+        if stat.S_ISLNK(vault_path.lstat().st_mode):
+            raise PathValidationError("the configured Vault must not be a symlink")
+        root = vault_path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise PathValidationError("the configured Vault is unavailable") from exc
+    if not root.is_dir() or root == Path(root.anchor):
+        raise PathValidationError("the configured Vault is not a safe directory")
+    return root
+
+
+def reject_existing_symlink_components(root: Path, target: Path) -> None:
+    """Reject every existing symlink from the Vault root through the target."""
+    try:
+        relative = target.relative_to(root)
+    except ValueError as exc:
+        raise PathValidationError("the document target escapes the configured Vault") from exc
+
+    current = root
+    for component in relative.parts:
+        current /= component
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise PathValidationError("the document target could not be inspected") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise PathValidationError("symlinks are not allowed in document targets")
+
+
+def contained_path(root: Path, *relative_parts: str) -> Path:
+    """Resolve a target only after rejecting every existing logical symlink."""
+    try:
+        logical_target = root.joinpath(*relative_parts)
+        logical_target.relative_to(root)
+        reject_existing_symlink_components(root, logical_target)
+        target = logical_target.resolve(strict=False)
+        target.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PathValidationError("the document target escapes the configured Vault") from exc
+    if target == root:
+        raise PathValidationError("the document target must be a file")
+    return target
+
+
+def write_text_without_following_symlink(
+    file_path: Path, content: str, *, exclusive: bool
+) -> None:
+    """Write a canonical target without following a last-moment final symlink."""
+    flags = os.O_WRONLY | os.O_CREAT
+    flags |= os.O_EXCL if exclusive else os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(file_path, flags, 0o644)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(content)
 
 
 def get_config_path() -> Path:
@@ -101,6 +190,8 @@ def parse_config(config_path: Path) -> dict:
 
     # Vault 경로 파싱 및 ~ 경로 확장
     vault_match = re.search(r"-\s*\*\*Vault\s*경로\*\*:\s*(.+)", content, re.I)
+    if not vault_match:
+        vault_match = re.search(r"-\s*\*\*경로\*\*:\s*(.+)", content, re.I)
     if vault_match:
         vault_path = vault_match.group(1).strip()
         if vault_path.startswith("~/"):
@@ -140,17 +231,21 @@ def check_config() -> bool:
 
     # 현재 프로젝트 정보
     project_name, workspace_type = get_project_info()
+    try:
+        validate_path_value(project_name, "project")
+    except PathValidationError:
+        print("❌ 현재 프로젝트 이름이 안전하지 않습니다.")
+        return False
     print(f"📁 현재 프로젝트: {project_name}")
-    print(f"📂 현재 디렉토리: {Path.cwd()}")
     print(f"🗂️ Workspace 타입: {workspace_type}\n")
 
     # 설정 파일 확인
     if not config_path.exists():
-        print(f"❌ 설정 파일 없음: {config_path}")
+        print("❌ Obsidian 설정 파일이 없습니다.")
         print("\n설정 파일을 생성하려면: ./obsidian-write.py --setup")
         return False
 
-    print(f"✅ 설정 파일: {config_path}")
+    print("✅ Obsidian 설정 파일 확인됨")
 
     # 설정 파싱
     config = parse_config(config_path)
@@ -160,12 +255,13 @@ def check_config() -> bool:
         print("❌ Vault 경로 미설정")
         return False
 
-    vault_path = Path(config["vault_path"])
-    if not vault_path.exists():
-        print(f"❌ Vault 경로 없음: {vault_path}")
+    try:
+        vault_path = resolve_vault_root(Path(config["vault_path"]))
+    except PathValidationError:
+        print("❌ Vault 경로가 없거나 안전하지 않습니다.")
         return False
 
-    print(f"✅ Vault 경로: {vault_path}")
+    print("✅ Vault 경로 확인됨")
 
     # 프로젝트 저장 경로 확인
     context_path = vault_path / workspace_type / project_name / "context"
@@ -173,10 +269,10 @@ def check_config() -> bool:
     print(f"   {'✅ 존재' if context_path.exists() else '⚠️ 미존재 (자동 생성됨)'}")
 
     # 설정 값 출력
-    print(f"\n⚙️ 설정:")
+    print("\n⚙️ 설정:")
     print(f"   프론트매터: {config['frontmatter']}")
     print(f"   태그 자동 생성: {config['auto_tags']}")
-    print(f"   기본 태그: {', '.join(config['default_tags'])}")
+    print(f"   기본 태그 수: {len(config['default_tags'])}")
 
     return True
 
@@ -189,7 +285,7 @@ def setup_config():
 
     # Vault 경로 입력
     default_vault = Path.home() / "Documents" / "Obsidian"
-    vault_path = input(f"Vault 경로 [{default_vault}]: ").strip()
+    vault_path = input("Vault 경로 [기본 Obsidian 폴더]: ").strip()
     if not vault_path:
         vault_path = str(default_vault)
 
@@ -197,7 +293,7 @@ def setup_config():
     config_content = f"""# Obsidian 설정
 
 ## Vault 경로
-- **경로**: {vault_path}
+- **Vault 경로**: {vault_path}
 
 ## 문서 설정
 - **프론트매터 생성**: true
@@ -211,7 +307,7 @@ def setup_config():
     # 파일 저장
     config_path.write_text(config_content, encoding="utf-8")
 
-    print(f"\n✅ 설정 파일 생성됨: {config_path}")
+    print("\n✅ 설정 파일 생성됨")
 
     # Vault 폴더 생성 확인
     vault = Path(vault_path)
@@ -219,7 +315,7 @@ def setup_config():
         create = input(f"\nVault 폴더가 없습니다. 생성할까요? (y/N): ").strip().lower()
         if create == "y":
             vault.mkdir(parents=True, exist_ok=True)
-            print(f"✅ Vault 폴더 생성됨: {vault}")
+            print("✅ Vault 폴더 생성됨")
 
 
 def slugify(text: str) -> str:
@@ -277,46 +373,77 @@ def write_document(
     article: bool = False,
 ) -> Path:
     """문서 파일 생성"""
+    project = validate_path_value(project, "project")
+    filename = validate_path_value(filename, "filename")
+    if not Path(filename).suffix:
+        filename = f"{filename}.md"
+    if subfolder is not None:
+        subfolder = validate_path_value(subfolder, "subfolder", allow_nested=True)
+    if workspace_type not in {"workspace", "workspace-vibe", "workspace-ext"}:
+        raise PathValidationError("workspace type is invalid")
+
+    root = resolve_vault_root(vault_path)
     if article:
-        file_path = vault_path / "articles" / filename
+        relative_parts = ("articles", filename)
     elif subfolder:
-        file_path = (
-            vault_path / workspace_type / project / "context" / subfolder / filename
+        relative_parts = (
+            workspace_type,
+            project,
+            "context",
+            *subfolder.split("/"),
+            filename,
         )
     else:
-        file_path = vault_path / workspace_type / project / "context" / filename
+        relative_parts = (workspace_type, project, "context", filename)
 
-    # 확장자 확인
-    if not file_path.suffix:
-        file_path = file_path.with_suffix(".md")
+    file_path = contained_path(root, *relative_parts)
 
     # 디렉토리 생성
     file_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        reject_existing_symlink_components(root, file_path)
+        file_path.parent.resolve(strict=True).relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PathValidationError("the document directory escapes the Vault") from exc
 
-    # 파일 존재 확인
-    if file_path.exists() and not overwrite:
-        # 번호 추가
-        base = file_path.stem
-        suffix = file_path.suffix
-        counter = 1
-        while file_path.exists():
-            file_path = file_path.parent / f"{base}-{counter}{suffix}"
+    if overwrite:
+        write_text_without_following_symlink(file_path, content, exclusive=False)
+        return file_path
+
+    base = file_path.stem
+    suffix = file_path.suffix
+    counter = 0
+    while True:
+        candidate = file_path
+        if counter:
+            candidate = contained_path(
+                root,
+                *file_path.parent.relative_to(root).parts,
+                f"{base}-{counter}{suffix}",
+            )
+        try:
+            write_text_without_following_symlink(candidate, content, exclusive=True)
+            return candidate
+        except FileExistsError:
             counter += 1
 
-    # 파일 저장
-    file_path.write_text(content, encoding="utf-8")
-
-    return file_path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Obsidian Vault에 프로젝트 문서 업로드"
+        prog=Path(__file__).name,
+        description="Obsidian Vault에 프로젝트 문서 업로드",
     )
     parser.add_argument("--check-config", action="store_true", help="설정 확인")
     parser.add_argument("--setup", action="store_true", help="대화형 설정")
     parser.add_argument("--title", help="문서 제목")
-    parser.add_argument("--content", help="문서 내용")
+    document_input = parser.add_mutually_exclusive_group()
+    document_input.add_argument("--file", metavar="PATH", help="UTF-8 마크다운 파일")
+    document_input.add_argument(
+        "--stdin",
+        action="store_true",
+        help="명시적으로 standard input에서 문서 본문을 읽음",
+    )
     parser.add_argument("--project", help="프로젝트명 (미지정 시 pwd에서 자동 감지)")
     parser.add_argument("--subfolder", help="context 하위 폴더")
     parser.add_argument("--filename", help="파일명 (미지정 시 제목에서 생성)")
@@ -334,6 +461,10 @@ def main():
         help="articles/에 publish: true로 저장하여 docs.jiun.dev에 공개",
     )
 
+    for argument in sys.argv[1:]:
+        if argument == "--content" or argument.startswith("--content="):
+            parser.error("본문 CLI 인자는 지원하지 않습니다. --file 또는 --stdin을 사용하세요")
+
     args = parser.parse_args()
 
     if args.publish and args.no_frontmatter:
@@ -350,23 +481,8 @@ def main():
         sys.exit(0)
 
     # 문서 업로드
-    if not args.content:
-        parser.print_help()
-        sys.exit(1)
-
-    # 설정 로드
-    config = parse_config(get_config_path())
-
-    if not config["vault_path"]:
-        print("❌ Vault 경로가 설정되지 않았습니다.")
-        print("설정하려면: ./obsidian-write.py --setup")
-        sys.exit(1)
-
-    vault_path = Path(config["vault_path"])
-
-    if not vault_path.exists():
-        print(f"❌ Vault 경로가 존재하지 않습니다: {vault_path}")
-        sys.exit(1)
+    if not args.file and not args.stdin:
+        parser.error("문서 작성에는 --file 또는 --stdin 중 하나가 필요합니다")
 
     article = args.article or args.publish
 
@@ -376,10 +492,15 @@ def main():
         _, workspace_type = get_project_info()  # 현재 디렉토리 기준 workspace 타입
     else:
         project, workspace_type = get_project_info()
+    project = validate_path_value(project, "project")
+
+    if args.subfolder is not None:
+        validate_path_value(args.subfolder, "subfolder", allow_nested=True)
 
     # 파일명 결정 (YYYY-MM-DD-{title} 형식으로 정렬 가능하도록)
     today = datetime.now().strftime("%Y-%m-%d")
     if args.filename:
+        validate_path_value(args.filename, "filename")
         # 사용자 지정 파일명: 날짜 prefix가 없으면 추가
         if not re.match(r"^\d{4}-\d{2}-\d{2}-", args.filename):
             filename = f"{today}-{args.filename}"
@@ -389,6 +510,32 @@ def main():
         filename = f"{today}-{slugify(args.title)}.md"
     else:
         filename = f"{today}-document.md"
+    validate_path_value(filename, "filename")
+
+    # 대상 경로 입력을 모두 검증한 뒤 설정과 Vault를 읽는다.
+    config = parse_config(get_config_path())
+
+    if not config["vault_path"]:
+        print("❌ Vault 경로가 설정되지 않았습니다.")
+        print("설정하려면: ./obsidian-write.py --setup")
+        sys.exit(1)
+
+    vault_path = resolve_vault_root(Path(config["vault_path"]))
+
+    if args.file:
+        try:
+            input_path = Path(args.file).expanduser()
+            if not input_path.is_file():
+                raise OSError("not a regular file")
+            document_content = input_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            print("❌ 문서 파일을 안전하게 읽을 수 없습니다.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        document_content = sys.stdin.read()
+    if not document_content:
+        print("❌ 문서 본문이 비어 있습니다.", file=sys.stderr)
+        sys.exit(1)
 
     # 내용 구성
     content_parts = []
@@ -413,7 +560,7 @@ def main():
         content_parts.append(f"\n# {args.title}\n")
 
     # 본문
-    content_parts.append(args.content)
+    content_parts.append(document_content)
 
     final_content = "\n".join(content_parts)
 
@@ -433,7 +580,6 @@ def main():
     relative_path = file_path.relative_to(vault_path)
 
     print(f"✅ 업로드 완료: {relative_path}")
-    print(f"📁 Vault: {vault_path}")
     if article:
         print("🗂️ 유형: article")
     else:
@@ -445,4 +591,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except PathValidationError as exc:
+        print(f"❌ 입력 또는 경로 오류: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except OSError:
+        print("❌ 파일 시스템 작업에 실패했습니다.", file=sys.stderr)
+        sys.exit(1)
+    except Exception:
+        print("❌ 작업 처리 중 오류가 발생했습니다.", file=sys.stderr)
+        sys.exit(1)

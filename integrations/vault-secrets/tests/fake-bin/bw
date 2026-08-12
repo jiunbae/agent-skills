@@ -1,0 +1,41 @@
+#!/bin/bash
+
+set -euo pipefail
+
+printf '%s\n' "$*" >> "$BW_FAKE_LOG"
+
+case "${1:-}" in
+    status)
+        fake_server="${BW_FAKE_SERVER:-https://vault.jiun.dev}"
+        if [ "${BW_SESSION:-}" = "test-session" ]; then
+            printf '{"status":"unlocked","lastSync":"test-time","userEmail":"private@example.test","serverUrl":"%s"}\n' "$fake_server"
+        else
+            printf '{"status":"locked","lastSync":null,"serverUrl":"%s"}\n' "$fake_server"
+        fi
+        ;;
+    encode)
+        cat
+        ;;
+    create)
+        [ "${2:-}" = "item" ]
+        cat > "$BW_FAKE_CAPTURE"
+        printf '%s\n' '{"password":"fake-create-response-secret"}'
+        ;;
+    sync|logout)
+        ;;
+    config)
+        [ "${2:-}" = "server" ]
+        ;;
+    get)
+        [ "${2:-}" = "item" ]
+        printf '%s\n' '{"fields":[{"name":"test-field","value":"test-field-secret"}]}'
+        ;;
+    list)
+        [ "${2:-}" = "items" ]
+        printf '%s\n' '[{"id":"1234567890","name":"Test Item","fields":[{"name":"test-field","value":"test-field-secret"}]}]'
+        ;;
+    *)
+        echo "Unexpected fake bw command: $*" >&2
+        exit 1
+        ;;
+esac

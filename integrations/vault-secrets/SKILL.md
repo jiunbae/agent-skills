@@ -5,33 +5,32 @@ description: Retrieves and stores credentials in the user's self-hosted Vaultwar
 
 # Vault Secrets
 
-Credentials live in a self-hosted Vaultwarden at **https://vault.jiun.dev**, reachable only through the `bw` CLI (`/opt/homebrew/bin/bw`) and the `vault-get` helper (`~/.local/bin/vault-get`).
+Credentials live at the approved self-hosted Vaultwarden origin **https://vault.jiun.dev**, reachable through the `bw` CLI and this skill's validated field-only helpers.
 
-> **There is no vault MCP server and no other tooling.** If you look for one and find nothing, that is expected — it does not mean the credential is unavailable. Always run `bw status` before concluding anything is missing.
+> **There is no vault MCP server.** If you look for one and find nothing, that is expected — it does not mean the credential is unavailable. Use the status helper before concluding anything is missing.
 
 ## Start here
 
 ```bash
-bw status          # {"status":"unlocked", ...} — usually already unlocked, BW_SESSION set
+./scripts/vault-status.sh check
 ```
 
 | `status` | What to do |
 |:--|:--|
 | `unlocked` | Proceed. |
-| `locked` | Interactive unlock — ask the user to run `! bw unlock` (do not attempt it yourself). |
-| `unauthenticated` | Ask the user to run `! bw login`. |
+| `locked` | Ask the user to run `! ./scripts/vault-status.sh unlock`; do not attempt it yourself. |
+| `unauthenticated` | Ask the user to run `! ./scripts/vault-status.sh login`. |
 
 ## Retrieve a secret
 
 ```bash
-vault-get "<item name>"            # whole item as JSON: {"name":..., "username":..., "fields":{...}}
-vault-get "<item name>" <field>    # one field's value on stdout
+./scripts/vault-get-field.sh "<item-name>" "<field-name>" | consumer-command
 ```
 
 Fallback when you need to search rather than name an item exactly:
 
 ```bash
-bw list items --search npm         # then read .fields[].name, never .fields[].value
+./scripts/vault-list-fields.sh "<term>"
 ```
 
 ### The trap that wastes the most time
@@ -39,50 +38,45 @@ bw list items --search npm         # then read .fields[].name, never .fields[].v
 **Secrets are usually in custom `fields`, not in `login.password`.** An item can look empty if you only check the login block. Enumerate field *names* first:
 
 ```bash
-bw list items --search <term> | python3 -c "
-import json,sys
-for i in json.load(sys.stdin):
-    print(i['id'][:8], repr(i['name']), [f.get('name') for f in (i.get('fields') or [])])
-"
+./scripts/vault-list-fields.sh "<term>"
 ```
 
-## Known items
+## Example items
 
 | Item | Field | Used for |
 |:--|:--|:--|
-| `npmjs.com` (`ac040407`) | `token` | `npm publish` — account `jiunbae` |
-| `Cloudflare API` | `api_token`, `zone_id`, `account_id` | DNS, Tunnel |
-| `Vaultwarden Admin Token` | `admin_token`, `admin_url` | Admin panel |
+| `<registry-item>` | `<publish-token-field>` | Package publishing |
+| `<dns-provider-item>` | `<api-token-field>`, `<zone-id-field>` | DNS automation |
+| `<service-item>` | `<credential-field>` | Service access |
 
-Full inventory: `~/.agents/VAULT.md`.
+Full inventory: `~/.agents/VAULT.md`. Keep its contents private and access-controlled.
 
-### npm publish recipe
+### Registry login pattern
 
-`~/.npmrc` may already hold a **stale** `_authToken` that returns `401 Unauthorized` from `npm whoami`. A 401 means refresh from the vault — not that no credential exists.
+A `401 Unauthorized` can mean a local credential is stale. Refresh only the required field from the vault directly into a consumer that supports secret input on stdin.
 
 ```bash
-npm config set //registry.npmjs.org/:_authToken="$(vault-get 'npmjs.com' token)"
-npm whoami        # expect: jiunbae
+./scripts/vault-get-field.sh "<registry-item>" "<password-field>" |
+  docker login registry.example.org --username "<account-name>" --password-stdin
 ```
-
-Tell the user afterwards that `~/.npmrc` now holds a live token, and offer `npm config delete //registry.npmjs.org/:_authToken`.
 
 ## Store a secret
 
 Helper scripts live in this skill's own `scripts/` directory:
 
 ```bash
-echo "$PASSWORD" | ./scripts/vault-set.sh login "Service" --username admin --password-stdin
-echo "$API_KEY"  | ./scripts/vault-set.sh note "API Key" --field-stdin api_key
-./scripts/vault-status.sh check | unlock | sync
+printf '%s\n' "$PASSWORD" | ./scripts/vault-set.sh login "Service" --username app --password-stdin
+printf '%s\n' "$API_KEY"  | ./scripts/vault-set.sh note "API Key" --field-stdin api_key
+./scripts/vault-status.sh check
+./scripts/vault-status.sh sync
 ```
 
 ## Security rules
 
 **DO**
-- Pipe secrets straight into the consuming command: `npm config set ...="$(vault-get ... )"`.
+- Pipe a single requested field straight into the consuming command.
 - Use `--password-stdin` / `--field-stdin` when writing.
-- Report only non-identifying shape when you must confirm a fetch worked (length, `npm_` prefix).
+- Report only non-identifying shape when you must confirm a fetch worked, such as length.
 
 **DON'T**
 - Print a secret value into the transcript, a log, or a commit — the transcript is durable.

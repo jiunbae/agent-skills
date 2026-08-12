@@ -26,7 +26,7 @@ Save project-specific material under `workspace/{project}/context/`, `workspace-
 ```bash
 python3 scripts/obsidian-write.py \
   --title "API 설계" \
-  --content "마크다운 내용"
+  --file "/path/to/document.md"
 ```
 
 Optional arguments:
@@ -37,6 +37,15 @@ Optional arguments:
 - `--tags a,b`: append tags
 - `--overwrite`: replace an exact existing path; otherwise a numeric suffix is added
 
+Use exactly one protected body input: `--file PATH`, or explicit `--stdin` for a
+pipe or heredoc. The writer never reads standard input unless `--stdin` is set.
+
+```bash
+python3 scripts/obsidian-write.py \
+  --title "API 설계" \
+  --stdin < "/path/to/document.md"
+```
+
 ### Private article
 
 Save research or a report under `articles/YYYY-MM-DD-slug.md` without publishing it:
@@ -45,7 +54,7 @@ Save research or a report under `articles/YYYY-MM-DD-slug.md` without publishing
 python3 scripts/obsidian-write.py \
   --article \
   --title "Research title" \
-  --content "마크다운 내용" \
+  --file "/path/to/article.md" \
   --tags "research,topic"
 ```
 
@@ -57,7 +66,7 @@ Use `--publish`. It implies `--article`, writes `publish: true` in frontmatter, 
 python3 scripts/obsidian-write.py \
   --publish \
   --title "Public document" \
-  --content "마크다운 내용" \
+  --file "/path/to/public-document.md" \
   --tags "public,documentation"
 ```
 
@@ -71,7 +80,9 @@ Use standard Markdown links instead of Obsidian wikilinks because Docsify does n
 
 ## Direct server maintenance
 
-Use `scripts/docs-publish.sh` only for explicit server inspection, temporary sharing, or cleanup. It requires `DOCS_HOST` and `DOCS_URL`; `DOCS_USER` and `DOCS_ROOT` are optional.
+Use `scripts/docs-publish.sh` only for explicit server inspection, temporary sharing, or cleanup. It requires `DOCS_HOST`, `DOCS_ROOT`, and `DOCS_URL`; `DOCS_USER` is optional. `DOCS_ROOT` has no default and must be an absolute, non-root directory that the script can resolve on the remote host. The script shows only a redacted `docs-root/...` target preview and never prints the host filesystem path.
+
+Direct maintenance rejects symbolic links in the remote root or target chain. Directory pushes also fail preflight if the local source tree contains any symbolic link; do not work around this check.
 
 ```bash
 bash scripts/docs-publish.sh list
@@ -81,11 +92,43 @@ bash scripts/docs-publish.sh url DOCUMENT_NAME
 
 Direct `push` and `write` uploads can be deleted by the next Vault sync when no matching `publish: true` article exists. Prefer `--publish` for durable documents.
 
-Before `delete`, resolve the exact remote document name and confirm the destructive intent unless the user already named that exact document for deletion:
+An existing single-file `push` or `write` target fails closed after printing its
+exact `docs-root/...` preview. Review that preview first. Retry only after the
+user explicitly approves replacing that exact final target filename, using
+`--approve-overwrite=<exact-final-target-filename>`:
+
+```bash
+# Single-file push: the approval value is the source basename.
+bash scripts/docs-publish.sh push "/path/to/report.md"
+bash scripts/docs-publish.sh push "/path/to/report.md" \
+  --approve-overwrite=report.md
+
+# write normalizes the name, adds a date prefix when absent, and adds .md.
+printf '%s\n' "temporary content" | \
+  bash scripts/docs-publish.sh write release-notes
+# If the preview is docs-root/YYYY-MM-DD-release-notes.md:
+printf '%s\n' "temporary content" | \
+  bash scripts/docs-publish.sh write release-notes \
+  --approve-overwrite=YYYY-MM-DD-release-notes.md
+```
+
+Replace `YYYY-MM-DD-release-notes.md` with the exact final filename shown in the
+preview. Do not infer or add overwrite approval without the user's explicit
+approval of that exact filename. Directory `push` accepts no overwrite approval
+and refuses the entire upload if any target collides:
+
+```bash
+bash scripts/docs-publish.sh push "/path/to/export-directory"
+```
+
+Deletion is a two-step, fail-closed operation. First run it without approval and review the resolved target preview. Then repeat the exact document name in the approval flag:
 
 ```bash
 bash scripts/docs-publish.sh delete DOCUMENT_NAME
+bash scripts/docs-publish.sh delete DOCUMENT_NAME --approve=DOCUMENT_NAME
 ```
+
+Do not infer or add the approval flag unless the user has explicitly approved deletion of that exact document.
 
 ## Sync contract
 
