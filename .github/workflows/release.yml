@@ -9,11 +9,91 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  verify:
+    name: Verify tagged source
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout exact tagged SHA
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run skill test suites
+        run: |
+          # A skill owns its tests at <group>/<skill>/tests/test_*.py. Each
+          # suite runs from its own skill root so relative script paths resolve.
+          set -e
+          FOUND=0
+          while IFS= read -r dir; do
+            FOUND=1
+            echo "::group::${dir}"
+            (cd "${dir}" && python -m unittest discover -s tests -v)
+            echo "::endgroup::"
+          done < <(find . -mindepth 3 -maxdepth 3 -type d -name tests -not -path "./.git/*" \
+                     -exec sh -c 'ls "$1"/test_*.py >/dev/null 2>&1' _ {} \; -print | sed 's|/tests$||' | sort)
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "no python skill tests found" >&2
+            exit 1
+          fi
+
+      - name: Run hermetic non-Python skill test suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          suites=(
+            development/appstore-screenshots/tests/run.sh
+            development/git-commit-pr/tests/commit-check.test.sh
+            development/iac-deploy-prep/tests/test-scripts.sh
+            integrations/vault-secrets/tests/security-smoke.sh
+            ml/ml-benchmark/tests/ml-benchmark.test.sh
+            ml/triton-deploy/tests/test-triton-deploy.sh
+            security/security-auditor/tests/test-security-audit.sh
+          )
+
+          for suite in "${suites[@]}"; do
+            if [[ ! -f "${suite}" ]]; then
+              echo "required suite is missing: ${suite}" >&2
+              exit 1
+            fi
+            echo "::group::${suite}"
+            bash "${suite}"
+            echo "::endgroup::"
+          done
+
+      - name: Check generated files are current
+        run: python common/korean-editor/scripts/build_runtime_rules.py --check
+
+      - name: Set up supported Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+
+      - name: Install exact browser acceptance dependencies
+        working-directory: development/playwright
+        run: npm ci --ignore-scripts
+
+      - name: Install acceptance Chromium
+        working-directory: development/playwright
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Verify AIR source, generated assets, and examples
+        env:
+          WORKFLOW_STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/development/playwright/node_modules/playwright-core/index.mjs
+        run: node agents/air-workbench/scripts/verify-release.mjs --source
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact tagged SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Get version from tag
         id: version

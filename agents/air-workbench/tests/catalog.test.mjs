@@ -2363,6 +2363,7 @@ test("a per-root time limit publishes a typed bound and suppresses lineage", asy
   const changing = join(walked, "a", "SKILL.md");
   await put(changing, skill("tl-a", "Before"));
   await put(join(stalled, "b", "SKILL.md"), skill("tl-b", "Second"));
+  const stalledPhysical = await realpath(stalled);
   const catalog = createSkillCatalog({
     roots: [
       { label: "tl-walked", path: walked },
@@ -2385,17 +2386,20 @@ test("a per-root time limit publishes a typed bound and suppresses lineage", asy
   const originalReaddir = fs.promises.readdir;
   const stallTimers = new Set();
   let stall = true;
-  fs.promises.readdir = (path, options) => (
-    stall && String(path).startsWith(stalled)
-      ? new Promise((resolveStall) => {
-        const timer = setTimeout(() => {
-          stallTimers.delete(timer);
-          resolveStall(originalReaddir(path, options));
-        }, 10_000);
-        stallTimers.add(timer);
-      })
-      : originalReaddir(path, options)
-  );
+  let stalledReadStarted = false;
+  fs.promises.readdir = (path, options) => {
+    if (!stall || String(path) !== stalledPhysical) {
+      return originalReaddir(path, options);
+    }
+    stalledReadStarted = true;
+    return new Promise((resolveStall) => {
+      const timer = setTimeout(() => {
+        stallTimers.delete(timer);
+        resolveStall(originalReaddir(path, options));
+      }, 10_000);
+      stallTimers.add(timer);
+    });
+  };
   syncBuiltinESMExports();
   let after;
   try {
@@ -2408,6 +2412,7 @@ test("a per-root time limit publishes a typed bound and suppresses lineage", asy
     stallTimers.clear();
   }
 
+  assert.equal(stalledReadStarted, true);
   assert.equal(after.truncated, true);
   assert.ok(after.limit_codes.includes("AIR_CATALOG_TIME_LIMIT"));
   assert.deepEqual(after.limit_codes, ["AIR_CATALOG_TIME_LIMIT"]);
