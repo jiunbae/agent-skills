@@ -3,6 +3,7 @@
 # Uploads ONE screenshot to a set via the 3-step reserve -> PUT -> commit flow. Prints the new id.
 # Same env as asc_api.rb (ASC_KEY_ID, ASC_ISSUER_ID, optional ASC_KEY_FILEPATH).
 require "openssl"; require "json"; require "base64"; require "net/http"; require "uri"; require "time"; require "digest"
+require_relative "asc_url"
 
 KEY_ID = ENV["ASC_KEY_ID"] or abort("set ASC_KEY_ID")
 ISSUER = ENV["ASC_ISSUER_ID"] or abort("set ASC_ISSUER_ID")
@@ -22,8 +23,8 @@ def jwt
   "#{data}.#{b64(r + s)}"
 end
 def req(method, path, body = nil, raw_headers = nil)
-  url = path.start_with?("http") ? path : "https://api.appstoreconnect.apple.com#{path}"
-  uri = URI(url); http = Net::HTTP.new(uri.host, uri.port); http.use_ssl = true
+  uri = raw_headers ? URI(path) : AscUrl.authenticated_uri(path)
+  http = Net::HTTP.new(uri.host, uri.port); http.use_ssl = true
   klass = {"GET"=>Net::HTTP::Get,"POST"=>Net::HTTP::Post,"PATCH"=>Net::HTTP::Patch,"PUT"=>Net::HTTP::Put}[method]
   r = klass.new(uri.request_uri)
   if raw_headers
@@ -50,7 +51,9 @@ d = JSON.parse(b)["data"]; sid = d["id"]
 
 # 2) upload bytes per operation (usually one)
 d["attributes"]["uploadOperations"].each do |op|
-  c, bb = req("PUT", op["url"], bytes.byteslice(op["offset"], op["length"]), op["requestHeaders"])
+  # An empty header list still marks this as a presigned upload; never fall back to ASC JWT auth.
+  headers = op["requestHeaders"] || []
+  c, bb = req("PUT", op["url"], bytes.byteslice(op["offset"], op["length"]), headers)
   abort "upload op failed HTTP #{c}: #{bb}" unless c.between?(200, 299)
 end
 

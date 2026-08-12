@@ -11,6 +11,17 @@ Full deployment pipeline setup: project analysis → Docker → K8s manifests �
 
 All infrastructure configs live in `~/workspace/iac/`. This skill generates files both in the project repo and in the IAC repo.
 
+## Generator Status and Write Safety
+
+`scripts/init-deploy.sh` is intentionally disabled. Its legacy GitHub Actions,
+in-project `k8s/`, NGINX, and three-overlay output contradicts the Gitea/ArgoCD
+topology below. Do not copy or re-enable that implementation.
+
+Before creating anything from this guide, enumerate every planned project and
+IaC destination. Stop if any destination already exists and ask whether it
+should be preserved, merged, or replaced. Never overwrite deployment, CI,
+Docker, environment, or ignore files implicitly.
+
 ## Architecture
 
 ```
@@ -81,11 +92,18 @@ dashboards/grafonnet/services/{app-name}.jsonnet  # Grafana dashboard
 ### Step 1: Analyze Project
 
 Detect:
-- Language/framework (package.json, requirements.txt, Cargo.toml)
+- Language/framework (`package.json`, `requirements.txt`, `pyproject.toml`, `Cargo.toml`, `go.mod`)
 - Port configuration
 - Environment variables needed
 - Database dependencies
 - LLM/AI SDK usage → triggers LLM metrics setup
+
+For Python, `pyproject.toml` is supported only when its build backend, dependency
+installer/lock file, application module, and start command are unambiguous.
+Otherwise stop and request those details; do not silently generate a
+`requirements.txt`-based image. For Rust, resolve the actual Cargo binary target
+from `Cargo.toml`/metadata and use that literal target name. Never emit a quoted
+Docker heredoc containing an unresolved shell variable as the binary path.
 
 ### Step 2: Generate Dockerfile
 
@@ -101,6 +119,11 @@ FROM node:22-slim AS base
 ```
 
 Use multi-stage builds for smaller images.
+
+Every runtime image must run as a numeric non-root user. Create that user in the
+image, use `COPY --chown`, set `USER` before the entrypoint, and ensure any
+writable cache or temporary paths are owned by that user. Do not assume an
+Alpine or Debian package creates the same UID across architectures.
 
 ### Step 3: Generate K8s Manifests
 
@@ -146,12 +169,25 @@ spec:
       labels:
         app: {app-name}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       imagePullSecrets:
         - name: registry-creds    # Pre-configured per namespace
       containers:
         - name: {app-name}
           image: registry.jiun.dev/{app-name}:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: {port}
           envFrom:
@@ -334,6 +370,11 @@ kubectl patch application prod-apps -n argocd --type merge \
 ```
 
 ### Step 5: Generate Gitea CI Workflow
+
+First resolve the project's existing language-specific install, lint, test, and
+build commands. Add the applicable commands as normal failing steps before the
+image build. Do not append `|| true`, and stop instead of inventing commands for
+an unknown project layout. Docker build/push must also remain a failing step.
 
 **`.gitea/workflows/deploy.yaml`:**
 ```yaml
@@ -638,5 +679,6 @@ echo "# trigger" >> .gitea/workflows/deploy.yaml && git add -A && git commit -m 
 |------|-----------|------------|-----------------|
 | package.json | Node.js | node:22-slim | prom-client |
 | requirements.txt | Python | python:3.11-slim | prometheus_client |
+| pyproject.toml | Python (only with resolved backend/install/start command) | python:3.11-slim | prometheus_client |
 | Cargo.toml | Rust | rust:1.75-alpine | prometheus |
 | go.mod | Go | golang:1.21-alpine | prometheus/client_golang |

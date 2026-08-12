@@ -11,6 +11,7 @@
 #
 # NOTE: macOS system ruby is < 3.0 — use classic `def`, not endless methods.
 require "openssl"; require "json"; require "base64"; require "net/http"; require "uri"; require "time"
+require_relative "asc_url"
 
 KEY_ID = ENV["ASC_KEY_ID"] or abort("set ASC_KEY_ID")
 ISSUER = ENV["ASC_ISSUER_ID"] or abort("set ASC_ISSUER_ID")
@@ -33,8 +34,11 @@ end
 method, path = ARGV[0], ARGV[1]
 body = ARGV[2]
 body = File.read(body[1..]) if body&.start_with?("@")
-url = path.start_with?("http") ? path : "https://api.appstoreconnect.apple.com#{path}"
-uri = URI(url)
+begin
+  uri = AscUrl.authenticated_uri(path)
+rescue AscUrl::InvalidTarget
+  abort "refusing authenticated ASC request: target must be a /v1 path on #{AscUrl::ORIGIN}"
+end
 http = Net::HTTP.new(uri.host, uri.port); http.use_ssl = true
 klass = {"GET"=>Net::HTTP::Get,"POST"=>Net::HTTP::Post,"PATCH"=>Net::HTTP::Patch,
          "DELETE"=>Net::HTTP::Delete,"PUT"=>Net::HTTP::Put}[method.upcase]

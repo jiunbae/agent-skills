@@ -16,7 +16,7 @@ ASC scripts read `ASC_KEY_ID` + `ASC_ISSUER_ID` from env (optional `ASC_KEY_FILE
 |--------|---------|
 | `asc_api.rb` | `ruby asc_api.rb <METHOD> <path> [json\|@file]` — ES256-JWT ASC API client, no gems. Prints `HTTP <code>` then body (strip line 1 before JSON-parsing). |
 | `upload_shot.rb` | `ruby upload_shot.rb <setId> <file.png>` — one screenshot via reserve→PUT→md5-commit; prints the new id. |
-| `fetch_bezels.sh` | `bash fetch_bezels.sh [outdir]` — download REAL Apple bezels (iPhone 16 Pro, iPad Pro 12.9″) + `apertures.json` from frameit-frames. |
+| `fetch_bezels.sh` | `bash fetch_bezels.sh [outdir]` — currently disabled (fails closed) until reviewed immutable commit and SHA-256 locks are populated; then downloads REAL Apple bezels (iPhone 16 Pro, iPad Pro 12.9″) + `apertures.json` from frameit-frames. |
 | `compose_framed.py` | `… <in> <out> <W> <H> <iphone\|ipad> <cap1> [cap2]` — screenshot into a real bezel on a captioned gradient. |
 | `compose_mac_store.py` | `… <in> <out> <W> <H> <cap1> [cap2]` — macOS window capture (already bezel-shaped) onto a captioned gradient. |
 
@@ -45,6 +45,11 @@ ruby scripts/asc_api.rb GET "/v1/apps/${APP_ID}/betaGroups?limit=200"
 For POST or PATCH bodies, pass JSON directly or use `@payload.json`. Resolve resource IDs with GET
 requests first, inspect the exact target, and obtain explicit authorization before mutations because
 App Store Connect API changes affect production distribution data. Never log the private key or JWT.
+
+Authenticated requests are restricted to relative `/v1` paths or absolute `/v1` URLs on exactly
+`https://api.appstoreconnect.apple.com` (no userinfo and only HTTPS port 443). Pagination URLs must
+pass that same check before a JWT is constructed or a request is made. Presigned asset-upload URLs
+never receive the ASC JWT.
 
 Follow pagination links in API responses instead of assuming one page is complete. Apple requires
 JWT authorization and ES256 signing; tokens normally must expire within 20 minutes. Verify unfamiliar
@@ -185,8 +190,8 @@ Then the website and the store pull from the same generated real UI. One source,
 A procedurally-drawn rounded-rect "phone" reads as fake every time (flat rim, wrong corner radius,
 no camera). The professional path (what fastlane frameit does) is compositing into **real Apple
 bezel PNGs** with a camera cutout + titanium rim + accurate radius:
-1. `fetch_bezels.sh` pulls the bezel PNGs and `apertures.json` from **frameit-frames** (`gh-pages/latest`,
-   a mirror of Apple Design Resources). Each device's `offsets.json` entry gives the screen aperture
+1. `fetch_bezels.sh` pulls the bezel PNGs and `apertures.json` from **frameit-frames** (a mirror of
+   Apple Design Resources). Each device's `offsets.json` entry gives the screen aperture
    `+ox+oy` and width. **Pick a bezel whose aperture width equals your capture width for a 1:1 fit** —
    e.g. an iPhone 17 Pro capture is 1206 wide, exactly the iPhone 16 Pro aperture (frameit ships
    frames up to iPhone 16; a same-width older model frames a newer capture perfectly).
@@ -198,6 +203,23 @@ bezel PNGs** with a camera cutout + titanium rim + accurate radius:
 3. macOS is different: a `screencapture -l<winid>` window capture **already has rounded corners +
    shadow** in its alpha, so `compose_mac_store.py` just crops the alpha bbox and places it — no
    synthetic bezel.
+
+#### Bezel supply-chain lock (maintainer action required)
+
+The repository does not currently contain reviewed copies of the three upstream files, so their
+correct digests cannot be established offline. `fetch_bezels.sh` therefore fails closed before
+creating the output directory or invoking `curl`. Do not guess or copy hashes from an unreviewed
+source. To enable it, a maintainer must:
+
+1. Select and review a full 40-character commit from the `fastlane/frameit-frames` `gh-pages`
+   history, including the two named PNGs and `latest/offsets.json`.
+2. Download those exact three files from that commit in a trusted review environment and compute
+   each digest with `shasum -a 256` (or `sha256sum`).
+3. Record the commit and the three lowercase digests in the supply-chain lock constants at the top
+   of `scripts/fetch_bezels.sh`, then review that change and run `bash tests/run.sh`.
+
+Once populated, the script downloads only from that immutable commit, stages all files, verifies
+all three recorded SHA-256 values, derives `apertures.json`, and only then replaces output files.
 
 ## 5. Upload via App Store Connect API
 
