@@ -26,13 +26,21 @@ export NOTION_DATA_SOURCE_ID="xxx"
 Never put the token, target ID, or document content on a command line shared with
 other users. Prefer `--file` and protected environment/config files.
 
-## Upload workflow
+## Workflow
 
-1. Write the report to a local Markdown file.
-2. Choose one classification: `public`, `internal`, `confidential`, or
-   `restricted`. Never guess; ask the data owner when it is unknown.
-3. Ask the data owner to choose a positive retention period.
-4. Run the non-disclosing dry run, then run the upload with the same arguments.
+### 1. Prepare and classify
+
+Write the report to a local Markdown file. Choose one classification: `public`,
+`internal`, `confidential`, or `restricted`. Never guess; ask the data owner
+when it is unknown.
+
+### 2. Set retention
+
+Ask the data owner to choose a positive retention period.
+
+### 3. Preview and upload
+
+Run the non-disclosing dry run, then run the upload with the same arguments.
 
 ```bash
 python3 "$NOTION_SUMMARY_SKILL_DIR/scripts/notion-upload.py" \
