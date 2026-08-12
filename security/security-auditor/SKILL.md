@@ -13,49 +13,64 @@ Repository security audit for sensitive information detection.
 |------|------------------|
 | API Keys | `sk-`, `AKIA`, `ghp_`, `xoxb-` |
 | Passwords | `PASSWORD=`, `password:`, hardcoded strings |
+| Private Keys | Generic, encrypted, RSA, OpenSSH, EC, DSA, and PGP armor headers |
 | User Paths | `/Users/realname/`, `/home/realname/` |
 | DB Strings | `mongodb://`, `postgres://` with credentials |
 
-## Auto-Excluded (False Positives)
+## Coverage and Redaction Guarantees
 
-- Placeholders: `/Users/username`, `your-api-key`
-- Test dirs: `test/`, `examples/`, `fixtures/`
-- Template values: `CHANGE_ME`, `xxx`
+- Scan both Git index blobs and tracked worktree text, regardless of extension or
+  path. Documentation, tests, examples, fixtures, templates, and
+  placeholder-bearing lines stay in scope.
+- Skip only content Git identifies as binary; do not use content-based record
+  exclusions.
+- Never print the matched line or historical diff. Report only path, line,
+  detector ID, severity, commit metadata when applicable, and an occurrence
+  number. Finding identity never derives from matched content.
+- Deduplicate identical detector and location metadata across the index and
+  worktree representations.
+- Do not cap findings. History reports how many reachable commit snapshots were
+  scanned and whether the requested commit limit truncated snapshot coverage.
 
 ## Workflow
 
-### Step 1: Check Git-Tracked Sensitive Files
+### Step 1: Run the Auditor
 
 ```bash
-# Files that SHOULD be gitignored
-git ls-files | grep -E '\.(env|key|pem|p12)$'
+# Current Git index blobs, tracked worktree text, and sensitive filenames
+scripts/security-audit.sh quick
+
+# Current text, all reachable commit snapshots, deleted paths, and .gitignore
+scripts/security-audit.sh scan
 ```
 
-**Note:** Files existing locally is OK. Problem is when they're git-tracked.
+Run from the repository being audited. A sensitive file that exists only locally
+is outside the tracked-file scan; a tracked sensitive filename is a finding.
 
-### Step 2: Scan Code for Secrets
+### Step 2: Select History Depth When Needed
 
 ```bash
-# API keys
-grep -rn "sk-[a-zA-Z0-9]\\{20,\\}" --include="*.ts" --include="*.py"
+# Scan the last 250 reachable commit snapshots.
+# The report states whether this truncates snapshot coverage.
+scripts/security-audit.sh history 250
 
-# Hardcoded passwords (case-insensitive)
-grep -rni "password.*=.*['\"]" --include="*.ts" --include="*.py"
+# Explicitly scan every reachable commit snapshot
+scripts/security-audit.sh history all
 ```
 
-### Step 3: Check Git History
+Deleted sensitive paths are checked across all reachable commits even when the
+snapshot limit is smaller.
 
-```bash
-# Search past commits for leaked secrets
-git log -p --all -S "password" -- "*.ts" "*.py"
-git log -p --all -S "sk-" -- "*.ts" "*.py"
-```
+### Step 3: Interpret the Exit Status
+
+- `0`: scan completed with no findings
+- `1`: scan completed and reported one or more findings
+- `2`: usage or operational error
 
 ### Step 4: Verify .gitignore
 
 ```bash
-# Ensure sensitive patterns are ignored
-cat .gitignore | grep -E "env|key|secret"
+scripts/security-audit.sh gitignore
 ```
 
 ## Report Format
@@ -63,15 +78,15 @@ cat .gitignore | grep -E "env|key|secret"
 ```markdown
 ## Security Audit Report
 
-### 🔴 Critical
-- [file:line] Hardcoded API key detected
+### Finding
+- path=src/config line=12 detector=hardcoded-api-key occurrence=1 severity=HIGH
 
-### 🟡 Warning
-- [file:line] User path found
+### History finding
+- commit=&lt;abbreviated-commit&gt; path=docs/setup line=8 detector=hardcoded-password occurrence=1 severity=CRITICAL
 
 ### ✅ Passed
-- .env properly gitignored
-- No secrets in git history
+- Finding cap: none; all matches are reported
+- Snapshot coverage: 42 of 42 reachable commits; truncated: no
 ```
 
 ## Difference from git-commit-pr

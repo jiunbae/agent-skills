@@ -15,9 +15,14 @@ Before committing, scan for:
 - `.env` files tracked by git
 - Private keys (`.pem`, `.p12`)
 
+Run the bundled check before committing. Resolve `COMMIT_CHECK_SKILL_DIR` to the
+installed directory containing this `SKILL.md`; do not assume the target repository
+contains the skill sources. The checker reports only affected file names, never the
+matched secret values. Exit status 1 means a blocking finding and status 2 means the
+Git data could not be inspected reliably.
+
 ```bash
-# Quick scan
-git diff --cached | grep -iE "(password|api_key|secret|token).*="
+"$COMMIT_CHECK_SKILL_DIR/scripts/commit-check.sh" staged
 ```
 
 ## Commit Workflow
@@ -31,6 +36,7 @@ git add <specific-files>  # Prefer specific files
 ### Step 2: Review Staged
 ```bash
 git diff --cached
+"$COMMIT_CHECK_SKILL_DIR/scripts/commit-check.sh" staged
 ```
 
 ### Step 3: Commit
