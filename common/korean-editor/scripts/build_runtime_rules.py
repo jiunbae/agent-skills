@@ -9,6 +9,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from rule_schema import validate_rules
+
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 RULES_PATH = SKILL_ROOT / "references" / "editing-rules.json"
@@ -18,12 +20,11 @@ OUTPUT_PATH = SKILL_ROOT / "references" / "runtime-rules.md"
 def load_rules(path: Path = RULES_PATH) -> dict:
     with path.open(encoding="utf-8") as handle:
         data = json.load(handle)
-    if not isinstance(data.get("categories"), dict) or not isinstance(data.get("rules"), list):
-        raise ValueError("editing-rules.json must contain categories and rules")
-    return data
+    return validate_rules(data)
 
 
 def render(data: dict) -> str:
+    data = validate_rules(data)
     categories: dict[str, str] = data["categories"]
     grouped: dict[str, list[dict]] = defaultdict(list)
     for rule in data["rules"]:
@@ -49,6 +50,7 @@ def render(data: dict) -> str:
                     f"### {rule['id']} · {rule['severity']}",
                     "",
                     f"- 신호: {rule['cue']}",
+                    f"- 최소 발생 횟수: {rule['minimum_occurrences']}회",
                     f"- 권고: {rule['guidance']}",
                     f"- 예외: {rule['exceptions']}",
                     "",

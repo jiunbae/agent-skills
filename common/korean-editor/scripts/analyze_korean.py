@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from korean_text import mask_prose  # noqa: E402
+from rule_schema import validate_rules  # noqa: E402
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +54,7 @@ def scope_hint(finding_count: int, weighted: int, prose_characters: int) -> str:
 
 
 def analyze(text: str, rules_data: dict) -> dict:
+    rules_data = validate_rules(rules_data)
     findings = []
     weighted_signal_count = 0
     # Offsets survive masking, so line numbers and excerpts come from the
@@ -142,7 +144,7 @@ def main() -> int:
         text = read_input(args.input)
         rules_data = json.loads(args.rules.read_text(encoding="utf-8"))
         report = analyze(text, rules_data)
-    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, re.error) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, KeyError, re.error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

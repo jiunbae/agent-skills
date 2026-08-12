@@ -14,7 +14,17 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from korean_text import FENCE_RE, INLINE_CODE_RE, LINK_DEST_RE, URL_RE, mask_span, strip_code  # noqa: E402
+from korean_text import (  # noqa: E402
+    INLINE_CODE_RE,
+    URL_RE,
+    extract_link_destinations,
+    fenced_code_spans,
+    front_matter_span,
+    link_destination_spans,
+    mask_prose,
+    mask_span,
+    strip_code,
+)
 
 
 QUOTE_RES = [
@@ -38,40 +48,46 @@ TASK_ITEM_RE = re.compile(r"^\s*[-*+]\s+\[([ xX])\]", re.MULTILINE)
 BLOCKQUOTE_LINE_RE = re.compile(r"^\s*>", re.MULTILINE)
 FOOTNOTE_RE = re.compile(r"\[\^[^\]\s]+\]")
 LATIN_TERM_RE = re.compile(r"(?<![0-9A-Za-z_])[A-Z][A-Za-z0-9]{2,}(?![0-9A-Za-z_])")
-FORMAL_RE = re.compile(r"(?:습니다|입니다|습니까|십시오|ㅂ니다)")
-POLITE_RE = re.compile(r"(?:아요|어요|에요|예요|세요|네요|죠|고요)(?=[\s.!?…\"”』」)]|$)", re.MULTILINE)
-# '습니다.' also ends in '다', so the plain form excludes the formal ending.
-PLAIN_RE = re.compile(r"(?<!니)다(?=[.!?…]|$)", re.MULTILINE)
+SENTENCE_END = r"(?=[ \t]*(?:[.!?…\"”』」)]|\r\n|\r|\n|$))"
+FORMAL_RE = re.compile(r"(?:니다|니까|십시오|(?:읍|[가-힣])시다)" + SENTENCE_END)
+POLITE_RE = re.compile(r"(?:아요|어요|해요|돼요|에요|예요|세요|네요|죠|고요)" + SENTENCE_END)
+PLAIN_RE = re.compile(r"(?:다|는가|은가|니|냐|나|까|(?:아|어|여)?라|자)" + SENTENCE_END)
 
 
 def read_text(path: str) -> str:
-    return Path(path).read_text(encoding="utf-8")
-
-
-def normalize_url(value: str) -> str:
-    return value.rstrip(".,;:!?)]}")
+    with Path(path).open(encoding="utf-8", newline="") as handle:
+        return handle.read()
 
 
 def extract_urls(text: str) -> list[str]:
-    return [normalize_url(match.group(0)) for match in URL_RE.finditer(text)]
-
-
-def extract_link_destinations(text: str) -> list[str]:
-    return [normalize_url(match.group(1)) for match in LINK_DEST_RE.finditer(text)]
+    """Extract exact bare URLs outside other protected Markdown regions."""
+    searchable = text
+    for start, end in fenced_code_spans(text):
+        searchable = mask_span(searchable, start, end)
+    front_matter = front_matter_span(text)
+    if front_matter:
+        searchable = mask_span(searchable, *front_matter)
+    for match in list(INLINE_CODE_RE.finditer(searchable)):
+        searchable = mask_span(searchable, match.start(), match.end())
+    for start, end in link_destination_spans(searchable):
+        searchable = mask_span(searchable, start, end)
+    return [match.group(0) for match in URL_RE.finditer(searchable)]
 
 
 def extract_fenced_code(text: str) -> list[str]:
-    return [match.group(0).strip() for match in FENCE_RE.finditer(text)]
+    return [text[start:end] for start, end in fenced_code_spans(text)]
 
 
 def extract_inline_code(text: str) -> list[str]:
-    without_fences = FENCE_RE.sub("", text)
+    without_fences = text
+    for start, end in fenced_code_spans(text):
+        without_fences = mask_span(without_fences, start, end)
     return [match.group(2) for match in INLINE_CODE_RE.finditer(without_fences)]
 
 
 def extract_quotes(text: str) -> list[str]:
     values: list[str] = []
-    without_code = FENCE_RE.sub("", text)
+    without_code = strip_code(text)
     for regex in QUOTE_RES:
         values.extend(match.group(0) for match in regex.finditer(without_code))
     return values
@@ -86,8 +102,29 @@ def extract_footnotes(text: str) -> list[str]:
 
 
 def extract_latin_terms(text: str) -> list[str]:
-    body = LINK_DEST_RE.sub(" ", URL_RE.sub(" ", strip_code(text)))
+    body = mask_prose(text)
     return [match.group(0) for match in LATIN_TERM_RE.finditer(body)]
+
+
+def extract_front_matter(text: str) -> list[str]:
+    span = front_matter_span(text)
+    return [text[slice(*span)]] if span else []
+
+
+def extract_blockquotes(text: str) -> list[str]:
+    """Extract normalized blockquote contents in document order."""
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        match = re.match(r"^ {0,3}>[ \t]?(.*)$", line)
+        if match:
+            current.append(match.group(1))
+        elif current:
+            blocks.append("\n".join(current).strip())
+            current = []
+    if current:
+        blocks.append("\n".join(current).strip())
+    return blocks
 
 
 def blockquote_signature(text: str) -> list[int]:
@@ -98,7 +135,7 @@ def blockquote_signature(text: str) -> list[int]:
     """
     signature: list[int] = []
     run = 0
-    for line in FENCE_RE.sub("", text).splitlines():
+    for line in strip_code(text).splitlines():
         if BLOCKQUOTE_LINE_RE.match(line):
             run += 1
         elif run:
@@ -110,22 +147,27 @@ def blockquote_signature(text: str) -> list[int]:
 
 
 def speech_level_profile(text: str) -> Counter[str]:
-    """Count sentence endings by politeness level."""
-    body = strip_code(text)
-    return Counter(
-        {
-            "formal": len(FORMAL_RE.findall(body)),
-            "polite": len(POLITE_RE.findall(body)),
-            "plain": len(PLAIN_RE.findall(body)),
-        }
-    )
+    """Count sentence endings once, preferring more specific speech levels."""
+    body = mask_prose(text)
+    profile: Counter[str] = Counter({"formal": 0, "polite": 0, "plain": 0})
+    occupied: list[tuple[int, int]] = []
+    for level, regex in (("formal", FORMAL_RE), ("polite", POLITE_RE), ("plain", PLAIN_RE)):
+        for match in regex.finditer(body):
+            if any(match.start() < end and start < match.end() for start, end in occupied):
+                continue
+            profile[level] += 1
+            occupied.append(match.span())
+    return profile
 
 
 def dominant_speech_level(profile: Counter[str]) -> str | None:
     total = sum(profile.values())
-    if total < 3:
+    if total == 0:
         return None
-    level, count = profile.most_common(1)[0]
+    ranked = profile.most_common()
+    level, count = ranked[0]
+    if len(ranked) > 1 and ranked[1][1] == count:
+        return None
     return level if count / total >= 0.5 else None
 
 
@@ -173,18 +215,73 @@ def heading_titles(text: str) -> list[str]:
     return [match.group(2).strip() for match in HEADING_RE.finditer(text)]
 
 
-def table_signature(text: str) -> list[int]:
-    signature = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if "|" not in stripped:
+def _table_cells(line: str) -> list[str] | None:
+    """Split unescaped table pipes while ignoring pipes in inline code."""
+    if len(line) - len(line.lstrip(" ")) >= 4:
+        return None
+    value = line.strip()
+    cells: list[str] = []
+    cell: list[str] = []
+    separators = 0
+    index = 0
+    code_ticks = 0
+    while index < len(value):
+        char = value[index]
+        if char == "\\" and index + 1 < len(value):
+            cell.extend(value[index : index + 2])
+            index += 2
             continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if len(cells) < 2:
+        if char == "`":
+            end = index
+            while end < len(value) and value[end] == "`":
+                end += 1
+            run = end - index
+            code_ticks = 0 if code_ticks == run else run if code_ticks == 0 else code_ticks
+            cell.extend(value[index:end])
+            index = end
             continue
-        if all(re.fullmatch(r":?-{3,}:?", cell or "---") for cell in cells):
+        if char == "|" and code_ticks == 0:
+            separators += 1
+            cells.append("".join(cell).strip())
+            cell = []
+        else:
+            cell.append(char)
+        index += 1
+    cells.append("".join(cell).strip())
+    if separators == 0:
+        return None
+    if value.startswith("|"):
+        cells = cells[1:]
+    if value.endswith("|") and cells:
+        cells = cells[:-1]
+    return cells if len(cells) >= 2 else None
+
+
+def table_signature(text: str) -> list[list[int]]:
+    """Return shapes only for tables with a valid header delimiter row."""
+    lines = text.splitlines()
+    signature: list[list[int]] = []
+    index = 0
+    while index + 1 < len(lines):
+        header = _table_cells(lines[index])
+        delimiter = _table_cells(lines[index + 1])
+        if (
+            header
+            and delimiter
+            and len(header) == len(delimiter)
+            and all(re.fullmatch(r":?-{3,}:?", cell) for cell in delimiter)
+        ):
+            shape = [len(header)]
+            index += 2
+            while index < len(lines):
+                row = _table_cells(lines[index])
+                if row is None:
+                    break
+                shape.append(len(row))
+                index += 1
+            signature.append(shape)
             continue
-        signature.append(len(cells))
+        index += 1
     return signature
 
 
@@ -206,25 +303,33 @@ def verify(before: str, after: str) -> dict:
     errors: list[dict] = []
     warnings: list[dict] = []
 
-    protected: list[tuple[str, Callable[[str], list[str]]]] = [
-        ("numbers", extract_numbers),
-        ("urls", extract_urls),
-        ("link_destinations", extract_link_destinations),
-        ("fenced_code", extract_fenced_code),
-        ("inline_code", extract_inline_code),
-        ("direct_quotes", extract_quotes),
-        ("task_states", extract_task_states),
-        ("footnotes", extract_footnotes),
+    protected: list[tuple[str, Callable[[str], list[str]], bool]] = [
+        ("numbers", extract_numbers, False),
+        ("urls", extract_urls, True),
+        ("link_destinations", extract_link_destinations, True),
+        ("fenced_code", extract_fenced_code, True),
+        ("inline_code", extract_inline_code, False),
+        ("direct_quotes", extract_quotes, False),
+        ("task_states", extract_task_states, True),
+        ("footnotes", extract_footnotes, False),
+        ("front_matter", extract_front_matter, True),
     ]
-    for kind, extractor in protected:
-        removed, added = counter_delta(extractor(before), extractor(after))
-        if removed or added:
+    for kind, extractor, ordered in protected:
+        before_values = extractor(before)
+        after_values = extractor(after)
+        removed, added = counter_delta(before_values, after_values)
+        if removed or added or (ordered and before_values != after_values):
             errors.append(
                 {
                     "kind": kind,
                     "message": f"protected {kind} changed",
                     "removed": compact(removed),
                     "added": compact(added),
+                    **(
+                        {"before": compact(before_values), "after": compact(after_values)}
+                        if ordered and not (removed or added)
+                        else {}
+                    ),
                 }
             )
 
@@ -275,6 +380,13 @@ def verify(before: str, after: str) -> dict:
             {
                 "kind": "blockquote_lines",
                 "message": "blockquote line counts changed; confirm that no quoted line was dropped",
+            }
+        )
+    if extract_blockquotes(before) != extract_blockquotes(after):
+        errors.append(
+            {
+                "kind": "blockquote_content",
+                "message": "protected blockquote content changed",
             }
         )
 
