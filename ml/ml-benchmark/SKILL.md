@@ -1,6 +1,6 @@
 ---
 name: benchmarking-ml-models
-description: Runs ML model benchmarks and evaluations. Measures inference speed, memory usage, and accuracy metrics. Use for "벤치마크", "모델 평가", "성능 테스트", "inference 속도" requests.
+description: Guides ML model benchmarks and evaluations. Measures inference speed, memory usage, and accuracy metrics. Use for "벤치마크", "모델 평가", "성능 테스트", "inference 속도" requests.
 ---
 
 # ML Benchmark
@@ -17,12 +17,18 @@ import torch
 for _ in range(10):
     model(sample_input)
 
+# CUDA calls are asynchronous. Finish warmup before starting the clock.
+use_cuda = torch.cuda.is_available()
+if use_cuda:
+    torch.cuda.synchronize()
+
 # Benchmark
-start = time.time()
+start = time.perf_counter()
 for _ in range(100):
     model(sample_input)
-torch.cuda.synchronize()
-elapsed = time.time() - start
+if use_cuda:
+    torch.cuda.synchronize()
+elapsed = time.perf_counter() - start
 
 print(f"Avg latency: {elapsed/100*1000:.2f}ms")
 ```
@@ -38,10 +44,23 @@ print(f"Avg latency: {elapsed/100*1000:.2f}ms")
 
 ## Benchmark Script
 
+The bundled helper has no inference or dataset adapter. Its `run` and `evaluate`
+commands intentionally exit nonzero before printing or saving results. Do not
+treat endpoint health, sleeps, or generated labels as model measurements.
+
 ```bash
-# Run standard benchmark
-python benchmark.py --model ./model.pt --batch-size 32 --iterations 100
+# From this Skill's directory; currently verifies the fail-closed contract.
+bash scripts/ml-benchmark.sh run \
+  --url localhost:8001 \
+  --model langdetector \
+  --input ./sample.wav \
+  --batch-size 32 \
+  --runs 100
 ```
+
+Before enabling that command, add a real, versioned inference adapter and test
+that every recorded sample comes from a completed model response. Accuracy also
+requires a dataset adapter that reads ground-truth labels and predictions.
 
 ## Output Format
 

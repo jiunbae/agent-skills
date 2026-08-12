@@ -23,8 +23,8 @@ usage() {
 Usage: ml-benchmark.sh <command> [options]
 
 Commands:
-  run [options]          벤치마크 실행 (latency, throughput)
-  evaluate [options]     정확도 평가
+  run [options]          추론 어댑터 미포함: 결과 없이 실패
+  evaluate [options]     추론/데이터셋 어댑터 미포함: 결과 없이 실패
   compare <f1> <f2>      결과 비교
   history <model>        벤치마크 히스토리
 
@@ -66,23 +66,6 @@ load_profile() {
         PROFILE_WARMUP=$(yq -r ".profiles.$profile_name.warmup // \"\"" "$CONFIG_FILE")
         PROFILE_LANGUAGES=$(yq -r ".profiles.$profile_name.languages // \"\"" "$CONFIG_FILE")
         PROFILE_SAVE_DIR=$(yq -r ".profiles.$profile_name.save_dir // \"\"" "$CONFIG_FILE")
-    fi
-}
-
-# 서버 헬스체크
-check_server() {
-    local url="$1"
-    local host="${url%%:*}"
-    local port="${url##*:}"
-
-    # gRPC 포트를 HTTP 포트로 변환 (8001 -> 8000)
-    local http_port=$((port - 1))
-
-    if curl -s "http://$host:$http_port/v2/health/ready" > /dev/null 2>&1; then
-        return 0
-    else
-        echo -e "${RED}Error: Server not responding at $url${NC}"
-        return 1
     fi
 }
 
@@ -129,125 +112,9 @@ cmd_run() {
         exit 1
     fi
 
-    # 서버 확인
-    check_server "$url" || exit 1
-
-    echo "Running benchmark..."
-    echo "- Model: $model"
-    echo "- Endpoint: $url"
-    echo "- Runs: $runs"
-    echo ""
-
-    # 워밍업
-    echo -n "Warming up... ($warmup runs) "
-    local warmup_latencies=()
-    for ((i=0; i<warmup; i++)); do
-        # 실제 inference 호출 시뮬레이션 (실제 환경에서는 grpc_cli 또는 tritonclient 사용)
-        local start=$(date +%s%N)
-        sleep 0.01  # 시뮬레이션
-        local end=$(date +%s%N)
-        echo -n "."
-    done
-    echo -e " ${GREEN}done${NC}"
-
-    # 벤치마크 실행
-    echo -n "Benchmarking... "
-    local latencies=()
-    local total_start=$(date +%s%N)
-
-    for ((i=0; i<runs; i++)); do
-        local start=$(date +%s%N)
-
-        # 실제 inference 호출
-        # tritonclient 또는 grpc_cli 사용
-        # 여기서는 시뮬레이션
-        sleep 0.01
-
-        local end=$(date +%s%N)
-        local latency=$(( (end - start) / 1000000 ))  # ns to ms
-        latencies+=($latency)
-
-        # 프로그레스 표시
-        if (( i % 10 == 0 )); then
-            local pct=$((i * 100 / runs))
-            echo -ne "\rBenchmarking... [$pct%] $i/$runs"
-        fi
-    done
-
-    local total_end=$(date +%s%N)
-    local total_time=$(( (total_end - total_start) / 1000000000 ))  # ns to s
-
-    echo -e "\rBenchmarking... [100%] $runs/$runs ${GREEN}done${NC}"
-    echo ""
-
-    # 통계 계산
-    IFS=$'\n' sorted=($(sort -n <<<"${latencies[*]}")); unset IFS
-
-    local p50_idx=$((runs * 50 / 100))
-    local p95_idx=$((runs * 95 / 100))
-    local p99_idx=$((runs * 99 / 100))
-
-    local p50=${sorted[$p50_idx]}
-    local p95=${sorted[$p95_idx]}
-    local p99=${sorted[$p99_idx]}
-
-    local sum=0
-    for lat in "${latencies[@]}"; do
-        sum=$((sum + lat))
-    done
-    local avg=$((sum / runs))
-
-    local throughput=$(echo "scale=1; $runs / $total_time" | bc 2>/dev/null || echo "N/A")
-
-    # GPU 메모리 확인
-    local gpu_mem="N/A"
-    if command -v nvidia-smi &> /dev/null; then
-        gpu_mem=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)
-        gpu_mem="${gpu_mem}MB"
-    fi
-
-    # 결과 출력
-    cat << EOF
-## Benchmark Results
-
-| Metric | Value |
-|--------|-------|
-| Model | $model |
-| Runs | $runs |
-| Latency Avg | ${avg}ms |
-| Latency P50 | ${p50}ms |
-| Latency P95 | ${p95}ms |
-| Latency P99 | ${p99}ms |
-| Throughput | ${throughput} req/s |
-| GPU Memory | $gpu_mem |
-EOF
-
-    # 결과 저장
-    if [[ -n "$save_file" ]]; then
-        mkdir -p "$(dirname "$save_file")"
-
-        cat > "$save_file" << EOF
-{
-  "metadata": {
-    "model": "$model",
-    "url": "$url",
-    "label": "$label",
-    "timestamp": "$(date -Iseconds)",
-    "runs": $runs
-  },
-  "latency": {
-    "avg": $avg,
-    "p50": $p50,
-    "p95": $p95,
-    "p99": $p99
-  },
-  "throughput": $throughput,
-  "gpu_memory_mb": ${gpu_mem%MB}
-}
-EOF
-        echo ""
-        echo "Saved to: $save_file"
-    fi
+    echo -e "${RED}Error: no inference adapter is bundled; no benchmark was run or saved.${NC}" >&2
+    echo "Configure a real, versioned inference adapter before enabling this command." >&2
+    return 1
 }
 
 # 정확도 평가
@@ -274,39 +141,9 @@ cmd_evaluate() {
         exit 1
     fi
 
-    check_server "$url" || exit 1
-
-    echo "Evaluating accuracy..."
-    echo "- Model: $model"
-    echo "- Languages: $languages"
-    echo "- Samples per language: $samples_per_lang"
-    echo ""
-
-    # 언어 목록 파싱
-    IFS=',' read -ra langs <<< "$languages"
-
-    echo "## Evaluation Results"
-    echo ""
-    echo "| Language | Samples | Correct | Accuracy |"
-    echo "|----------|---------|---------|----------|"
-
-    local total_samples=0
-    local total_correct=0
-
-    for lang in "${langs[@]}"; do
-        # 시뮬레이션 (실제 환경에서는 실제 평가 수행)
-        local correct=$((samples_per_lang * (95 + RANDOM % 5) / 100))
-        local accuracy=$(echo "scale=1; $correct * 100 / $samples_per_lang" | bc)
-
-        echo "| $lang | $samples_per_lang | $correct | ${accuracy}% |"
-
-        total_samples=$((total_samples + samples_per_lang))
-        total_correct=$((total_correct + correct))
-    done
-
-    local overall=$(echo "scale=1; $total_correct * 100 / $total_samples" | bc)
-    echo ""
-    echo "**Overall: ${overall}%**"
+    echo -e "${RED}Error: no inference and dataset adapter is bundled; no accuracy was evaluated.${NC}" >&2
+    echo "Configure a real, versioned adapter that reads labels and model predictions before enabling this command." >&2
+    return 1
 }
 
 # 결과 비교
@@ -319,31 +156,74 @@ cmd_compare() {
         exit 1
     fi
 
-    # JSON 파싱
-    local model1=$(jq -r '.metadata.model // "Model A"' "$file1")
-    local model2=$(jq -r '.metadata.model // "Model B"' "$file2")
-    local label1=$(jq -r '.metadata.label // ""' "$file1")
-    local label2=$(jq -r '.metadata.label // ""' "$file2")
+    local file
+    for file in "$file1" "$file2"; do
+        if ! jq -e -s 'length == 1 and (.[0] | type == "object")' "$file" > /dev/null 2>&1; then
+            echo -e "${RED}Error: Invalid benchmark JSON: $file${NC}" >&2
+            return 1
+        fi
+    done
 
-    local p50_1=$(jq -r '.latency.p50' "$file1")
-    local p50_2=$(jq -r '.latency.p50' "$file2")
-    local p95_1=$(jq -r '.latency.p95' "$file1")
-    local p95_2=$(jq -r '.latency.p95' "$file2")
-    local tp_1=$(jq -r '.throughput' "$file1")
-    local tp_2=$(jq -r '.throughput' "$file2")
+    local metric_filter='
+        def positive_finite_number:
+            type == "number" and isfinite and (isnan | not) and . > 0;
+        (.latency.p50 | positive_finite_number) and
+        (.latency.p95 | positive_finite_number) and
+        (.throughput | positive_finite_number)
+    '
+    for file in "$file1" "$file2"; do
+        if ! jq -e "$metric_filter" "$file" > /dev/null 2>&1; then
+            echo -e "${RED}Error: latency p50/p95 and throughput must be finite positive numbers: $file${NC}" >&2
+            return 1
+        fi
+    done
+
+    # JSON 파싱
+    local model1
+    local model2
+    local label1
+    local label2
+    local p50_1
+    local p50_2
+    local p95_1
+    local p95_2
+    local tp_1
+    local tp_2
+    model1=$(jq -er '.metadata.model // "Model A"' "$file1")
+    model2=$(jq -er '.metadata.model // "Model B"' "$file2")
+    label1=$(jq -er '.metadata.label // ""' "$file1")
+    label2=$(jq -er '.metadata.label // ""' "$file2")
+    p50_1=$(jq -er '.latency.p50' "$file1")
+    p50_2=$(jq -er '.latency.p50' "$file2")
+    p95_1=$(jq -er '.latency.p95' "$file1")
+    p95_2=$(jq -er '.latency.p95' "$file2")
+    tp_1=$(jq -er '.throughput' "$file1")
+    tp_2=$(jq -er '.throughput' "$file2")
 
     # 차이 계산
-    local p50_diff=$(echo "scale=0; ($p50_2 - $p50_1) * 100 / $p50_1" | bc 2>/dev/null || echo "N/A")
-    local p95_diff=$(echo "scale=0; ($p95_2 - $p95_1) * 100 / $p95_1" | bc 2>/dev/null || echo "N/A")
-    local tp_diff=$(echo "scale=0; ($tp_2 - $tp_1) * 100 / $tp_1" | bc 2>/dev/null || echo "N/A")
+    local p50_diff
+    local p95_diff
+    local tp_diff
+    p50_diff=$(jq -nr --argjson first "$p50_1" --argjson second "$p50_2" \
+        '((($second - $first) * 100 / $first) | trunc)')
+    p95_diff=$(jq -nr --argjson first "$p95_1" --argjson second "$p95_2" \
+        '((($second - $first) * 100 / $first) | trunc)')
+    tp_diff=$(jq -nr --argjson first "$tp_1" --argjson second "$tp_2" \
+        '((($second - $first) * 100 / $first) | trunc)')
 
     # 부호 추가
-    [[ "$p50_diff" != "N/A" && "$p50_diff" -ge 0 ]] && p50_diff="+$p50_diff"
-    [[ "$p95_diff" != "N/A" && "$p95_diff" -ge 0 ]] && p95_diff="+$p95_diff"
-    [[ "$tp_diff" != "N/A" && "$tp_diff" -ge 0 ]] && tp_diff="+$tp_diff"
+    [[ "$p50_diff" != -* ]] && p50_diff="+$p50_diff"
+    [[ "$p95_diff" != -* ]] && p95_diff="+$p95_diff"
+    [[ "$tp_diff" != -* ]] && tp_diff="+$tp_diff"
 
     local name1="${label1:-$model1}"
     local name2="${label2:-$model2}"
+    local first_wins
+    if ! first_wins=$(jq -n --argjson first "$tp_1" --argjson second "$tp_2" \
+        '$first > $second'); then
+        echo -e "${RED}Error: Failed to compare benchmark throughput${NC}" >&2
+        return 1
+    fi
 
     cat << EOF
 ## Model Comparison
@@ -357,10 +237,13 @@ EOF
 
     # 승자 판정
     echo ""
-    if (( $(echo "$tp_1 > $tp_2" | bc -l) )); then
+    if [[ "$first_wins" == "true" ]]; then
         echo "Winner: $name1 (higher throughput)"
-    else
+    elif [[ "$first_wins" == "false" ]]; then
         echo "Winner: $name2 (higher throughput)"
+    else
+        echo -e "${RED}Error: Invalid throughput comparison result${NC}" >&2
+        return 1
     fi
 }
 
