@@ -2211,10 +2211,10 @@ test("previously recognized Skills keep their exact imported shape and firing ru
     { sourcePath: securityRelative },
   );
   assert.deepEqual(security.graph.nodes.map((node) => node.id), [
-    "step-ac5bb9043a6ff039",
-    "step-e509f5f12be36b5c",
-    "step-a26b1185016077eb",
-    "step-f4551dd1eb212088",
+    "step-ddc70b615de2b6be",
+    "step-77114f8b1a777cb7",
+    "step-a4555ff8f575b6c4",
+    "step-8ce2d4240178f02c",
   ]);
   // The same bytes read through the absolute path keep the same shape; only the
   // path-derived ids differ.
