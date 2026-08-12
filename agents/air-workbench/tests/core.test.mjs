@@ -2174,7 +2174,7 @@ const RECOGNIZED_SKILL_SHAPES = [
   ["context/context-manager/SKILL.md", 4, 3, "workflow.children"],
   ["development/appstore-screenshots/SKILL.md", 7, 6, "numbered.h2"],
   ["development/context-worktree/SKILL.md", 3, 2, "workflow.children"],
-  ["integrations/notion-summary/SKILL.md", 5, 4, "workflow.children"],
+  ["integrations/notion-summary/SKILL.md", 3, 2, "workflow.children"],
   ["integrations/obsidian-tasks/SKILL.md", 4, 3, "workflow.children"],
   ["integrations/service-manager/SKILL.md", 3, 0, "workflows.children"],
   ["ml/audio-processor/SKILL.md", 3, 2, "workflow.children"],
