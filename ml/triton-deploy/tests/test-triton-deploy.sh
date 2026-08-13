@@ -239,13 +239,15 @@ assert_not_contains "$TEST_ROOT/models-schema.out" "## Loaded Models"
 # check-port fails closed when lsof is missing or exits with an operational error.
 rm "$FAKE_BIN/lsof"
 reset_log
-if run_script "$SCRIPT" check-port 8000 > "$TEST_ROOT/lsof-missing.out" 2>&1; then
+if env PATH="$FAKE_BIN" HOME="$TEST_ROOT/home" FAKE_LOG="$FAKE_LOG" \
+    "$SCRIPT" check-port 8000 > "$TEST_ROOT/lsof-missing.out" 2>&1; then
     fail "check-port accepted a missing lsof"
 fi
 
 reset_log
 if FAKE_DOCKER_ALL_NAMES=triton-server FAKE_DOCKER_OWNED_NAMES=triton-server \
-    run_script "$SCRIPT" start --model-repo "$MODEL_REPO" --foreground \
+    env PATH="$FAKE_BIN" HOME="$TEST_ROOT/home" FAKE_LOG="$FAKE_LOG" \
+    "$SCRIPT" start --model-repo "$MODEL_REPO" --foreground \
     > "$TEST_ROOT/start-lsof-missing.out" 2>&1; then
     fail "start accepted a missing lsof"
 fi
