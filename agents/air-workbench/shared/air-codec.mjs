@@ -161,7 +161,12 @@ function assertIJson(value, {
     }
     active.add(item);
     if (Array.isArray(item)) {
-      item.forEach((child, index) => visit(child, `${path}/${index}`, depth + 1));
+      for (let index = 0; index < item.length; index += 1) {
+        if (!Object.hasOwn(item, index)) {
+          fail("AIR_INVALID_JSON", `${path}/${index} is a sparse array slot.`);
+        }
+        visit(item[index], `${path}/${index}`, depth + 1);
+      }
     } else {
       for (const key of Object.keys(item)) {
         assertNoLoneSurrogate(key, `${path} member name`);

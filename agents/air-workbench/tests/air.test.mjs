@@ -230,6 +230,9 @@ test("AIR JCS is deterministic and enforces the I-JSON boundary", () => {
   expectCode(() => parseIJson('{"a":1,"a":2}'), "AIR_INVALID_JSON");
   expectCode(() => parseIJson('{"n":9007199254740992}'), "AIR_INVALID_JSON");
   expectCode(() => parseIJson('{"s":"\\ud800"}'), "AIR_INVALID_JSON");
+  const sparse = [];
+  sparse.length = 1;
+  expectCode(() => canonicalizeJcs(sparse), "AIR_INVALID_JSON");
   assert.equal(AIR_CONTENT_DOMAIN, "AIR-CONTENT-V1\n");
 });
 
