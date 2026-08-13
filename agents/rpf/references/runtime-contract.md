@@ -46,7 +46,8 @@ The host-loaded skill checkout is a discovery location, not execution
 authority. Before phase zero, execute only its
 `scripts/rpf_bootstrap.py pin` entry point and accept one closed
 `rpf-pinned-bundle-v1` metadata object. Freeze the returned skill directory,
-runtime path, source revision, and bundle SHA-256 for the whole invocation.
+runtime path, requested revision, selected source revision, and bundle SHA-256
+for the whole invocation.
 Read this contract and every other RPF reference again from that pinned skill
 directory, and load runtime APIs from its returned runtime path.
 
@@ -60,16 +61,18 @@ files are written and revalidated. It is invocation-local: do not copy it into
 the target repository, share it with a later invocation, or change its
 revision between controllers or cycles.
 
-An unstable non-Git install or a bootstrap parse failure while the shared skill
-is being refreshed is pre-phase-zero infrastructure churn; it is not a review
+An unstable non-Git install or bootstrap failure while the shared skill is
+being refreshed is pre-phase-zero infrastructure churn; it is not a review
 barrier failure, provider verdict, RPF cycle, or repeated goal blocker. Retry
-the bootstrap with bounded backoff while the refresh can still complete. A
-syntax-invalid committed bundle is instead a corrupt release: perform no
-target-repository or pointer mutation, repair the RPF source, run
-`rpf_bootstrap.py verify-source`, its unit tests, and skill validation, then
-publish the repaired commit. Never paste or reconstruct runtime logic in a
-prompt, use target-project `scripts/rpf_runtime.py`, or silently fall back to a
-different commit.
+with bounded backoff. When the exact current Git bundle is incomplete or does
+not compile, the bootstrap may select only the nearest complete syntax-valid
+first-parent ancestor in its bounded window. It returns both the requested and
+selected revisions, so recovery is explicit and the complete bundle stays
+coherent. Never paste or reconstruct runtime logic in a prompt, use target-
+project `scripts/rpf_runtime.py`, or select arbitrary caller-provided bytes.
+If no coherent bundle exists, retain active technical recovery without reading
+target bytes or marking the RPF/host goal blocked. Follow
+`technical-recovery.md`.
 
 ## Phase-zero capability handshake
 
@@ -97,10 +100,14 @@ owned callbacks and registrars, delayed kills, one callback doing all three
 jobs, and matching receipt dictionaries are not capability evidence.
 Callability or self-report alone is not evidence. If the classifier, strict decoder, finite
 dispatch policy, or cancellation probe is unavailable,
-stop before run registration and cycle allocation. Full mode also stops when
-native atomic exchange is unavailable. A cooperative lock is useful for
+enter technical continuity before run registration and cycle allocation. Retry
+the exact capability without reading target bytes; where classification works,
+continue protected controller-local or read-only shadow review. Full mutation
+remains deferred when native atomic exchange is unavailable, but review and
+other independent safe recovery continue. A cooperative lock is useful for
 coordination but cannot authorize publication because an unlocked writer can
-race the check/replace window.
+race the check/replace window. None of these technical failures is `blocked`.
+Use `TechnicalRecoveryLedger` and `technical-recovery.md`.
 
 Do not classify a mutable-skill `SyntaxError` as any of these provider
 failures. Bundle pinning must already have compiled the runtime; a later import
@@ -117,7 +124,8 @@ The runtime module implements:
   post-classification reads;
 - `create_if_absent()`, `observe_exact()`, and `publish_if_exact()`;
 - `decode_child_result()`;
-- `DispatchLimits`, `DispatchLedger`, and `AdaptiveRecoveryLedger`;
+- `DispatchLimits`, `DispatchLedger`, `AdaptiveRecoveryLedger`, and
+  `TechnicalRecoveryLedger`;
 - `safe_command_preflight()` and `run_safe_command()` for fail-closed command
   mediation and restricted-output suppression;
 - `DispatchLedger.transition_restricted()`;
@@ -344,8 +352,8 @@ when that specific accepted retry returns the same ordered atomic coverage.
 Unresolved or quarantined restricted obligations prevent convergence.
 
 If the host cannot interrupt or close a required child/model stream, the
-capability handshake blocks that dispatch. Continue unrelated safe terminal
-work and report the missing proof obligation.
+capability handshake does not launch that dispatch. Continue unrelated safe
+terminal work and report the missing proof obligation.
 
 ## Adaptive barrier recovery
 

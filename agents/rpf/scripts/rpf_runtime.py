@@ -178,6 +178,14 @@ class RecoveryAction:
 
 
 @dataclasses.dataclass(frozen=True)
+class TechnicalRecoveryAction:
+    failure_id: str
+    attempt_id: str
+    strategy: str
+    _seal: object = dataclasses.field(default=None, repr=False)
+
+
+@dataclasses.dataclass(frozen=True)
 class UserAuthorization:
     authorization_id: str
     residual_risk_id: str
@@ -224,6 +232,7 @@ _RUNTIME_RECEIPT_SEAL = object()
 _RUNTIME_PROVIDER_SEAL = object()
 _USER_PROVIDER_SEAL = object()
 _RECOVERY_ACTION_SEAL = object()
+_TECHNICAL_RECOVERY_ACTION_SEAL = object()
 _AUTHORITY_REGISTRY: dict[int, "ExecutionAuthority"] = {}
 _CHILD_RESULT_REGISTRY: dict[int, ValidatedChildResult] = {}
 _CLASSIFICATION_REGISTRY: dict[int, Classification] = {}
@@ -232,6 +241,7 @@ _RUNTIME_RECEIPT_REGISTRY: dict[int, RuntimeReceipt] = {}
 _RUNTIME_PROVIDER_REGISTRY: dict[int, RuntimeEvidenceProvider] = {}
 _USER_PROVIDER_REGISTRY: dict[int, UserAuthorityProvider] = {}
 _RECOVERY_ACTION_REGISTRY: dict[int, RecoveryAction] = {}
+_TECHNICAL_RECOVERY_ACTION_REGISTRY: dict[int, TechnicalRecoveryAction] = {}
 _AUDIT_CAPTURE_REGISTRY: dict[int, Mapping[str, Any]] = {}
 _CYCLE_EVALUATION_REGISTRY: dict[int, Mapping[str, Any]] = {}
 _ISSUED_FINGERPRINTS: dict[int, tuple[Any, ...]] = {}
@@ -308,6 +318,39 @@ def _recovery_action_valid(action: object) -> bool:
             action.role_instance,
             action.run_id,
             action.fence,
+        )
+    )
+
+
+def _issue_technical_recovery_action(
+    failure_id: str, attempt_id: str, strategy: str
+) -> TechnicalRecoveryAction:
+    action = TechnicalRecoveryAction(
+        failure_id,
+        attempt_id,
+        strategy,
+        _TECHNICAL_RECOVERY_ACTION_SEAL,
+    )
+    _register_identity(_TECHNICAL_RECOVERY_ACTION_REGISTRY, action)
+    _record_fingerprint(
+        action,
+        action.failure_id,
+        action.attempt_id,
+        action.strategy,
+    )
+    return action
+
+
+def _technical_recovery_action_valid(action: object) -> bool:
+    return bool(
+        isinstance(action, TechnicalRecoveryAction)
+        and action._seal is _TECHNICAL_RECOVERY_ACTION_SEAL
+        and _has_registered_identity(_TECHNICAL_RECOVERY_ACTION_REGISTRY, action)
+        and _fingerprint_matches(
+            action,
+            action.failure_id,
+            action.attempt_id,
+            action.strategy,
         )
     )
 
@@ -1846,7 +1889,7 @@ def publish_if_exact(
 
     The cooperative lock coordinates RPF writers but is not publication
     authority: an editor that ignores it can still race.  Therefore absence or
-    failure of native exchange blocks the write and preserves reconciliation
+    failure of native exchange defers the write and preserves reconciliation
     inputs.  Pass ``observe_snapshot`` so the exact base is preserved too.
     """
 
@@ -1936,7 +1979,7 @@ def publish_if_exact(
             )
         if not atomic_exchange_available():
             return PublishResult(
-                "blocked-provider-unavailable",
+                "deferred-provider-unavailable",
                 None,
                 _preserve_reconciliation(
                     recovery_dir,
@@ -1974,7 +2017,7 @@ def publish_if_exact(
                 _atomic_exchange_at(active_lock.parent_fd, pointer.name, temp_name)
             except OSError:
                 return PublishResult(
-                    "blocked-provider-unavailable",
+                    "deferred-provider-unavailable",
                     None,
                     _preserve_reconciliation(
                         recovery_dir,
@@ -3806,6 +3849,164 @@ class DispatchLedger:
             return self._rows[dispatch_id]
         except KeyError as error:
             raise RpfContractError("unknown dispatch") from error
+
+
+class TechnicalRecoveryLedger:
+    """Keep infrastructure failures recoverable and out of semantic blockers.
+
+    The ledger contains safe failure classes and attempted strategies only. It
+    never accepts repository bytes, credentials, exception text, or findings,
+    and it deliberately has no transition to ``blocked``.
+    """
+
+    _STRATEGIES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+        {
+            "bundle-refresh": (
+                "retry-bundle-pin",
+                "pin-verified-ancestor-bundle",
+            ),
+            "runtime-import": (
+                "discard-snapshot-and-repin",
+                "pin-verified-ancestor-bundle",
+            ),
+            "classifier-provider": (
+                "reprobe-classifier",
+                "metadata-only-continuity",
+            ),
+            "cancellation-provider": (
+                "reprobe-cancellation",
+                "controller-local-no-child",
+            ),
+            "atomic-exchange-provider": (
+                "reprobe-atomic-exchange",
+                "read-only-shadow-cycle",
+            ),
+            "child-provider": (
+                "redispatch-smaller-context",
+                "controller-static-review",
+            ),
+            "lock-contention": (
+                "bounded-lock-backoff",
+                "read-only-shadow-cycle",
+            ),
+            "filesystem-io": (
+                "new-private-workspace",
+                "read-only-shadow-cycle",
+            ),
+            "gate-tooling": (
+                "repair-tool-resolution",
+                "source-contract-with-runtime-residual",
+            ),
+            "git-integration": (
+                "dedicated-integration-worktree",
+                "preserve-green-commit-for-retry",
+            ),
+            "credential-or-signing": (
+                "preserve-green-commit-for-retry",
+            ),
+            "push": (
+                "fetch-rebase-owned-scope-and-rerun-gates",
+                "preserve-green-commit-for-retry",
+            ),
+            "deployment": (
+                "defer-deployment-and-continue",
+            ),
+        }
+    )
+
+    def __init__(self) -> None:
+        self._rows: dict[str, dict[str, Any]] = {}
+
+    @classmethod
+    def failure_kinds(cls) -> tuple[str, ...]:
+        return tuple(cls._STRATEGIES)
+
+    def record_failure(self, *, failure_kind: str) -> str:
+        if failure_kind not in self._STRATEGIES:
+            raise RpfContractError("technical failure metadata is invalid")
+        failure_id = "TECH-" + failure_kind.upper()
+        existing = self._rows.get(failure_id)
+        if existing is not None:
+            if existing["failure_kind"] != failure_kind:
+                raise RpfContractError("technical failure identity changed")
+            existing["observations"] += 1
+            existing["resolved"] = False
+            return failure_id
+        self._rows[failure_id] = {
+            "failure_kind": failure_kind,
+            "observations": 1,
+            "attempted": [],
+            "carry_count": 0,
+            "pending_attempt_id": None,
+            "resolved": False,
+        }
+        return failure_id
+
+    def next_action(self, failure_id: str) -> TechnicalRecoveryAction | None:
+        row = self._row(failure_id)
+        if row["resolved"]:
+            return None
+        if row["pending_attempt_id"] is not None:
+            raise RpfContractError("technical recovery action is already pending")
+        strategies = self._STRATEGIES[row["failure_kind"]]
+        attempted = row["attempted"]
+        if len(attempted) < len(strategies):
+            strategy = strategies[len(attempted)]
+            attempted.append(strategy)
+        else:
+            strategy = "carry-forward-retry"
+            row["carry_count"] += 1
+        attempt_id = f"rpf-tech-{secrets.token_hex(16)}"
+        row["pending_attempt_id"] = attempt_id
+        return _issue_technical_recovery_action(failure_id, attempt_id, strategy)
+
+    def finish_action(
+        self, action: TechnicalRecoveryAction, *, recovered: bool
+    ) -> None:
+        if (
+            not _technical_recovery_action_valid(action)
+            or type(recovered) is not bool
+        ):
+            raise RpfContractError("technical recovery action is invalid")
+        row = self._row(action.failure_id)
+        if row["pending_attempt_id"] != action.attempt_id or row["resolved"]:
+            raise RpfContractError("technical recovery action is stale")
+        row["pending_attempt_id"] = None
+        _TECHNICAL_RECOVERY_ACTION_REGISTRY.pop(id(action), None)
+        _ISSUED_FINGERPRINTS.pop(id(action), None)
+        if recovered:
+            row["resolved"] = True
+
+    def unresolved_failures(self) -> tuple[str, ...]:
+        return tuple(
+            failure_id
+            for failure_id, row in self._rows.items()
+            if not row["resolved"]
+        )
+
+    def run_status(self, *, invocation_limit_reached: bool = False) -> str:
+        if type(invocation_limit_reached) is not bool:
+            raise RpfContractError("technical continuation status is invalid")
+        if not self.unresolved_failures():
+            return "recovery-clear"
+        return "limit-reached" if invocation_limit_reached else "running"
+
+    def snapshot(self) -> bytes:
+        return json.dumps(
+            {
+                "format": "rpf-technical-recovery-v1",
+                "rows": self._rows,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    def _row(self, failure_id: str) -> dict[str, Any]:
+        try:
+            return self._rows[failure_id]
+        except (KeyError, TypeError) as error:
+            raise RpfContractError("unknown technical failure") from error
 
 
 class AdaptiveRecoveryLedger:

@@ -136,8 +136,9 @@ run registration; audit mode remains available.
    displaced retention and directory fsync. Create, recovery, and artifact
    sinks perform the same post-write check and fail instead of returning a path
    into a renamed-away directory.
-   `blocked-provider-unavailable` means exchange was absent or failed; keep the
-   recovery bundle and pause the affected write without changing the root.
+   `deferred-provider-unavailable` means exchange was absent or failed; keep
+   the recovery bundle and defer only the affected write without changing the
+   root. Continue read-only review and other independent technical recovery.
 5. On `reconcile-required`, preserve every nonrestricted `base`, `current`, and
    `candidate` variant plus the reconciliation manifest. Never copy or
    value-hash a restricted variant; retain only its role, disposition, and an
@@ -455,7 +456,8 @@ conflict the same way.
   rows and sort the union by run ID.
 - **Derived state** — set `Last writer` to the publishing run. Recompute
   `Status` from merged stop conditions and live rows other than the publishing
-  run using this precedence: `waiting-user`, `blocked`, `limit-reached`,
+  run using this precedence: `waiting-user`, evidence/meaning-conflict
+  `blocked`, `limit-reached`,
   `waiting-peers`, `converged`, `running`. For `Next action`, choose unfinished
   work by numeric `Prio` ascending, severity (`critical` through `low`), then ID
   bytewise; otherwise choose open gaps by ID, peer waiting, gates, then
@@ -471,8 +473,11 @@ conflict the same way.
   active-run rows, and `OPEN_RECONCILIATIONS` from open reconciliation rows.
   A user-authority row yields `waiting-user`. An agent-resolvable row stays
   `running` and enters adaptive recovery; timeout, malformed output, incomplete
-  atomic coverage, or zero material change never derives `blocked`. Never copy
-  a derived state or convergence count from a stale version.
+  atomic coverage, zero material change, unavailable tooling/provider, lock,
+  filesystem, Git, credential, push, or deployment failure never derives
+  `blocked`. Register those through `TechnicalRecoveryLedger`, continue safe
+  lanes, and defer only the affected sink. Never copy a derived state or
+  convergence count from a stale version.
 
 ### Evidence reducers
 

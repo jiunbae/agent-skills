@@ -75,6 +75,7 @@ class RpfBootstrapTest(unittest.TestCase):
 
         self.assertEqual("git-commit", result["source_kind"])
         self.assertEqual(revision, result["source_revision"])
+        self.assertEqual(revision, result["requested_revision"])
         pinned = Path(str(result["skill_dir"]))
         self.assertEqual(b"VALUE = 1\n", (pinned / bootstrap.RUNTIME_PATH).read_bytes())
         self.assertEqual(
@@ -114,15 +115,48 @@ class RpfBootstrapTest(unittest.TestCase):
         ):
             bootstrap.load_source(skill, prefer_commit=False, wait_seconds=0.15)
 
-    def test_committed_syntax_error_is_never_silently_downgraded(self) -> None:
+    def test_committed_syntax_error_uses_a_disclosed_verified_ancestor(self) -> None:
+        skill = self.make_skill("recoverable-rpf")
+        valid_revision = self.commit_skill(skill)
+        (skill / bootstrap.RUNTIME_PATH).write_text(
+            "if True:\n    pass\nfinally:\n    pass\n", encoding="utf-8"
+        )
+        self.git(skill.parent, "add", skill.name)
+        self.git(skill.parent, "commit", "-qm", "broken fixture")
+        requested_revision = self.git(skill.parent, "rev-parse", "HEAD")
+
+        source = bootstrap.load_source(skill, prefer_commit=True, wait_seconds=0)
+
+        self.assertEqual("git-ancestor-recovery", source.kind)
+        self.assertEqual(valid_revision, source.revision)
+        self.assertEqual(requested_revision, source.requested_revision)
+        self.assertEqual(b"VALUE = 1\n", source.files[bootstrap.RUNTIME_PATH])
+
+    def test_initial_corrupt_commit_has_no_unverified_fallback(self) -> None:
         skill = self.make_skill("corrupt-rpf")
         (skill / bootstrap.RUNTIME_PATH).write_text(
             "if True:\n    pass\nfinally:\n    pass\n", encoding="utf-8"
         )
         self.commit_skill(skill)
 
-        with self.assertRaisesRegex(bootstrap.RpfBootstrapError, "does not compile"):
+        with self.assertRaisesRegex(
+            bootstrap.RpfBootstrapError, "no coherent syntax-valid committed"
+        ):
             bootstrap.load_source(skill, prefer_commit=True, wait_seconds=0)
+
+    def test_loaded_bootstrap_can_recover_a_corrupt_committed_successor(self) -> None:
+        skill = self.make_skill("bootstrap-recovery-rpf")
+        valid_revision = self.commit_skill(skill)
+        (skill / bootstrap.BOOTSTRAP_PATH).write_text(
+            "if True:\n    pass\nfinally:\n    pass\n", encoding="utf-8"
+        )
+        self.git(skill.parent, "add", skill.name)
+        self.git(skill.parent, "commit", "-qm", "broken bootstrap fixture")
+
+        source = bootstrap.load_source(skill, prefer_commit=True, wait_seconds=0)
+
+        self.assertEqual("git-ancestor-recovery", source.kind)
+        self.assertEqual(valid_revision, source.revision)
 
     def test_nonfinite_wait_cannot_create_an_unbounded_bootstrap_loop(self) -> None:
         skill = self.make_skill("bounded-rpf")
@@ -150,7 +184,8 @@ class RpfBootstrapTest(unittest.TestCase):
             "## Immutable runtime bundle",
             "one exact `HEAD` commit object",
             "not a review barrier failure",
-            "silently fall back to a different commit",
+            "nearest complete syntax-valid first-parent ancestor",
+            "without reading target bytes or marking the RPF/host goal blocked",
         ):
             self.assertIn(required, normalized_contract)
 

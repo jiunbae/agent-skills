@@ -546,7 +546,7 @@ class RpfRuntimeContractTest(unittest.TestCase):
                     run_id="run-7",
                     **publication_contract,
                 )
-            self.assertEqual("blocked-provider-unavailable", unavailable.status)
+            self.assertEqual("deferred-provider-unavailable", unavailable.status)
             self.assertEqual(candidate, pointer.read_bytes())
 
             with mock.patch.object(
@@ -2289,6 +2289,47 @@ class RpfRuntimeContractTest(unittest.TestCase):
             runtime.capture_authority(
                 pointer_document(stale_root), other_fence, other_source, REPO_ROOT
             )
+
+    def test_n1_technical_failures_recover_without_a_blocked_transition(self) -> None:
+        recovery = runtime.TechnicalRecoveryLedger()
+        for failure_kind in recovery.failure_kinds():
+            failure_id = recovery.record_failure(failure_kind=failure_kind)
+            self.assertEqual(
+                failure_id,
+                recovery.record_failure(failure_kind=failure_kind),
+            )
+            expected = runtime.TechnicalRecoveryLedger._STRATEGIES[failure_kind]
+            for strategy in expected:
+                action = recovery.next_action(failure_id)
+                assert action is not None
+                self.assertEqual(strategy, action.strategy)
+                recovery.finish_action(action, recovered=False)
+            carried = recovery.next_action(failure_id)
+            assert carried is not None
+            self.assertEqual("carry-forward-retry", carried.strategy)
+            recovery.finish_action(carried, recovered=False)
+
+        self.assertEqual("running", recovery.run_status())
+        self.assertEqual(
+            "limit-reached", recovery.run_status(invocation_limit_reached=True)
+        )
+        self.assertNotIn(b"blocked", recovery.snapshot())
+
+        first = recovery.unresolved_failures()[0]
+        resolved = recovery.next_action(first)
+        assert resolved is not None
+        with self.assertRaises(runtime.RpfContractError):
+            recovery.finish_action(dataclasses.replace(resolved), recovered=True)
+        recovery.finish_action(resolved, recovered=True)
+        self.assertNotIn(first, recovery.unresolved_failures())
+        with self.assertRaises(runtime.RpfContractError):
+            recovery.record_failure(failure_kind="semantic-conflict")
+
+        reopened = recovery.record_failure(
+            failure_kind=first.removeprefix("TECH-").lower()
+        )
+        self.assertEqual(first, reopened)
+        self.assertIn(first, recovery.unresolved_failures())
 
     def test_n2_barrier_failures_adapt_and_continue_instead_of_stalled_stop(self) -> None:
         recovery = runtime.AdaptiveRecoveryLedger(total_cycles=128)

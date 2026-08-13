@@ -36,9 +36,12 @@ BUNDLE_PATHS = (
     "references/persona-lenses.md",
     "references/review-verification.md",
     "references/runtime-contract.md",
+    "references/technical-recovery.md",
+    "scripts/rpf_bootstrap.py",
     "scripts/rpf_runtime.py",
 )
 RUNTIME_PATH = "scripts/rpf_runtime.py"
+BOOTSTRAP_PATH = "scripts/rpf_bootstrap.py"
 
 
 class RpfBootstrapError(RuntimeError):
@@ -49,6 +52,7 @@ class RpfBootstrapError(RuntimeError):
 class BundleSource:
     kind: str
     revision: str
+    requested_revision: str
     files: Mapping[str, bytes]
 
 
@@ -81,6 +85,22 @@ def _git(
     return result
 
 
+def _commit_files(
+    repository_root: Path, skill_relative: str, revision: str
+) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for relative in BUNDLE_PATHS:
+        object_path = (PurePosixPath(skill_relative) / relative).as_posix()
+        result = _git(
+            ("show", "--no-ext-diff", f"{revision}:{object_path}"),
+            working_directory=repository_root,
+        )
+        if len(result.stdout) > MAX_BUNDLE_FILE_BYTES:
+            raise RpfBootstrapError("committed RPF bundle file exceeds its bound")
+        files[relative] = result.stdout
+    return files
+
+
 def _committed_source(skill_directory: Path) -> BundleSource | None:
     discovery = _git(
         ("rev-parse", "--show-toplevel"),
@@ -96,24 +116,29 @@ def _committed_source(skill_directory: Path) -> BundleSource | None:
     except (UnicodeDecodeError, OSError, ValueError) as error:
         raise RpfBootstrapError("RPF Git source identity is invalid") from error
 
-    revision_result = _git(
-        ("rev-parse", "--verify", "HEAD^{commit}"), working_directory=repository_root
+    revisions_result = _git(
+        ("rev-list", "--first-parent", "--max-count=33", "HEAD"),
+        working_directory=repository_root,
     )
-    revision = revision_result.stdout.decode("ascii", errors="strict").strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+    revisions = revisions_result.stdout.decode("ascii", errors="strict").splitlines()
+    if not revisions or any(not re.fullmatch(r"[0-9a-f]{40}", item) for item in revisions):
         raise RpfBootstrapError("RPF Git revision is invalid")
-
-    files: dict[str, bytes] = {}
-    for relative in BUNDLE_PATHS:
-        object_path = (PurePosixPath(skill_relative) / relative).as_posix()
-        result = _git(
-            ("show", "--no-ext-diff", f"{revision}:{object_path}"),
-            working_directory=repository_root,
+    requested_revision = revisions[0]
+    for index, revision in enumerate(revisions):
+        try:
+            files = _commit_files(repository_root, skill_relative, revision)
+            _validate_files(files)
+        except (RpfBootstrapError, subprocess.SubprocessError):
+            continue
+        return BundleSource(
+            "git-commit" if index == 0 else "git-ancestor-recovery",
+            revision,
+            requested_revision,
+            files,
         )
-        if len(result.stdout) > MAX_BUNDLE_FILE_BYTES:
-            raise RpfBootstrapError("committed RPF bundle file exceeds its bound")
-        files[relative] = result.stdout
-    return BundleSource("git-commit", revision, files)
+    raise RpfBootstrapError(
+        "no coherent syntax-valid committed RPF bundle exists in the recovery window"
+    )
 
 
 def _read_regular_file(path: Path) -> bytes:
@@ -188,17 +213,23 @@ def _bundle_digest(files: Mapping[str, bytes]) -> str:
 def _validate_files(files: Mapping[str, bytes]) -> str:
     if tuple(files) != BUNDLE_PATHS:
         raise RpfBootstrapError("RPF bundle inventory is incomplete or reordered")
-    try:
-        compile(
-            files[RUNTIME_PATH],
-            f"<pinned-rpf>/{RUNTIME_PATH}",
-            "exec",
-            dont_inherit=True,
-        )
-    except (SyntaxError, ValueError) as error:
-        line = getattr(error, "lineno", None)
-        suffix = f" at line {line}" if isinstance(line, int) else ""
-        raise RpfBootstrapError(f"RPF runtime does not compile{suffix}") from error
+    for relative, label in (
+        (BOOTSTRAP_PATH, "bootstrap"),
+        (RUNTIME_PATH, "runtime"),
+    ):
+        try:
+            compile(
+                files[relative],
+                f"<pinned-rpf>/{relative}",
+                "exec",
+                dont_inherit=True,
+            )
+        except (SyntaxError, ValueError) as error:
+            line = getattr(error, "lineno", None)
+            suffix = f" at line {line}" if isinstance(line, int) else ""
+            raise RpfBootstrapError(
+                f"RPF {label} does not compile{suffix}"
+            ) from error
     return _bundle_digest(files)
 
 
@@ -212,7 +243,7 @@ def _stable_direct_source(skill_directory: Path, wait_seconds: float) -> BundleS
             _validate_files(current)
             if previous == current:
                 digest = _bundle_digest(current)
-                return BundleSource("stable-install", digest, current)
+                return BundleSource("stable-install", digest, digest, current)
             previous = current
             last_error = None
         except RpfBootstrapError as error:
@@ -286,6 +317,7 @@ def pin_bundle(
             "format": BUNDLE_FORMAT,
             "source_kind": source.kind,
             "source_revision": source.revision,
+            "requested_revision": source.requested_revision,
             "bundle_sha256": bundle_sha256,
             "files": file_hashes,
         }
@@ -347,6 +379,7 @@ def _cli(argv: Sequence[str] | None = None) -> int:
                 "format": BUNDLE_FORMAT,
                 "source_kind": source.kind,
                 "source_revision": source.revision,
+                "requested_revision": source.requested_revision,
                 "bundle_sha256": _validate_files(source.files),
             }
     except (OSError, RpfBootstrapError, subprocess.SubprocessError) as error:

@@ -58,6 +58,7 @@ RPF_SOURCE_SURFACES = (
     "agents/rpf/references/persona-lenses.md",
     "agents/rpf/references/review-verification.md",
     "agents/rpf/references/runtime-contract.md",
+    "agents/rpf/references/technical-recovery.md",
     "agents/rpf/scripts/rpf_bootstrap.py",
     "agents/rpf/scripts/rpf_runtime.py",
     "agents/rpf/tests/test_rpf_bootstrap.py",
@@ -174,7 +175,7 @@ def conditional_publication_result(
 ) -> str:
     if expected_identity != current_identity:
         return "reconcile-preserve-base-current-candidate"
-    return "published-atomic-exchange" if primitive_available else "blocked-provider-unavailable"
+    return "published-atomic-exchange" if primitive_available else "deferred-provider-unavailable"
 
 
 def preallocate_coverage_ids(first: int, count: int) -> list[str]:
@@ -1957,6 +1958,7 @@ class RpfContractTest(unittest.TestCase):
         cls.verification = read("references/review-verification.md")
         cls.detection = read("references/detection.md")
         cls.concurrency = read("references/concurrency.md")
+        cls.technical = read("references/technical-recovery.md")
         cls.pointer = read("assets/pointer-template.md")
 
     def test_role_payloads_preserve_fresh_review_independence(self) -> None:
@@ -2407,7 +2409,7 @@ class RpfContractTest(unittest.TestCase):
         )
         self.assertEqual("published-atomic-exchange", conditional_publication_result("id-1", "id-1", True))
         self.assertEqual("reconcile-preserve-base-current-candidate", conditional_publication_result("id-1", "id-2", True))
-        self.assertEqual("blocked-provider-unavailable", conditional_publication_result("id-1", "id-1", False))
+        self.assertEqual("deferred-provider-unavailable", conditional_publication_result("id-1", "id-1", False))
 
         fence = VALID_FENCE
         gate_sha = "c" * 40
@@ -3961,6 +3963,22 @@ class RpfContractTest(unittest.TestCase):
         for count in ("`GOAL_GAPS`", "`PENDING_TASKS`", "`ACTIVE_PEERS`"):
             with self.subTest(count=count):
                 self.assertIn(count, self.concurrency)
+
+    def test_technical_failures_are_nonterminal_and_sink_local(self) -> None:
+        for phrase in (
+            "never becomes RPF `blocked`",
+            "does not advance the repeated-blocker count",
+            "Keep the RPF objective active",
+            "Defer only the affected sink",
+            "same technical symptom appeared in three goal turns",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalize(self.technical))
+        convergence = section(self.skill, "Convergence and stop conditions")
+        self.assertIn("Do not stop or mark the RPF/host goal `blocked`", convergence)
+        self.assertIn("TechnicalRecoveryLedger", convergence)
+        self.assertNotIn("blocked-provider-unavailable", self.concurrency)
+        self.assertIn("deferred-provider-unavailable", self.concurrency)
 
 
 if __name__ == "__main__":

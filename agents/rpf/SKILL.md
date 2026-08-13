@@ -24,6 +24,9 @@ Mechanics live in `references/`, loaded when you need the how:
   review, coverage, regression, source contracts, prohibitions, and UI status.
 - [references/detection.md](references/detection.md) — gate and deployment
   detection catalogs, and the deployment questions.
+- [references/technical-recovery.md](references/technical-recovery.md) —
+  nonterminal infrastructure recovery, sink isolation, and resume rules.
+  **Read whenever a technical capability fails.**
 
 ## Pin the RPF bundle
 
@@ -35,9 +38,10 @@ python3 <LOADED_SKILL_DIR>/scripts/rpf_bootstrap.py pin
 ```
 
 Accept only its single `rpf-pinned-bundle-v1` JSON result with `status=ready`.
-Freeze its `skill_dir`, `runtime_script`, `source_revision`, and
-`bundle_sha256` for the entire invocation as `PINNED_SKILL_DIR`,
-`RUNTIME_SCRIPT`, `RPF_SOURCE_REVISION`, and `RPF_BUNDLE_SHA256`. Read all RPF
+Freeze its `skill_dir`, `runtime_script`, `requested_revision`,
+`source_revision`, and `bundle_sha256` for the entire invocation as
+`PINNED_SKILL_DIR`, `RUNTIME_SCRIPT`, `RPF_REQUESTED_REVISION`,
+`RPF_SOURCE_REVISION`, and `RPF_BUNDLE_SHA256`. Read all RPF
 references and import all runtime APIs only from that pinned directory. Never
 import `scripts/rpf_runtime.py` from the mutable loaded skill checkout, copy it
 into the target repository, or switch bundle revision between cycles.
@@ -48,11 +52,12 @@ packaged non-Git install it requires two identical complete reads and a
 syntax-valid runtime. Treat a transient unstable-install/bootstrap syntax
 failure as `skill-refresh-in-progress`: retry with bounded backoff before
 phase zero, without registering a run, allocating a cycle, touching the
-pointer, or advancing an RPF barrier/blocker count. A committed bundle that
-fails bootstrap is a corrupt RPF release and must be repaired and validated at
-the skill source; never improvise a reducer, use caller-supplied runtime bytes,
-or silently select another commit. Keep a ready snapshot until every child and
-write finishes, then remove only its exact returned private temporary path.
+pointer, or advancing an RPF barrier/blocker count. If the current committed
+bundle is corrupt, the bootstrap may disclose and pin only the nearest complete
+syntax-valid first-parent ancestor in its bounded recovery window. Continue
+under that coherent bundle and report both revisions; never improvise a reducer
+or use caller-supplied runtime bytes. Keep a ready snapshot until every child
+and write finishes, then remove only its exact returned private temporary path.
 
 ## Invocation
 
@@ -405,7 +410,7 @@ LOADED_SKILL_DIR: <absolute mutable host-loaded skill directory>
 PINNED_SKILL_DIR: <bootstrap-returned immutable skill directory>
 SKILL_DIR: <same exact PINNED_SKILL_DIR>
 RUNTIME_SCRIPT: <bootstrap-returned PINNED_SKILL_DIR>/scripts/rpf_runtime.py
-RPF_SOURCE_REVISION / RPF_BUNDLE_SHA256: <bootstrap-returned identities>
+RPF_REQUESTED_REVISION / RPF_SOURCE_REVISION / RPF_BUNDLE_SHA256: <bootstrap-returned identities>
 REVIEW_DIR: <.context/reviews/<pointer-id>/<run-id>/R<TOTAL_CYCLE> in full | disabled-audit>
 DISPATCH_LIMITS: <finite wall seconds, context bytes, output bytes/tokens>
 GATES: <exact preflight-approved commands>
@@ -481,6 +486,14 @@ undispatched pending reservation may be discarded and regenerated at the same
 strategy, but a claimed terminal transition without ledger evidence is
 rejected. Recovery budgets use the same closed `1 <= N <= 128` bound as the
 invocation.
+
+For an infrastructure exception or unavailable capability, read technical-
+recovery.md, register only its closed safe failure kind in
+`TechnicalRecoveryLedger`, and execute the returned distinct action. Never put
+exception text, repository bytes, credentials, or findings in that ledger.
+Technical recurrence keeps status `running`, or `limit-reached` at the exact
+invocation boundary; it never yields `blocked` or consumes a same-blocker goal
+turn. Continue independent safe lanes and defer only the failed sink.
 
 PHASE 2: under lock merge verified findings into stable work/gap/decision rows.
 Schedule, explicitly defer, or refute every finding; never silently drop one.
@@ -599,12 +612,19 @@ Stop early on convergence. Also stop and persist pointer state when:
 
 - the user stops the run;
 - a goal, policy, architecture, or destructive choice needs user input;
-- the phase-zero provider needed for all authorized full-mode mutation is
-  unavailable before registration; offer audit mode without allocating a
-  cycle. Credential, signing, push, lock, or deployment failures block only
-  their affected sink while review, planning, source repair, and verification
-  continue when safe;
 - this invocation reaches `N`.
+
+Do not stop or mark the RPF/host goal `blocked` for a technical failure. Apply
+`references/technical-recovery.md` and register the closed failure through
+`TechnicalRecoveryLedger`. Before registration, keep bounded phase-zero
+recovery active without allocating a cycle. After registration, isolate only
+the failed sink, switch to its read-only/controller-local/clean-worktree
+alternative, and continue safe review, planning, source repair, and
+verification. Credential, signing, push, lock, gate-tool, or deployment
+failures defer only their sink. Repeating the same technical symptom across
+three goal turns is not a substantive blocking condition. At a cycle budget
+boundary report `limit-reached` with the exact restart action; do not report
+`blocked`.
 
 A zero-commit or zero-pointer-change cycle with open gaps is a recovery signal,
 never a `stalled-stop`. Drive each timed-out, malformed, provider-unavailable,
@@ -642,14 +662,15 @@ plans, or commits.
 It returns exactly two lines, so the result is parseable:
 
 ```text
-DEPLOY: <end-only-success | end-only-blocked:<reason> | end-only-failed:<reason> | end-only-skipped:peer-deploying>
+DEPLOY: <end-only-success | end-only-deferred:<reason> | end-only-skipped:peer-deploying>
 SUMMARY: <one short sentence describing what actually happened>
 ```
 
-A red error-level gate means `end-only-blocked` and no deploy attempt. A peer
+A red error-level gate means `end-only-deferred` and no deploy attempt. A peer
 holding the deploy lock means `end-only-skipped:peer-deploying` — do not wait
 for it. A failure gets one reasonable recovery attempt before
-`end-only-failed`.
+`end-only-deferred`; preserve the exact deployment retry action without
+changing overall RPF status to `blocked`.
 
 ## Attribution
 
