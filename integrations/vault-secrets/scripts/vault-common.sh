@@ -8,15 +8,15 @@ readonly VAULT_SESSION_TTL_SECONDS=43200
 VERIFIED_BW_STATUS=""
 
 stat_uid() {
-    stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null
+    stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
 }
 
 stat_mode() {
-    stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
 }
 
 stat_mtime() {
-    stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null
+    stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null
 }
 
 validate_server() {

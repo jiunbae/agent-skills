@@ -190,8 +190,8 @@ HOME="$TEST_HOME" bash -c '
     source "$1"
     store_session "test-session"
 ' bash "$INTEGRATION_DIR/scripts/vault-common.sh"
-stored_mode=$(stat -f '%Lp' "$TEST_HOME/.cache/vault-secrets/bw-session" 2>/dev/null ||
-    stat -c '%a' "$TEST_HOME/.cache/vault-secrets/bw-session")
+stored_mode=$(stat -c '%a' "$TEST_HOME/.cache/vault-secrets/bw-session" 2>/dev/null ||
+    stat -f '%Lp' "$TEST_HOME/.cache/vault-secrets/bw-session")
 [ "$stored_mode" = "600" ] ||
     fail "stored session mode is not 0600"
 if find "$TEST_HOME/.cache/vault-secrets" -name '.bw-session.*' -print -quit | grep -q .; then
