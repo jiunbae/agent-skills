@@ -7,6 +7,7 @@ contents, or prior artifacts and before starting any child dispatch.
 ## Contents
 
 - [Execution authority](#execution-authority)
+- [Immutable runtime bundle](#immutable-runtime-bundle)
 - [Phase-zero capability handshake](#phase-zero-capability-handshake)
 - [Protected intake](#protected-intake)
 - [Conflict-preserving pointer publication](#conflict-preserving-pointer-publication)
@@ -33,16 +34,47 @@ Resolve and freeze `EXECUTION_MODE` before any mutation:
 
 Pass the sealed `ExecutionAuthority` returned by `resolve_execution_mode()` to
 every controller. Every mutation sink calls
-`require_mutation_authority()` from `scripts/rpf_runtime.py`. Do not rely on a
+`require_mutation_authority()` from the pinned `RUNTIME_SCRIPT`. Do not rely on a
 raw `"full"` string, caller Boolean, prompt reminder, or late stop condition.
 In `audit`, skip run registration,
 cycle allocation, Phases 2–4, artifact publication/retention, commit, push, and
 deployment. A child is always read-only regardless of mode.
 
+## Immutable runtime bundle
+
+The host-loaded skill checkout is a discovery location, not execution
+authority. Before phase zero, execute only its
+`scripts/rpf_bootstrap.py pin` entry point and accept one closed
+`rpf-pinned-bundle-v1` metadata object. Freeze the returned skill directory,
+runtime path, source revision, and bundle SHA-256 for the whole invocation.
+Read this contract and every other RPF reference again from that pinned skill
+directory, and load runtime APIs from its returned runtime path.
+
+For a Git-backed development checkout, the bootstrap reads every bundle member
+from one exact `HEAD` commit object. Working-tree edits, even valid ones, are
+unreleased and cannot alter an active or newly pinned invocation. For a
+non-Git packaged installation, it accepts only two identical full inventory
+reads and compiles the runtime before publishing a private snapshot. The
+snapshot contains a closed file-hash manifest and is disclosed only after all
+files are written and revalidated. It is invocation-local: do not copy it into
+the target repository, share it with a later invocation, or change its
+revision between controllers or cycles.
+
+An unstable non-Git install or a bootstrap parse failure while the shared skill
+is being refreshed is pre-phase-zero infrastructure churn; it is not a review
+barrier failure, provider verdict, RPF cycle, or repeated goal blocker. Retry
+the bootstrap with bounded backoff while the refresh can still complete. A
+syntax-invalid committed bundle is instead a corrupt release: perform no
+target-repository or pointer mutation, repair the RPF source, run
+`rpf_bootstrap.py verify-source`, its unit tests, and skill validation, then
+publish the repaired commit. Never paste or reconstruct runtime logic in a
+prompt, use target-project `scripts/rpf_runtime.py`, or silently fall back to a
+different commit.
+
 ## Phase-zero capability handshake
 
-Use the repository copy of `scripts/rpf_runtime.py`; do not reimplement its
-checks in a prompt or shell pipeline. Before reading any candidate bytes:
+Use only the invocation-pinned `RUNTIME_SCRIPT`; do not reimplement its checks
+in a prompt or shell pipeline. Before reading any candidate bytes:
 
 1. Discover exact candidate path metadata without opening content.
 2. Resolve mode and finite dispatch limits.
@@ -70,6 +102,12 @@ native atomic exchange is unavailable. A cooperative lock is useful for
 coordination but cannot authorize publication because an unlocked writer can
 race the check/replace window.
 
+Do not classify a mutable-skill `SyntaxError` as any of these provider
+failures. Bundle pinning must already have compiled the runtime; a later import
+must match `RPF_BUNDLE_SHA256` and `RPF_SOURCE_REVISION`. A mismatch is host
+path substitution: discard that unregistered attempt and re-pin, without
+changing target state or consuming a cycle.
+
 The runtime module implements:
 
 - `classify_path(..., repository_root=...)` and
@@ -88,13 +126,13 @@ The runtime module implements:
   cycle-0 audit and complete-cycle reduction; and
 - pointer-scoped artifact namespace and controller-only publication helpers.
 
-The controller imports these functions from the repository copy; it does not
+The controller imports these functions from the pinned copy; it does not
 copy reducer logic out of tests. Two phase-zero operations are also directly
 executable and emit metadata only:
 
 ```text
-python3 scripts/rpf_runtime.py classify <exact-path>...
-python3 scripts/rpf_runtime.py probe-exchange <existing-pointer-parent>
+python3 <RUNTIME_SCRIPT> classify <exact-path>...
+python3 <RUNTIME_SCRIPT> probe-exchange <existing-pointer-parent>
 ```
 
 All authority-bearing publication, dispatch, capture, source-contract, UI, and

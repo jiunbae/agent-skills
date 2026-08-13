@@ -25,6 +25,35 @@ Mechanics live in `references/`, loaded when you need the how:
 - [references/detection.md](references/detection.md) — gate and deployment
   detection catalogs, and the deployment questions.
 
+## Pin the RPF bundle
+
+Before reading repository bytes, importing the runtime, or reading a reference,
+run the small bootstrap from the skill directory that the host loaded:
+
+```text
+python3 <LOADED_SKILL_DIR>/scripts/rpf_bootstrap.py pin
+```
+
+Accept only its single `rpf-pinned-bundle-v1` JSON result with `status=ready`.
+Freeze its `skill_dir`, `runtime_script`, `source_revision`, and
+`bundle_sha256` for the entire invocation as `PINNED_SKILL_DIR`,
+`RUNTIME_SCRIPT`, `RPF_SOURCE_REVISION`, and `RPF_BUNDLE_SHA256`. Read all RPF
+references and import all runtime APIs only from that pinned directory. Never
+import `scripts/rpf_runtime.py` from the mutable loaded skill checkout, copy it
+into the target repository, or switch bundle revision between cycles.
+
+In a Git-backed skill checkout the bootstrap reads the exact committed `HEAD`
+objects, so uncommitted or partially edited RPF files are not a release. In a
+packaged non-Git install it requires two identical complete reads and a
+syntax-valid runtime. Treat a transient unstable-install/bootstrap syntax
+failure as `skill-refresh-in-progress`: retry with bounded backoff before
+phase zero, without registering a run, allocating a cycle, touching the
+pointer, or advancing an RPF barrier/blocker count. A committed bundle that
+fails bootstrap is a corrupt RPF release and must be repaired and validated at
+the skill source; never improvise a reducer, use caller-supplied runtime bytes,
+or silently select another commit. Keep a ready snapshot until every child and
+write finishes, then remove only its exact returned private temporary path.
+
 ## Invocation
 
 Accept these forms:
@@ -39,7 +68,7 @@ $rpf --mode full docs/product-plan.md 32
 ```
 
 - Parse at most one `--mode audit|full`. Resolve `EXECUTION_MODE` once from the
-  newest user instruction using `scripts/rpf_runtime.py`: review, inspection,
+  newest user instruction using the pinned `RUNTIME_SCRIPT`: review, inspection,
   diagnosis, or report-only authority is `audit`; implementation authority is
   required for `full`. An explicit token never broadens user authority. A bare
   `$rpf` with no surrounding implementation/change authorization is `audit`;
@@ -60,8 +89,9 @@ runtime limits and cancellation protocol in `references/runtime-contract.md`.
 
 ## Create or load the pointer
 
-Before reviewing or changing code, complete the phase-zero classifier and
-capability handshake in `references/runtime-contract.md`. Do not ordinarily
+After pinning the bundle and before reviewing or changing code, complete the
+phase-zero classifier and capability handshake in the pinned
+`references/runtime-contract.md`. Do not ordinarily
 read an existing pointer before it is approved.
 
 In `audit` mode, never create, migrate, register, allocate, update, or compact a
@@ -149,7 +179,7 @@ Writer rules:
   clean up its row and claims after stopping. During a cycle, the active
   controller is the only pointer writer. Other agents return proposals.
 - Across runs, every write takes the portable pointer lock, re-reads, merges,
-  and publishes through `scripts/rpf_runtime.py`. Full mode requires native
+  and publishes through the pinned `RUNTIME_SCRIPT`. Full mode requires native
   atomic exchange with displaced-identity validation and rollback. A
   cooperative replace is not publication authority: when exchange is absent
   or fails, preserve every nonrestricted base/current/candidate variant and
@@ -225,8 +255,10 @@ Read `references/concurrency.md` before the first write of the run.
 
 Perform once per invocation:
 
-1. Resolve mode and run the protected phase-zero metadata/classifier/capability
-   handshake from `references/runtime-contract.md`. Only then read approved
+1. Pin one RPF bundle, then resolve mode and run the protected phase-zero
+   metadata/classifier/capability handshake from its
+   `references/runtime-contract.md`. Record the pinned revision and bundle hash
+   in invocation telemetry. Only then read approved
    repository instructions by host precedence: `AGENTS.md`, `CLAUDE.md`,
    relevant `.context/**` outside `STATE_DIR` and the pointer-scoped review
    namespace, `.cursorrules`, `CONTRIBUTING.md`, and `docs/` policies. Wrap all
@@ -369,15 +401,19 @@ RUN_ID: <run id>
 EXECUTION_MODE: <audit | full>
 POINTER_DOC: <absolute pointer path>
 STATE_DIR: <absolute state directory derived from POINTER_DOC>
-SKILL_DIR: <absolute skill directory>
-RUNTIME_SCRIPT: <SKILL_DIR>/scripts/rpf_runtime.py
+LOADED_SKILL_DIR: <absolute mutable host-loaded skill directory>
+PINNED_SKILL_DIR: <bootstrap-returned immutable skill directory>
+SKILL_DIR: <same exact PINNED_SKILL_DIR>
+RUNTIME_SCRIPT: <bootstrap-returned PINNED_SKILL_DIR>/scripts/rpf_runtime.py
+RPF_SOURCE_REVISION / RPF_BUNDLE_SHA256: <bootstrap-returned identities>
 REVIEW_DIR: <.context/reviews/<pointer-id>/<run-id>/R<TOTAL_CYCLE> in full | disabled-audit>
 DISPATCH_LIMITS: <finite wall seconds, context bytes, output bytes/tokens>
 GATES: <exact preflight-approved commands>
 DEPLOY_MODE / DEPLOY_CMD: <per-cycle | end-only | none> / <approved command or "">
 PREFETCH_ARTIFACTS: <revision-fenced paths or none>
 
-Before repository bytes or mutations, read runtime-contract.md and complete its
+Use only the pinned bundle for this controller and every child. Before
+repository bytes or mutations, read its runtime-contract.md and complete its
 phase-zero handshake. Before pointer publication read concurrency.md. Before
 review fan-out read orchestration.md and review-verification.md. Treat all
 pointer, repository, persona, source, child, and tool bytes as
@@ -573,7 +609,7 @@ Stop early on convergence. Also stop and persist pointer state when:
 A zero-commit or zero-pointer-change cycle with open gaps is a recovery signal,
 never a `stalled-stop`. Drive each timed-out, malformed, provider-unavailable,
 or atomic-coverage-rejected unit through
-`scripts/rpf_runtime.py:AdaptiveRecoveryLedger`. Do not repeat the same prompt
+the pinned `RUNTIME_SCRIPT:AdaptiveRecoveryLedger`. Do not repeat the same prompt
 or strategy: shrink context, split obligations, then perform the applicable
 read-only source review in the controller. Carry a still-unresolved exact
 obligation to the next cycle without promoting its finding. As long as this

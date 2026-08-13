@@ -532,7 +532,7 @@ strict result from the exact `ui-runtime-verifier` role.
 
 Children never write review evidence. In full mode the controller publishes
 only validated strict-protocol bytes in a pointer/run/cycle/dispatch/persona-
-specific namespace derived by `scripts/rpf_runtime.py:artifact_namespace`:
+specific namespace derived by the pinned `RUNTIME_SCRIPT:artifact_namespace`:
 
 ```
 .context/reviews/<pointer-id>/<run-id>/R<TOTAL_CYCLE>/

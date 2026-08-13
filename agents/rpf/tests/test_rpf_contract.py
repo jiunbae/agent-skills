@@ -58,7 +58,9 @@ RPF_SOURCE_SURFACES = (
     "agents/rpf/references/persona-lenses.md",
     "agents/rpf/references/review-verification.md",
     "agents/rpf/references/runtime-contract.md",
+    "agents/rpf/scripts/rpf_bootstrap.py",
     "agents/rpf/scripts/rpf_runtime.py",
+    "agents/rpf/tests/test_rpf_bootstrap.py",
     "agents/rpf/tests/test_rpf_contract.py",
     "agents/rpf/tests/test_rpf_runtime.py",
 )

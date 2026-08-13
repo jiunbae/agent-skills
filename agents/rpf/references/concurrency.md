@@ -69,7 +69,7 @@ your `git status` and could be swept into a commit.
 
 The pointer is guarded by the owner-bound sidecar directory
 `"$POINTER_DOC.lock"`. Use
-`scripts/rpf_runtime.py:acquire_pointer_lock(pointer, RUN_ID,
+the pinned `RUNTIME_SCRIPT:acquire_pointer_lock(pointer, RUN_ID,
 authority=EXECUTION_AUTHORITY, repository_root=REPOSITORY_ROOT)`; do not recreate
 the protocol in shell. Exclusive directory creation establishes the lock, then
 the runtime writes an `owner.json` containing the exact run ID and an
@@ -100,7 +100,7 @@ runtime intentionally fails closed until then.
 
 ## Conflict-preserving publication
 
-Use `scripts/rpf_runtime.py:publish_if_exact` for root publication. Full mode
+Use the pinned `RUNTIME_SCRIPT:publish_if_exact` for root publication. Full mode
 requires conflict-preserving native exchange on the mounted filesystem:
 
 - `atomic-exchange` swaps candidate and root, validates the displaced identity,
