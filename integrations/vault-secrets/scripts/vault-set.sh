@@ -86,10 +86,10 @@ prompt_password() {
     # 터미널에서 입력받기
     if [ -t 0 ]; then
         echo -n "$prompt: " >&2
-        read -s password
+        IFS= read -r -s password
         echo >&2
     else
-        read password
+        IFS= read -r password
     fi
 
     echo "$password"
@@ -322,9 +322,16 @@ create_note() {
 
 # 메인
 main() {
+    case "${1:-}" in
+        help|--help|-h)
+            show_help
+            return 0
+            ;;
+    esac
+
     if [ $# -lt 2 ]; then
         show_help
-        exit 1
+        return 1
     fi
 
     local type="$1"
@@ -337,9 +344,6 @@ main() {
             ;;
         note)
             create_note "$name" "$@"
-            ;;
-        help|--help|-h)
-            show_help
             ;;
         *)
             echo -e "${RED}Unknown type: $type${NC}" >&2

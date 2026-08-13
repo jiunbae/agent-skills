@@ -22,6 +22,10 @@ fail() {
     exit 1
 }
 
+# Help is local documentation and never requires vault configuration.
+env -u BW_FOLDER_ID -u BW_SERVER "$SET_HELPER" --help > "$TEST_ROOT/help.out"
+grep -q '^USAGE:' "$TEST_ROOT/help.out" || fail "vault-set help was not displayed"
+
 assert_no_bw_call() {
     [ ! -s "$BW_FAKE_LOG" ] || fail "bw was called after a fail-closed check"
 }
