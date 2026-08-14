@@ -7,6 +7,8 @@ description: Retrieves and stores credentials in the user's self-hosted Vaultwar
 
 Credentials live at the approved self-hosted Vaultwarden origin **https://vault.jiun.dev**, reachable through the `bw` CLI and this skill's validated field-only helpers.
 
+The server must remain on Vaultwarden 1.37.0 or newer when using Bitwarden clients 2026.7.0 or newer. Older servers emit legacy compatibility fields that these clients cannot decode.
+
 > **There is no vault MCP server.** If you look for one and find nothing, that is expected — it does not mean the credential is unavailable. Use the status helper before concluding anything is missing.
 
 ## Start here
@@ -21,10 +23,13 @@ Credentials live at the approved self-hosted Vaultwarden origin **https://vault.
 | `locked` | Ask the user to run `! ./scripts/vault-status.sh unlock`; do not attempt it yourself. |
 | `unauthenticated` | Ask the user to run `! ./scripts/vault-status.sh login`. |
 
+`check` also decodes active and trashed item lists. An unlocked session is not considered ready when item decoding fails.
+
 ## Retrieve a secret
 
 ```bash
 ./scripts/vault-get-field.sh "<item-name>" "<field-name>" | consumer-command
+./scripts/vault-get-field.sh "<login-item>" login.password | consumer-command
 ```
 
 Fallback when you need to search rather than name an item exactly:
@@ -70,6 +75,10 @@ printf '%s\n' "$API_KEY"  | ./scripts/vault-set.sh note "API Key" --field-stdin 
 ./scripts/vault-status.sh check
 ./scripts/vault-status.sh sync
 ```
+
+The IaC folder is the default destination. Override it only with `--folder <id>` or `BW_FOLDER_ID`. Sync keeps one protected pre-sync CLI cache backup and restores it automatically if sync or item decoding fails.
+
+If creation reports an uncertain result, do not retry immediately. List matching item names first because the server may have committed the item before the client failed to decode its response.
 
 ## Security rules
 

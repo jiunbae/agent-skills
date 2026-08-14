@@ -21,16 +21,24 @@ case "${1:-}" in
         cat > "$BW_FAKE_CAPTURE"
         printf '%s\n' '{"password":"fake-create-response-secret"}'
         ;;
-    sync|logout)
+    sync)
+        if [ -n "${BW_FAKE_DATA_FILE:-}" ]; then
+            printf '%s\n' 'broken-cache' > "$BW_FAKE_DATA_FILE"
+        fi
+        ;;
+    logout)
         ;;
     config)
         [ "${2:-}" = "server" ]
         ;;
     get)
         [ "${2:-}" = "item" ]
-        printf '%s\n' '{"fields":[{"name":"test-field","value":"test-field-secret"}]}'
+        printf '%s\n' '{"login":{"username":"test-user","password":"test-login-secret"},"fields":[{"name":"test-field","value":"test-field-secret"}]}'
         ;;
     list)
+        if [ "${BW_FAKE_LIST_FAIL:-0}" = "1" ]; then
+            exit 1
+        fi
         [ "${2:-}" = "items" ]
         printf '%s\n' '[{"id":"1234567890","name":"Test Item","fields":[{"name":"test-field","value":"test-field-secret"}]}]'
         ;;

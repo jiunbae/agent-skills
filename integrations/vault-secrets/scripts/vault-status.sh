@@ -78,7 +78,12 @@ show_full_status() {
     # 권장 조치
     case "$status" in
         unlocked)
-            echo -e "${GREEN}✓ Ready to use${NC}"
+            if verify_vault_readable; then
+                echo -e "${GREEN}✓ Ready to use; item data is readable${NC}"
+            else
+                echo -e "${RED}✗ Session is unlocked but item data is unreadable${NC}"
+                return 1
+            fi
             ;;
         locked)
             echo -e "${YELLOW}⚠ Session locked. Run: vault-status.sh unlock${NC}"
@@ -99,7 +104,11 @@ check_status() {
     echo "Session: ${status}, Last sync: ${last_sync}"
 
     if [ "$status" = "unlocked" ]; then
-        return 0
+        if verify_vault_readable; then
+            echo "Vault data: readable"
+            return 0
+        fi
+        return 1
     else
         return 1
     fi
@@ -146,18 +155,30 @@ do_unlock() {
 
 # 동기화
 do_sync() {
-    load_session
-
-    local status
-    status=$(get_status | jq -r '.status')
-    if [ "$status" != "unlocked" ]; then
-        echo -e "${RED}Vault is not unlocked. Run: vault-status.sh unlock${NC}"
-        return 1
-    fi
+    require_approved_unlocked_session || return 1
+    backup_bw_data_file || return 1
 
     echo -e "${BLUE}Syncing vault...${NC}"
-    bw sync
-    echo -e "${GREEN}✓ Sync complete${NC}"
+    if ! bw sync >/dev/null 2>&1; then
+        if ! restore_bw_data_file; then
+            echo -e "${RED}Critical: sync failed and the pre-sync cache could not be restored.${NC}" >&2
+            return 1
+        fi
+        echo -e "${RED}Sync failed; the pre-sync cache was restored.${NC}" >&2
+        return 1
+    fi
+    if ! verify_vault_readable; then
+        if ! restore_bw_data_file; then
+            echo -e "${RED}Critical: synced data was unreadable and the pre-sync cache could not be restored.${NC}" >&2
+            return 1
+        fi
+        echo -e "${RED}Synced data was unreadable; the pre-sync cache was restored.${NC}" >&2
+        return 1
+    fi
+    echo -e "${GREEN}✓ Sync complete; item data is readable${NC}"
+    if [ "$BW_DATA_BACKUP_AVAILABLE" = true ]; then
+        echo "  Protected pre-sync cache backup retained."
+    fi
 }
 
 # 로그인

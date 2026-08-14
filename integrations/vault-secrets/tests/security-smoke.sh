@@ -22,6 +22,10 @@ fail() {
     exit 1
 }
 
+# Help remains available without credentials or network configuration.
+env -u BW_FOLDER_ID -u BW_SERVER "$SET_HELPER" --help > "$TEST_ROOT/help.out"
+grep -q '^USAGE:' "$TEST_ROOT/help.out" || fail "vault-set help was not displayed"
+
 assert_no_bw_call() {
     [ ! -s "$BW_FAKE_LOG" ] || fail "bw was called after a fail-closed check"
 }
@@ -94,6 +98,12 @@ if grep -q 'private@example.test' "$TEST_ROOT/full-status.out"; then
     fail "account inventory was printed"
 fi
 
+# An unlocked session is not ready when cipher decoding fails.
+if HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" BW_FAKE_LIST_FAIL=1 \
+    "$STATUS_HELPER" check >/dev/null 2>&1; then
+    fail "check accepted unreadable item data"
+fi
+
 # A mismatched persisted serverUrl blocks every subsequent network/mutation call.
 : > "$BW_FAKE_LOG"
 if HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" BW_FAKE_SERVER="https://attacker.example" \
@@ -134,6 +144,12 @@ if grep -q 'test-field-secret' "$TEST_ROOT/fields.out"; then
     fail "field listing printed a raw secret"
 fi
 
+# Login scalars are retrievable only through explicit selectors.
+HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" \
+    "$GET_HELPER" "Test Item" login.password > "$TEST_ROOT/login-password.out"
+grep -qx 'test-login-secret' "$TEST_ROOT/login-password.out" ||
+    fail "login.password was not retrieved"
+
 # Item secrets travel through stdin, not jq/bw arguments or helper output.
 : > "$BW_FAKE_LOG"
 printf '%s\n' "test-password" |
@@ -146,39 +162,40 @@ fi
 jq -e '.login.password == "test-password" and .folderId == "test-folder"' \
     "$BW_FAKE_CAPTURE" >/dev/null || fail "stdin secret was not encoded correctly"
 
-# An explicit folder works without BW_FOLDER_ID for both supported item types.
-: > "$BW_FAKE_LOG"
-printf '%s\n' "explicit-password" |
+# The documented IaC folder is the real default.
+printf '%s\n' "test-password" |
     env -u BW_FOLDER_ID HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" \
-        "$SET_HELPER" login "Explicit Folder Login" --username "test-user" \
-        --password-stdin --folder "explicit-login-folder" >/dev/null
-jq -e '.login.password == "explicit-password" and .folderId == "explicit-login-folder"' \
-    "$BW_FAKE_CAPTURE" >/dev/null || fail "explicit login folder was not used without BW_FOLDER_ID"
+        "$SET_HELPER" login "Default Folder" --username "test-user" --password-stdin \
+        >/dev/null
+jq -e '.folderId == "db11d65c-c0d0-4131-8687-4995f1df60cf"' \
+    "$BW_FAKE_CAPTURE" >/dev/null || fail "IaC folder default was not applied"
 
-: > "$BW_FAKE_LOG"
-env -u BW_FOLDER_ID HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" \
-    "$SET_HELPER" note "Explicit Folder Note" --field "region=test" \
-    --folder "explicit-note-folder" >/dev/null
-jq -e '.folderId == "explicit-note-folder" and .fields[0].value == "test"' \
-    "$BW_FAKE_CAPTURE" >/dev/null || fail "explicit note folder was not used without BW_FOLDER_ID"
-
-# Missing both the option and configured default fails before any bw call.
-: > "$BW_FAKE_LOG"
-if printf '%s\n' "missing-folder-password" |
-    env -u BW_FOLDER_ID HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" \
-        "$SET_HELPER" login "Missing Folder Login" --username "test-user" \
-        --password-stdin >/dev/null 2>&1; then
-    fail "login creation accepted no folder configuration"
+# A sync that produces unreadable data restores the protected pre-sync cache.
+new_home sync-rollback
+printf '%s\n' "test-session" > "$TEST_HOME/.cache/vault-secrets/bw-session"
+chmod 600 "$TEST_HOME/.cache/vault-secrets/bw-session"
+case "$(uname -s)" in
+    Darwin)
+        BW_TEST_DATA_DIR="$TEST_HOME/Library/Application Support/Bitwarden CLI"
+        ;;
+    *)
+        BW_TEST_DATA_DIR="$TEST_HOME/.config/Bitwarden CLI"
+        ;;
+esac
+mkdir -p "$BW_TEST_DATA_DIR"
+chmod 700 "$BW_TEST_DATA_DIR"
+BW_TEST_DATA_FILE="$BW_TEST_DATA_DIR/data.json"
+printf '%s\n' 'known-good-cache' > "$BW_TEST_DATA_FILE"
+chmod 600 "$BW_TEST_DATA_FILE"
+if HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" \
+    BW_FAKE_DATA_FILE="$BW_TEST_DATA_FILE" BW_FAKE_LIST_FAIL=1 \
+    "$STATUS_HELPER" sync >/dev/null 2>&1; then
+    fail "sync accepted unreadable item data"
 fi
-assert_no_bw_call
-
-: > "$BW_FAKE_LOG"
-if env -u BW_FOLDER_ID HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" \
-    "$SET_HELPER" note "Missing Folder Note" --field "region=test" \
-    >/dev/null 2>&1; then
-    fail "note creation accepted no folder configuration"
-fi
-assert_no_bw_call
+grep -qx 'known-good-cache' "$BW_TEST_DATA_FILE" ||
+    fail "pre-sync cache was not restored"
+[ "$(stat_mode_value=$(stat -f '%Lp' "$TEST_HOME/.cache/vault-secrets/bw-data.pre-sync.json" 2>/dev/null || stat -c '%a' "$TEST_HOME/.cache/vault-secrets/bw-data.pre-sync.json"); printf '%s' "$stat_mode_value")" = "600" ] ||
+    fail "pre-sync cache backup mode is not 0600"
 
 # Storage is an atomic rename into the one fixed 0600 path.
 new_home store

@@ -4,8 +4,11 @@
 readonly APPROVED_BW_SERVER="https://vault.jiun.dev"
 readonly VAULT_SESSION_DIR="${HOME:?HOME is required}/.cache/vault-secrets"
 readonly VAULT_SESSION_FILE="${VAULT_SESSION_DIR}/bw-session"
+readonly VAULT_BW_DATA_BACKUP_FILE="${VAULT_SESSION_DIR}/bw-data.pre-sync.json"
 readonly VAULT_SESSION_TTL_SECONDS=43200
 VERIFIED_BW_STATUS=""
+BW_DATA_FILE=""
+BW_DATA_BACKUP_AVAILABLE=false
 
 stat_uid() {
     stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null
@@ -69,6 +72,87 @@ require_approved_unlocked_session() {
         echo "Ask the user to run: vault-status.sh unlock" >&2
         return 1
     fi
+}
+
+verify_vault_readable() {
+    if ! bw list items >/dev/null 2>&1 ||
+       ! bw list items --trash >/dev/null 2>&1; then
+        echo "Error: Vaultwarden item data could not be decoded." >&2
+        return 1
+    fi
+}
+
+resolve_bw_data_file() {
+    case "$(uname -s)" in
+        Darwin)
+            printf '%s\n' "${HOME}/Library/Application Support/Bitwarden CLI/data.json"
+            ;;
+        *)
+            printf '%s\n' "${XDG_CONFIG_HOME:-${HOME}/.config}/Bitwarden CLI/data.json"
+            ;;
+    esac
+}
+
+backup_bw_data_file() {
+    local current_uid owner mode temporary
+    BW_DATA_BACKUP_AVAILABLE=false
+    BW_DATA_FILE=$(resolve_bw_data_file)
+
+    if [ ! -e "$BW_DATA_FILE" ] && [ ! -L "$BW_DATA_FILE" ]; then
+        return 0
+    fi
+    if [ -L "$BW_DATA_FILE" ] || [ ! -f "$BW_DATA_FILE" ]; then
+        echo "Error: refusing an unsafe Bitwarden CLI data path." >&2
+        return 1
+    fi
+
+    current_uid=$(id -u)
+    owner=$(stat_uid "$BW_DATA_FILE") || return 1
+    mode=$(stat_mode "$BW_DATA_FILE") || return 1
+    if [ "$owner" != "$current_uid" ] || [ "$mode" != "600" ]; then
+        echo "Error: Bitwarden CLI data file must be owned by the current user with mode 0600." >&2
+        return 1
+    fi
+
+    ensure_session_dir || return 1
+    temporary=$(mktemp "$VAULT_SESSION_DIR/.bw-data.XXXXXX") || return 1
+    chmod 600 "$temporary" || {
+        rm -f -- "$temporary"
+        return 1
+    }
+    if ! cp -p -- "$BW_DATA_FILE" "$temporary" ||
+       ! mv -f -- "$temporary" "$VAULT_BW_DATA_BACKUP_FILE"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    chmod 600 "$VAULT_BW_DATA_BACKUP_FILE" || return 1
+    BW_DATA_BACKUP_AVAILABLE=true
+}
+
+restore_bw_data_file() {
+    local data_dir temporary
+
+    if [ "$BW_DATA_BACKUP_AVAILABLE" != true ]; then
+        return 0
+    fi
+    if [ ! -f "$VAULT_BW_DATA_BACKUP_FILE" ] ||
+       [ -L "$VAULT_BW_DATA_BACKUP_FILE" ]; then
+        echo "Error: protected pre-sync cache backup is unavailable." >&2
+        return 1
+    fi
+
+    data_dir=$(dirname -- "$BW_DATA_FILE")
+    temporary=$(mktemp "$data_dir/.data.json.restore.XXXXXX") || return 1
+    chmod 600 "$temporary" || {
+        rm -f -- "$temporary"
+        return 1
+    }
+    if ! cp -p -- "$VAULT_BW_DATA_BACKUP_FILE" "$temporary" ||
+       ! mv -f -- "$temporary" "$BW_DATA_FILE"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    chmod 600 "$BW_DATA_FILE"
 }
 
 ensure_session_dir() {

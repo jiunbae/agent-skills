@@ -14,6 +14,8 @@
 set -euo pipefail
 
 # 기본 설정
+readonly DEFAULT_IAC_FOLDER_ID="db11d65c-c0d0-4131-8687-4995f1df60cf"
+IAC_FOLDER_ID="${BW_FOLDER_ID:-$DEFAULT_IAC_FOLDER_ID}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=./vault-common.sh
 source "$SCRIPT_DIR/vault-common.sh"
@@ -42,7 +44,7 @@ OPTIONS:
     --uri <url>             Associated URL
     --field <key=value>     Custom field (can be repeated)
     --field-stdin <key>     Read field value from stdin (secure)
-    --folder <id>           Folder ID (default: BW_FOLDER_ID)
+    --folder <id>           Folder ID (default: IaC folder)
     --hidden                Make custom fields hidden (default: true)
 
 EXAMPLES:
@@ -76,6 +78,7 @@ EOF
 check_session() {
     export NODE_NO_WARNINGS=1
     require_approved_unlocked_session || exit 1
+    verify_vault_readable || exit 1
 }
 
 # 비밀번호 프롬프트 (보안)
@@ -86,13 +89,13 @@ prompt_password() {
     # 터미널에서 입력받기
     if [ -t 0 ]; then
         echo -n "$prompt: " >&2
-        read -s password
+        IFS= read -r -s password
         echo >&2
     else
-        read password
+        IFS= read -r password
     fi
 
-    echo "$password"
+    printf '%s\n' "$password"
 }
 
 # stdin에서 값 읽기 (보안)
@@ -104,7 +107,7 @@ read_from_stdin() {
         exit 1
     fi
     read -r value
-    echo "$value"
+    printf '%s\n' "$value"
 }
 
 # 보안 경고 출력
@@ -130,7 +133,7 @@ create_login() {
     local password_stdin=false
     local uri=""
     local fields=()
-    local folder_id="${BW_FOLDER_ID:-}"
+    local folder_id="$IAC_FOLDER_ID"
     local hidden=true
 
     while [[ $# -gt 0 ]]; do
@@ -175,14 +178,6 @@ create_login() {
         esac
     done
 
-    if [ -z "$folder_id" ]; then
-        echo -e "${RED}Error: --folder or BW_FOLDER_ID is required.${NC}" >&2
-        exit 1
-    fi
-
-    validate_server
-    check_session
-
     # 필수 값 확인
     if [ -z "$username" ]; then
         echo -e "${YELLOW}Username not provided.${NC}" >&2
@@ -205,7 +200,7 @@ create_login() {
 
     # JSON 생성
     # Keep secret values on stdin rather than in jq or bw process arguments.
-    {
+    if ! {
         printf '%s\0' "$name" "$username" "$password" "$folder_id" "$uri" "$field_type"
         if [ ${#fields[@]} -gt 0 ]; then
             printf '%s\0' "${fields[@]}"
@@ -227,7 +222,10 @@ create_login() {
                     {name: .[0], value: (.[1:] | join("=")), type: ($v[5] | tonumber)}
                 ))
             }
-        ' | bw encode | bw create item > /dev/null
+        ' | bw encode | bw create item > /dev/null; then
+        echo -e "${RED}Error: create result is uncertain; do not retry until the item list is checked.${NC}" >&2
+        return 1
+    fi
 
     echo -e "${GREEN}✓${NC} Login item '${name}' created successfully."
     echo "  Verify by retrieving only the required field into its consumer."
@@ -240,7 +238,7 @@ create_note() {
 
     local fields=()
     local field_stdin_key=""
-    local folder_id="${BW_FOLDER_ID:-}"
+    local folder_id="$IAC_FOLDER_ID"
     local hidden=true
 
     while [[ $# -gt 0 ]]; do
@@ -273,14 +271,6 @@ create_note() {
         esac
     done
 
-    if [ -z "$folder_id" ]; then
-        echo -e "${RED}Error: --folder or BW_FOLDER_ID is required.${NC}" >&2
-        exit 1
-    fi
-
-    validate_server
-    check_session
-
     # stdin에서 필드 값 읽기
     if [ -n "$field_stdin_key" ]; then
         local stdin_value
@@ -301,7 +291,7 @@ create_note() {
     fi
 
     # Keep secret values on stdin rather than in jq or bw process arguments.
-    printf '%s\0' "$name" "$folder_id" "$field_type" "${fields[@]}" |
+    if ! printf '%s\0' "$name" "$folder_id" "$field_type" "${fields[@]}" |
         jq -Rs '
             (split("\u0000") | .[:-1]) as $v |
             {
@@ -314,7 +304,10 @@ create_note() {
                     {name: .[0], value: (.[1:] | join("=")), type: ($v[2] | tonumber)}
                 ))
             }
-        ' | bw encode | bw create item > /dev/null
+        ' | bw encode | bw create item > /dev/null; then
+        echo -e "${RED}Error: create result is uncertain; do not retry until the item list is checked.${NC}" >&2
+        return 1
+    fi
 
     echo -e "${GREEN}✓${NC} Secure note '${name}' created successfully."
     echo "  Verify by retrieving only the required field into its consumer."
@@ -322,10 +315,18 @@ create_note() {
 
 # 메인
 main() {
+    case "${1:-}" in
+        help|--help|-h)
+            show_help
+            return 0
+            ;;
+    esac
+
     if [ $# -lt 2 ]; then
         show_help
-        exit 1
+        return 1
     fi
+    validate_server
 
     local type="$1"
     local name="$2"
@@ -333,13 +334,12 @@ main() {
 
     case "$type" in
         login)
+            check_session
             create_login "$name" "$@"
             ;;
         note)
+            check_session
             create_note "$name" "$@"
-            ;;
-        help|--help|-h)
-            show_help
             ;;
         *)
             echo -e "${RED}Unknown type: $type${NC}" >&2
