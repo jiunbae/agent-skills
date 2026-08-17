@@ -18,6 +18,19 @@ jobs:
         with:
           python-version: '3.12'
 
+      # validate-k8s.sh renders every overlay and then parses the result, so the
+      # suite needs a YAML parser and a kustomize implementation. Both are pinned
+      # rather than taken from the runner image: an unpinned kubectl carries
+      # whatever kustomize it was built against, and a mismatch fails every
+      # overlay build with the tool's error suppressed.
+      - name: Install YAML validation dependency
+        run: python -m pip install --disable-pip-version-check 'PyYAML==6.0.3'
+
+      - name: Set up pinned kubectl for kustomize rendering
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.36.3'
+
       - name: Run skill test suites
         run: |
           # A skill owns its tests at <group>/<skill>/tests/test_*.py. Each
