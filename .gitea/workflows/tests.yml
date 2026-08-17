@@ -38,6 +38,20 @@ jobs:
         with:
           version: 'v1.36.3'
 
+      # GitHub's ubuntu-latest runs jobs as the unprivileged `runner` user;
+      # catthehacker/ubuntu under act runs them as root. Several suites here
+      # assert that an unreadable directory *stays* unreadable, and root ignores
+      # permission bits — so as root those tests either fail outright
+      # (ml/model-sync) or self-skip, which the AIR release gate correctly
+      # refuses (it allows zero skipped tests). Drop to the image's existing
+      # uid 1001 `ubuntu` user for anything that inspects permissions.
+      - name: Prepare an unprivileged test user
+        run: |
+          set -euo pipefail
+          id -u ubuntu >/dev/null 2>&1 || useradd -m -u 1001 ubuntu
+          install -d -o ubuntu -g ubuntu /tmp/ci-home /tmp/ci-tmp
+          chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
+
       - name: Run skill test suites
         run: |
           # A skill owns its tests at <group>/<skill>/tests/test_*.py. Each
@@ -47,7 +61,7 @@ jobs:
           while IFS= read -r dir; do
             FOUND=1
             echo "::group::${dir}"
-            (cd "${dir}" && python -m unittest discover -s tests -v)
+            (cd "${dir}" && runuser -u ubuntu -- env HOME=/tmp/ci-home TMPDIR=/tmp/ci-tmp PATH="$PATH" python -m unittest discover -s tests -v)
             echo "::endgroup::"
           done < <(find . -mindepth 3 -maxdepth 3 -type d -name tests -not -path "./.git/*" \
                      -exec sh -c 'ls "$1"/test_*.py >/dev/null 2>&1' _ {} \; -print | sed 's|/tests$||' | sort)
@@ -76,7 +90,7 @@ jobs:
               exit 1
             fi
             echo "::group::${suite}"
-            bash "${suite}"
+            runuser -u ubuntu -- env HOME=/tmp/ci-home TMPDIR=/tmp/ci-tmp PATH="$PATH" bash "${suite}"
             echo "::endgroup::"
           done
 
@@ -89,6 +103,10 @@ jobs:
   air:
     name: AIR source release gate
     runs-on: ubuntu-latest
+    # Chromium is installed as root but the release gate runs unprivileged, so
+    # it cannot live in root's ~/.cache. Pin it somewhere both users can reach.
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,7 +124,27 @@ jobs:
         working-directory: development/playwright
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
+      # GitHub's ubuntu-latest runs jobs as the unprivileged `runner` user;
+      # catthehacker/ubuntu under act runs them as root. Several suites here
+      # assert that an unreadable directory *stays* unreadable, and root ignores
+      # permission bits — so as root those tests either fail outright
+      # (ml/model-sync) or self-skip, which the AIR release gate correctly
+      # refuses (it allows zero skipped tests). Drop to the image's existing
+      # uid 1001 `ubuntu` user for anything that inspects permissions.
+      - name: Prepare an unprivileged test user
+        run: |
+          set -euo pipefail
+          id -u ubuntu >/dev/null 2>&1 || useradd -m -u 1001 ubuntu
+          install -d -o ubuntu -g ubuntu /tmp/ci-home /tmp/ci-tmp
+          chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
+          chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
+
       - name: Verify AIR source, generated assets, and examples
         env:
           WORKFLOW_STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/development/playwright/node_modules/playwright-core/index.mjs
-        run: node agents/air-workbench/scripts/verify-release.mjs --source
+        run: |
+          runuser -u ubuntu -- env \
+            HOME=/tmp/ci-home TMPDIR=/tmp/ci-tmp PATH="$PATH" \
+            PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
+            WORKFLOW_STUDIO_PLAYWRIGHT_MODULE="$WORKFLOW_STUDIO_PLAYWRIGHT_MODULE" \
+            node agents/air-workbench/scripts/verify-release.mjs --source
