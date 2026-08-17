@@ -1,9 +1,16 @@
 name: Tests
 
+# GitHub Actions is retired for this repo. Gitea (jiunbae/agent-skills) mirrors
+# GitHub on every push via webhook and runs this on the jiun-mini runner, where
+# `ubuntu-latest` maps to catthehacker/ubuntu:act-latest.
+#
+# `pull_request` is dropped: mirrors are read-only and PRs live on GitHub, so
+# `workflow_dispatch` is the only re-run mechanism.
+
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   python:
