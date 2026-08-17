@@ -16,6 +16,7 @@ jobs:
   python:
     name: Python skill tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -138,6 +139,7 @@ jobs:
   air:
     name: AIR source release gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Chromium is installed as root but the release gate runs unprivileged, so
     # it cannot live in root's ~/.cache. Pin it somewhere both users can reach.
     env:
