@@ -19,6 +19,7 @@ jobs:
   verify:
     name: Verify tagged source
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     # Chromium is installed as root but the release gate runs unprivileged, so
     # it cannot live in root's ~/.cache. Pin it somewhere both users can reach.
     env:
@@ -165,6 +166,7 @@ jobs:
   release:
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout exact tagged SHA
         uses: actions/checkout@v4
