@@ -10,16 +10,38 @@ VERIFIED_BW_STATUS=""
 BW_DATA_FILE=""
 BW_DATA_BACKUP_AVAILABLE=false
 
+# BSD and GNU stat disagree on both flags and formats, and the disagreement is
+# not safe to paper over with `||`: to GNU, `-f` means "filesystem status", so a
+# BSD-first attempt prints a multi-line filesystem block to stdout before it
+# fails, and the fallback's value is appended to that garbage. Every ownership
+# and mode comparison then sees a value that can never match, and the helpers
+# refuse on Linux for a reason that has nothing to do with the file. Decide the
+# dialect once, against a path that always exists, and never mix the two.
+if stat -c '%u' / >/dev/null 2>&1; then
+    readonly VAULT_STAT_DIALECT="gnu"
+else
+    readonly VAULT_STAT_DIALECT="bsd"
+fi
+
+stat_field() {
+    local bsd_format="$1" gnu_format="$2" path="$3"
+    if [ "$VAULT_STAT_DIALECT" = "gnu" ]; then
+        stat -c "$gnu_format" "$path" 2>/dev/null
+    else
+        stat -f "$bsd_format" "$path" 2>/dev/null
+    fi
+}
+
 stat_uid() {
-    stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null
+    stat_field '%u' '%u' "$1"
 }
 
 stat_mode() {
-    stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+    stat_field '%Lp' '%a' "$1"
 }
 
 stat_mtime() {
-    stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null
+    stat_field '%m' '%Y' "$1"
 }
 
 validate_server() {

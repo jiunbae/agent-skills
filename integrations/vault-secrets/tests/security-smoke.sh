@@ -22,6 +22,15 @@ fail() {
     exit 1
 }
 
+# The helpers stopped chaining BSD and GNU stat with `||` because to GNU `-f`
+# means "filesystem status" and prints a block to stdout before failing over.
+# The test must not reintroduce the same trap when it checks modes itself.
+if stat -c '%a' / >/dev/null 2>&1; then
+    file_mode() { stat -c '%a' "$1" 2>/dev/null; }
+else
+    file_mode() { stat -f '%Lp' "$1" 2>/dev/null; }
+fi
+
 # Help remains available without credentials or network configuration.
 env -u BW_FOLDER_ID -u BW_SERVER "$SET_HELPER" --help > "$TEST_ROOT/help.out"
 grep -q '^USAGE:' "$TEST_ROOT/help.out" || fail "vault-set help was not displayed"
@@ -194,7 +203,7 @@ if HOME="$TEST_HOME" BW_SERVER="$APPROVED_ORIGIN" \
 fi
 grep -qx 'known-good-cache' "$BW_TEST_DATA_FILE" ||
     fail "pre-sync cache was not restored"
-[ "$(stat_mode_value=$(stat -f '%Lp' "$TEST_HOME/.cache/vault-secrets/bw-data.pre-sync.json" 2>/dev/null || stat -c '%a' "$TEST_HOME/.cache/vault-secrets/bw-data.pre-sync.json"); printf '%s' "$stat_mode_value")" = "600" ] ||
+[ "$(file_mode "$TEST_HOME/.cache/vault-secrets/bw-data.pre-sync.json")" = "600" ] ||
     fail "pre-sync cache backup mode is not 0600"
 
 # Storage is an atomic rename into the one fixed 0600 path.
@@ -203,8 +212,7 @@ HOME="$TEST_HOME" bash -c '
     source "$1"
     store_session "test-session"
 ' bash "$INTEGRATION_DIR/scripts/vault-common.sh"
-stored_mode=$(stat -f '%Lp' "$TEST_HOME/.cache/vault-secrets/bw-session" 2>/dev/null ||
-    stat -c '%a' "$TEST_HOME/.cache/vault-secrets/bw-session")
+stored_mode=$(file_mode "$TEST_HOME/.cache/vault-secrets/bw-session")
 [ "$stored_mode" = "600" ] ||
     fail "stored session mode is not 0600"
 if find "$TEST_HOME/.cache/vault-secrets" -name '.bw-session.*' -print -quit | grep -q .; then
