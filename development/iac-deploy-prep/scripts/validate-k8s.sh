@@ -99,6 +99,30 @@ else
     fail "neither kustomize nor kubectl is available"
 fi
 
+# A failed render is undiagnosable without the tool's own reason — a CI run lost
+# to a kustomize version mismatch reported only "build failed" nine times. Report
+# the first substantive line, with the working directory stripped so no host
+# absolute path is printed, and bounded so a stack of YAML errors stays readable.
+build_reason() {
+    local error_file="$1"
+    local reason=""
+    if [[ -s "$error_file" ]]; then
+        reason="$(grep -vE '^[[:space:]]*$' "$error_file" 2>/dev/null | head -n 1)"
+    fi
+    reason="${reason//${PWD}\//}"
+    if [[ -n "${HOME:-}" ]]; then
+        reason="${reason//${HOME}/~}"
+    fi
+    if [[ -z "$reason" ]]; then
+        printf 'no diagnostic output from %s' "$BUILD_TOOL"
+        return
+    fi
+    if (( ${#reason} > 200 )); then
+        reason="${reason:0:200}..."
+    fi
+    printf '%s' "$reason"
+}
+
 build_target() {
     local target="$1"
     local label="$2"
@@ -111,23 +135,25 @@ build_target() {
 
     RENDER_COUNT=$((RENDER_COUNT + 1))
     rendered_file="${RENDER_DIR}/rendered-${RENDER_COUNT}.yaml"
+    local build_error
+    build_error="${RENDER_DIR}/build-error-${RENDER_COUNT}.txt"
     if [[ "$BUILD_TOOL" == "kustomize" ]]; then
-        if kustomize build "$target" >"$rendered_file" 2>/dev/null; then
+        if kustomize build "$target" >"$rendered_file" 2>"$build_error"; then
             RENDER_FILES+=("$rendered_file")
             RENDER_LABELS+=("$label")
             pass "$label builds"
         else
             rm -f -- "$rendered_file"
-            fail "$label build failed"
+            fail "$label build failed: $(build_reason "$build_error")"
         fi
     elif [[ "$BUILD_TOOL" == "kubectl" ]]; then
-        if kubectl kustomize "$target" >"$rendered_file" 2>/dev/null; then
+        if kubectl kustomize "$target" >"$rendered_file" 2>"$build_error"; then
             RENDER_FILES+=("$rendered_file")
             RENDER_LABELS+=("$label")
             pass "$label builds"
         else
             rm -f -- "$rendered_file"
-            fail "$label build failed"
+            fail "$label build failed: $(build_reason "$build_error")"
         fi
     fi
 }
