@@ -50,6 +50,10 @@ new_home() {
     TEST_HOME="$TEST_ROOT/home-$1"
     mkdir -p "$TEST_HOME/.cache/vault-secrets"
     chmod 700 "$TEST_HOME/.cache/vault-secrets"
+    # Off Darwin the helper resolves the Bitwarden data file under
+    # XDG_CONFIG_HOME, so pinning only HOME leaves it reading and rewriting the
+    # real user's config while the fixture asserts against its own sandbox.
+    export XDG_CONFIG_HOME="$TEST_HOME/.config"
     : > "$BW_FAKE_LOG"
 }
 
