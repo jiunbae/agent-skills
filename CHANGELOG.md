@@ -16,6 +16,31 @@ Nothing below has been tagged. The most recent `v*` tag is `v2026.08.22.1`
 tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
 
+### Fixed
+- `slack-skill`: the Database Security example in `SECURITY_BEST_PRACTICES.md`
+  set `rejectUnauthorized: false` on the production branch, so the document
+  whose job is to teach certificate discipline taught the opposite in the one
+  snippet a reader is most likely to copy. The production branch now verifies
+  against an explicit CA bundle and says why the old form is wrong.
+- `air-workbench`: `SKILL.md` advertised catalog/OpenAPI contract `1.1.0` while
+  the OpenAPI document, the schema const and `src/catalog.mjs` all said `1.2.0`.
+  Every existing assertion targeted the spec or the source, never the file a
+  user reads, so the drift survived a fully green gate. A new `air-spec` case
+  now pins `SKILL.md`, `README.md` and `src/catalog.mjs` to `info.version`.
+- `install.sh`, `install.ps1`, `cli/agent-skill`, `cli/claude-skill`: `.gitea`
+  is excluded from skill discovery. It was created by the CI move in `7792d6d`
+  and would otherwise have been walked as a skill group; the now-deleted
+  `.github` entry is kept so older checkouts behave unchanged.
+
+### Added
+- `hooks/stop-capture.sh` is registered in `hooks/hooks.json` on its `Stop`
+  event and listed in both READMEs. It had been tracked since `626021e` but
+  named nowhere, so `./install.sh --hooks` — which iterates the registry — could
+  not install it. Hook counts move from 2 to 3.
+- `air-workbench/agents/openai.yaml`, carrying
+  `allow_implicit_invocation: false` where the repository baseline puts
+  implicit-invocation policy.
+
 ## [2026.08.22.1] - 2026-08-22
 
 32 commits after `v2026.07.30.1` (2026-07-30). A repository-wide hardening pass
