@@ -135,10 +135,19 @@ const message = {
 ### 3. Database Security
 ```javascript
 // Use parameterized queries
+const fs = require('fs');
 const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  // In production, verify the server certificate against an explicit CA bundle.
+  // Never set `rejectUnauthorized: false` — it silently accepts any certificate
+  // and turns TLS into obfuscation rather than authentication.
+  ssl: process.env.NODE_ENV === 'production'
+    ? {
+        rejectUnauthorized: true,
+        ca: fs.readFileSync(process.env.DATABASE_CA_CERT_PATH, 'utf8')
+      }
+    : false
 });
 
 // ✅ GOOD - Parameterized query
