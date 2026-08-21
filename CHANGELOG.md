@@ -11,10 +11,56 @@ historical entry that predates the CalVer tags and is left as written.
 
 ## [Unreleased]
 
-Nothing below has been tagged. The most recent `v*` tag is `v2026.07.30.1`
-(2026-07-30) and every entry in this section landed after it. When the next `v*`
+Nothing below has been tagged. The most recent `v*` tag is `v2026.08.22.1`
+(2026-08-22) and every entry in this section landed after it. When the next `v*`
 tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
+
+## [2026.08.22.1] - 2026-08-22
+
+32 commits after `v2026.07.30.1` (2026-07-30). A repository-wide hardening pass
+over the skill scripts, a Korean writing standard that governs generation rather
+than only repair, and a move of CI from GitHub Actions to Gitea.
+
+### Added
+- `static/KOREAN.sample.md`: a generation-time Korean writing standard, resolved
+  by intent through a new `korean` type in `static-index` rather than by filename.
+- `korean-editor`: a `compression` rule category (`CP-01`–`CP-04`) for the
+  failure the rule set was blind to — drafts that drop particles, endings and
+  whole sentence parts. Every prior rule described a draft that sprawls, so on an
+  already-compressed draft the skill's only pressure was to compress it further.
+- `rpf`: progressive state shards, hardened recovery and evidence contracts, and
+  a runtime bundle pinned before phase zero.
+- A Claude Code Stop capture hook, and a prompt-logger that no longer blocks
+  submit.
+
+### Fixed
+- Security hardening across the skill scripts: ML helpers, integrations, and the
+  staged and history secret scans now fail closed; ASC and Kubernetes preparation
+  refuse unsafe input rather than proceeding.
+- `vault-secrets` was unusable on Linux. The helpers read ownership and mode as
+  `stat -f … || stat -c …`, which is not a portable fallback: to GNU stat `-f`
+  means "filesystem status", so the first call printed a filesystem block to
+  stdout before failing over and every comparison read that block plus the real
+  value. Ownership checks could never match, so the helpers refused for a reason
+  unrelated to the file being checked.
+- `air-workbench` accepted sparse JSON arrays: the codec walked arrays with
+  `forEach`, which skips holes, so a sparse slot passed validation silently.
+- `notion-summary` kept a declared three-step workflow instead of letting a
+  rewrite silently degrade its graph to an inferred one.
+- `iac-deploy-prep` reports why a kustomize render failed instead of printing a
+  bare "build failed" with the tool's error discarded.
+
+### Changed
+- CI moved from GitHub Actions to Gitea, with every job bounded by
+  `timeout-minutes`, permission-sensitive suites run unprivileged, and the
+  kustomize toolchain and YAML parser pinned rather than taken from the runner
+  image.
+- Release tags are gated on the exact tagged SHA: the tag workflow runs every
+  skill suite and the AIR source gate before publishing.
+- The `vault-secrets` and `triton-deploy` suites sandbox their environment, so
+  they no longer read the real user's config or find the runner's own tools where
+  the scenario requires them absent.
 
 ## [2026.07.30.1] - 2026-07-30
 
