@@ -135,6 +135,62 @@ class AnalyzeKoreanTests(unittest.TestCase):
         report = ANALYZE.analyze(sentence_initial, RULES)
         self.assertIn("CN-01", {finding["id"] for finding in report["findings"]})
 
+    def test_unfinished_sentence_endings_are_detected(self) -> None:
+        text = (
+            "이번 배포에서 응답 지연이 발생했다. 원인은 커넥션 풀 고갈로 추정.\n"
+            "우선 캐시를 비우고. 그다음 서버를 재시작한다."
+        )
+        report = ANALYZE.analyze(text, RULES)
+        finding = next(f for f in report["findings"] if f["id"] == "CP-01")
+        self.assertEqual([example["line"] for example in finding["examples"]], [1, 2])
+
+    def test_noun_endings_in_lists_and_headings_are_not_flagged(self) -> None:
+        text = (
+            "## 배포 완료.\n\n"
+            "- 추가 확인 필요.\n"
+            "- 롤백 절차 정리.\n"
+            "1. 마이그레이션 예정.\n"
+            "> 인용에서 검토 필요.\n"
+            "| 항목 | 상태 필요. |\n"
+        )
+        report = ANALYZE.analyze(text, RULES)
+        self.assertNotIn("CP-01", {finding["id"] for finding in report["findings"]})
+
+    def test_polite_endings_are_not_read_as_unfinished_sentences(self) -> None:
+        text = (
+            "어제 배포했어요. 오늘은 모니터링만 해요. 문제가 생기면 알려 주세요.\n"
+            "그건 캐시 문제예요. 재시작하면 돼요. 제가 다시 확인해 볼게요.\n"
+            "지금 배포해도 괜찮을까요. 회귀 테스트는 남았나요."
+        )
+        report = ANALYZE.analyze(text, RULES)
+        self.assertNotIn("CP-01", {finding["id"] for finding in report["findings"]})
+
+    def test_possessive_chain_signals_only_when_repeated(self) -> None:
+        once = "지출 비용 추론 용도의 토큰 카운트 함수의 오류를 확인했습니다."
+        self.assertNotIn("CP-02", {f["id"] for f in ANALYZE.analyze(once, RULES)["findings"]})
+
+        twice = once + "\n사본의 문구는 작업의 상황을 반영하지 못합니다."
+        self.assertIn("CP-02", {f["id"] for f in ANALYZE.analyze(twice, RULES)["findings"]})
+
+    def test_em_dash_and_figurative_verbs_are_detected(self) -> None:
+        text = (
+            "알림이 누락됐습니다 — 담당자가 확인하지 못했습니다.\n"
+            "캐시 정책은 유지합니다 — 변경 비용이 큽니다.\n"
+            "설정 값을 코드에 박아넣는 방식이라 환경마다 다시 배포했습니다."
+        )
+        ids = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertIn("CP-03", ids)
+        self.assertIn("CP-04", ids)
+
+    def test_compression_signals_skip_code_and_front_matter(self) -> None:
+        text = (
+            "---\ntitle: 원인은 커넥션 풀 고갈로 추정.\nnote: 캐시를 비우고.\n---\n\n"
+            "정상 문장입니다.\n\n"
+            "```python\n# 원인은 커넥션 풀 고갈로 추정.\n# 우선 캐시를 비우고.\nvalue = 1  # 코드에 박아넣는 값 — 임시\n```\n"
+        )
+        ids = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertFalse({"CP-01", "CP-03", "CP-04"} & ids, ids)
+
     def test_analyzer_rejects_invalid_rule_schema(self) -> None:
         invalid = copy.deepcopy(RULES)
         del invalid["rules"][0]["exceptions"]
