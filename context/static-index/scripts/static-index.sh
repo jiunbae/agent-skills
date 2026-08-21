@@ -15,6 +15,7 @@ services	SERVICES.md	서비스 컨테이너 포트 docker
 obsidian	OBSIDIAN.md	옵시디언 obsidian vault
 notion	NOTION	노션 notion 업로드 설정
 vault	VAULT.md	시크릿 비밀번호 API 키 credentials vault vaultwarden
+korean	KOREAN.md	한국어 출력 지침 한국어 문체 윤문 korean
 readme	README.md	리드미 설명서 가이드 readme
 persona	personas/	페르소나 persona reviewer 리뷰어
 EOF

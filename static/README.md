@@ -25,6 +25,7 @@ cp SECURITY.sample.md SECURITY.md
 cp OBSIDIAN.sample.md OBSIDIAN.md
 cp IAC.sample.md IAC.md
 cp CONTEXT.sample.md CONTEXT.md
+cp KOREAN.sample.md KOREAN.md
 
 # 이후 각 파일을 실제 정보로 수정
 ```
@@ -42,6 +43,7 @@ cp CONTEXT.sample.md CONTEXT.md
 | `VAULT.md` | `VAULT.sample.md` | Vaultwarden secrets 접근 가이드 | - |
 | `CONTEXT.md` | `CONTEXT.sample.md` | 프로젝트 컨텍스트 관리 표준 | context-manager |
 | `SERVICES.md` | `SERVICES.sample.md` | 서비스/컨테이너 중앙 관리 (포트, 상태) | service-manager |
+| `KOREAN.md` | `KOREAN.sample.md` | 한국어 출력 지침 (생성 시점 문체 기준) | korean-editor |
 | `STYLE.md` | - | 코딩 스타일 가이드 | 전역 |
 
 ## 파일 상세
@@ -148,3 +150,4 @@ cd ~/.agt
 - **static-index**: WHOAMI.md 생성/관리
 - **git-commit-pr**: SECURITY.md 참조
 - **context-manager**: 프로젝트 컨텍스트 로드 시 참조
+- **korean-editor**: KOREAN.md의 기준에 어긋난 한국어 초안을 퇴고
