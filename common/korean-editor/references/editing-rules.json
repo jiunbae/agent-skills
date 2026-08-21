@@ -2,9 +2,12 @@
   "metadata": {
     "title": "Korean editorial signals",
     "purpose": "Advisory cues for conservative Korean editing; never an AI-authorship classifier.",
-    "source_inspiration": "https://github.com/epoko77-ai/im-not-ai",
+    "source_inspiration": [
+      "https://github.com/epoko77-ai/im-not-ai",
+      "https://github.com/snflkd/fluent-korean"
+    ],
     "license": "MIT",
-    "version": 2
+    "version": 3
   },
   "categories": {
     "translationese": "번역투와 불필요한 피동",
@@ -12,7 +15,8 @@
     "hedging": "겹친 추측과 완곡 표현",
     "connective": "문두 접속어 반복",
     "verbosity": "중복 수식과 불필요한 명사화",
-    "formatting": "과한 시각 장식"
+    "formatting": "과한 시각 장식",
+    "compression": "생략과 압축으로 흐려진 의미"
   },
   "rules": [
     {
@@ -334,6 +338,46 @@
       "cue": "'**항목**:' 형태의 불릿이 반복돼 기계적으로 보일 수 있음",
       "guidance": "설명이 길면 문단으로 풀고, 짧으면 볼드 없이 항목만 남기는 것을 검토한다.",
       "exceptions": "용어 정의 목록이나 정형 템플릿에서는 유지한다."
+    },
+    {
+      "id": "CP-01",
+      "category": "compression",
+      "severity": "medium",
+      "pattern": "^(?![ \\t]*(?:[-*+>#|]|\\d+[.)]))[^\\n]{0,160}?(?:[가-힣](?<![다요까죠네군오지라자마음함됨임])|(?<![아어에예세게래워여이까나니가지리려고해돼봐와줘져쳐네군데든봬셔])요)\\.(?=[ \\t]|$)",
+      "minimum_occurrences": 2,
+      "cue": "본문 문장이 서술어 없이 명사구나 연결어미로 끝남",
+      "guidance": "서술어와 종결어미를 되살려 문장을 맺는다. 생략된 조사와 문장 성분은 원문에서 확인되는 범위에서만 복원하고 새 정보를 넣지 않는다.",
+      "exceptions": "제목, 목록, 표, 인용, 그리고 '~함·~음'으로 맺는 개조식 보고서처럼 명사형 종결이 장르 문체인 자리에서는 유지한다."
+    },
+    {
+      "id": "CP-02",
+      "category": "compression",
+      "severity": "low",
+      "pattern": "[가-힣]{2,}의\\s+(?:[가-힣]{1,6}\\s+){0,2}[가-힣]{2,}의\\s",
+      "minimum_occurrences": 2,
+      "cue": "관형격 '~의'가 이어지며 문장 성분과 의미 관계가 감춰짐",
+      "guidance": "'~의'로 묶인 명사 나열을 서술어와 조사로 풀어 무엇이 무엇에 대한 것인지 드러낸다.",
+      "exceptions": "고유명사, 정착된 전문 용어, 직함처럼 '~의'가 이름의 일부인 표현은 유지한다."
+    },
+    {
+      "id": "CP-03",
+      "category": "compression",
+      "severity": "low",
+      "pattern": "—",
+      "minimum_occurrences": 2,
+      "cue": "엠대시가 앞뒤 관계를 함축해 논리 관계가 흐려짐",
+      "guidance": "문맥에 맞게 쉼표, 콜론, 접속어, 문장 분리 가운데 하나로 바꿔 관계를 드러낸다.",
+      "exceptions": "인용 원문, 서지 정보, 대화 지문처럼 부호 자체가 형식인 자리에서는 유지한다."
+    },
+    {
+      "id": "CP-04",
+      "category": "compression",
+      "severity": "low",
+      "pattern": "(?:박아\\s?(?:넣|둔|두|둘)|얹어\\s?(?:놓|둔|두|둘)|치워\\s?(?:둔|두|둘)|걷어\\s?(?:내|낸)|털어\\s?(?:내|낸)|녹여\\s?(?:내|낸))",
+      "minimum_occurrences": 1,
+      "cue": "일반 어휘 자리에 비유나 구어 어휘가 쓰여 가리키는 동작이 불분명함",
+      "guidance": "가리키는 동작을 그대로 나타내는 일반 어휘로 바꾼다. 예를 들어 '코드에 박아넣다'는 '코드에 명시하다'로 적는다.",
+      "exceptions": "해당 분야에서 관용 표현으로 굳었거나 실제 물리적 동작을 가리키는 경우에는 유지한다."
     }
   ]
 }

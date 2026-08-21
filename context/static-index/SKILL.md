@@ -34,7 +34,7 @@ scripts/static-index.sh get notion
 ```
 
 Supported types are `whoami`, `security`, `context`, `iac`, `services`,
-`obsidian`, `notion`, `vault`, `readme`, and `persona`. The repository may
+`obsidian`, `notion`, `vault`, `korean`, `readme`, and `persona`. The repository may
 contain only a subset; `list` is the source of truth.
 
 ## Boundaries
