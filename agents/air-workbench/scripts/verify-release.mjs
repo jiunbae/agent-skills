@@ -54,7 +54,7 @@ const PRIVACY_TIME_MS = 5_000;
 const COMPONENT_TEST_INVENTORY = Object.freeze({
   "adapters.test.mjs": 31,
   "air-cli-server.test.mjs": 13,
-  "air-spec.test.mjs": 2,
+  "air-spec.test.mjs": 3,
   "air.test.mjs": 22,
   "catalog.test.mjs": 48,
   "cli.test.mjs": 18,

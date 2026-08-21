@@ -218,3 +218,52 @@ test("AIR normative text freezes domains, carriers, sessions, and legacy boundar
   }
   assert.doesNotMatch(spec, /awir/i);
 });
+
+// The catalog contract version is asserted in three places that a reader never
+// sees — the OpenAPI document, the JSON Schema const, and src/catalog.mjs — so
+// SKILL.md advertised `1.1.0` through a fully green gate. The user-facing Skill
+// is part of the published contract; pin it here so it cannot drift again.
+test("the user-facing Skill advertises the same catalog contract as the code", async () => {
+  const openapi = JSON.parse(
+    await readFile(join(SCHEMAS, "air.openapi.json"), "utf8"),
+  );
+  const version = openapi.info.version;
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+
+  const skill = await readFile(join(ROOT, "SKILL.md"), "utf8");
+  const readme = await readFile(join(ROOT, "README.md"), "utf8");
+  const catalogSource = await readFile(join(ROOT, "src", "catalog.mjs"), "utf8");
+
+  const advertised = `The local catalog/OpenAPI contract is version \`${version}\``;
+  assert.ok(
+    skill.includes(advertised),
+    `SKILL.md must advertise catalog contract ${version}`,
+  );
+  assert.ok(
+    readme.includes(advertised),
+    `README.md must advertise catalog contract ${version}`,
+  );
+  assert.ok(
+    catalogSource.includes(`version: "${version}"`),
+    `src/catalog.mjs must emit catalog contract ${version}`,
+  );
+
+  // No stale version string may survive anywhere in the advertised prose.
+  for (const [name, text] of [
+    ["SKILL.md", skill],
+    ["README.md", readme],
+  ]) {
+    const stale = text.match(/catalog\/OpenAPI contract is version `([^`]+)`/g) ?? [];
+    for (const occurrence of stale) {
+      assert.ok(
+        occurrence.includes(version),
+        `${name} still advertises a stale catalog contract: ${occurrence}`,
+      );
+    }
+  }
+
+  // `relative_path` is display-only. The Skill must say so, because the Skill
+  // is what a reader consults before deciding whether it is an input surface.
+  assert.match(skill, /display-only\s*\n?`relative_path`|`relative_path` label/);
+  assert.ok(skill.includes("never accepted as input"));
+});

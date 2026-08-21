@@ -45,8 +45,13 @@ workspace. Use the Resources filter, **Quick Open** (`Command/Ctrl+P`), and
 manual **Refresh resources** as needed. Never accept a browser-supplied path,
 root, glob, URL, or output destination.
 
-The local catalog/OpenAPI contract is version `1.1.0`; AIR artifacts and
-`/air/v1` remain unchanged. Skill content edits rotate opaque IDs. Use only an
+The local catalog/OpenAPI contract is version `1.2.0`; AIR artifacts and
+`/air/v1` remain unchanged. A catalog Skill may carry a display-only
+`relative_path` label, relative to the root that observed it, so a Skill can be
+found by the directory a reader knows it by even when its frontmatter name
+differs; it is never absolute, never escapes that root, is omitted when it
+cannot be formed, and is never accepted as input. Skill content edits rotate
+opaque IDs. Use only an
 explicit `replaces_id` produced by a complete, mutually unique server-private
 same-source relation to offer Keep/Cancel/Reload. It covers only the
 immediately preceding successful generation and is not a route alias. Omit it
