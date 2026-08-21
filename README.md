@@ -294,6 +294,7 @@ Event-driven automation for Claude Code.
 |------|-------|-------------|
 | `english-coach` | `UserPromptSubmit` | Rewrites prompts in natural English with vocabulary |
 | `prompt-logger` | `UserPromptSubmit` | Logs prompts to MinIO for analytics |
+| `stop-capture` | `Stop` | Captures each completed response into omp in the background |
 
 ---
 
@@ -641,6 +642,6 @@ some skills are adapted from.
 ---
 
 <p align="center">
-  <sub><strong>31</strong> skills | <strong>20</strong> personas | <strong>2</strong> hooks</sub><br>
+  <sub><strong>31</strong> skills | <strong>20</strong> personas | <strong>3</strong> hooks</sub><br>
   <sub>CLI tool: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>

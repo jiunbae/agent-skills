@@ -12,5 +12,12 @@
     "event": "UserPromptSubmit",
     "type": "command",
     "statusMessage": "Logging prompt..."
+  },
+  "stop-capture": {
+    "description": "Captures each completed response into omp in the background (non-blocking)",
+    "script": "stop-capture.sh",
+    "event": "Stop",
+    "type": "command",
+    "statusMessage": "Capturing response..."
   }
 }

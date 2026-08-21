@@ -43,7 +43,7 @@ class Colors:
 
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
-EXCLUDE_DIRS = {"static", "cli", ".git", ".github", ".agents", "node_modules", "__pycache__"}
+EXCLUDE_DIRS = {"static", "cli", ".git", ".github", ".gitea", ".agents", "node_modules", "__pycache__"}
 
 
 def get_skills_dir() -> Path:

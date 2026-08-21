@@ -52,7 +52,7 @@ REMOTE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/remote.sh"
 [[ -f "$REMOTE_LIB" ]] && source "$REMOTE_LIB"
 
 # 제외 디렉토리
-EXCLUDE_DIRS=("static" "cli" "codex-support" "personas" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" "codex-support" "personas" ".git" ".github" ".gitea" ".agents" "node_modules" "__pycache__")
 
 # 로그 함수
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }

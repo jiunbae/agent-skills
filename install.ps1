@@ -54,7 +54,7 @@ $CoreSkills = @(
     'agents/rpf'
 )
 $Targets = @()
-$ExcludeDirs = @('static', 'cli', 'codex-support', 'hooks', 'personas', '.git', '.github', '.agents', 'node_modules', '__pycache__')
+$ExcludeDirs = @('static', 'cli', 'codex-support', 'hooks', 'personas', '.git', '.github', '.gitea', '.agents', 'node_modules', '__pycache__')
 
 function Normalize-Path {
     param([string]$Path)

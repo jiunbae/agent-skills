@@ -55,7 +55,7 @@ PERSONAS_SOURCE="${SCRIPT_DIR}/personas"
 PERSONAS_TARGET="${AGT_USER_HOME}/.agents/personas"
 
 # 제외 디렉토리 (스킬 그룹으로 인식하지 않음)
-EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" "personas" ".git" ".github" ".agents" "node_modules" "__pycache__")
+EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" "personas" ".git" ".github" ".gitea" ".agents" "node_modules" "__pycache__")
 
 # Core 스킬 (기본 전역 설치, 워크스페이스 공통 필수)
 CORE_SKILLS=(

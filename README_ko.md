@@ -275,6 +275,7 @@ Claude Code 이벤트 기반 자동화.
 |----|--------|------|
 | `english-coach` | `UserPromptSubmit` | 프롬프트를 자연스러운 영어로 재작성 + 어휘 학습 |
 | `prompt-logger` | `UserPromptSubmit` | MinIO로 프롬프트 로깅 (분석용) |
+| `stop-capture` | `Stop` | 완료된 응답을 백그라운드에서 omp로 수집 |
 
 ---
 
@@ -352,6 +353,6 @@ MIT License. 일부 스킬이 어떤 제3자 작업에서 파생됐는지도 함
 ---
 
 <p align="center">
-  <sub><strong>31</strong> 스킬 | <strong>20</strong> 페르소나 | <strong>2</strong> 훅</sub><br>
+  <sub><strong>31</strong> 스킬 | <strong>20</strong> 페르소나 | <strong>3</strong> 훅</sub><br>
   <sub>CLI 도구: <a href="https://github.com/open330/agt">open330/agt</a></sub>
 </p>
