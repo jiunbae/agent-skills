@@ -30,6 +30,48 @@ cp KOREAN.sample.md KOREAN.md
 # 이후 각 파일을 실제 정보로 수정
 ```
 
+## Frontmatter (SessionStart digest)
+
+`agents-index.sh digest` 가 SessionStart 훅에서 이 디렉토리의 `*.md` frontmatter 를
+읽어 "어떤 파일이 있고 언제 읽어야 하는지" 요약을 세션에 주입합니다. frontmatter 가
+없으면 그 파일은 요약에 **나타나지 않습니다**.
+
+```yaml
+---
+access: cli
+triggers: ["시크릿", "토큰", "credentials"]
+---
+```
+
+| `access` | 결과 |
+|---|---|
+| `cli` / `mcp` / `curl+env` | 상단 active 목록에 표시 (`env: [FOO]` 를 함께 쓰면 `$FOO` 로 렌더) |
+| `doc` + `triggers` 있음 | 하단 reference 목록에 표시 |
+| `doc` + `triggers` 없음 | **조용히 제외됨** |
+| `none` | 제외 |
+| (frontmatter 자체가 없음) | `doc` + triggers 없음으로 취급 → **조용히 제외됨** |
+
+마지막 두 줄이 함정입니다. 경고가 없으므로 digest 가 빈 출력을 내도 훅이 정상 동작하는
+것처럼 보입니다. 실제로 2026-08-22 까지 이 디렉토리의 18개 파일 전부가 frontmatter 없이
+있었고, digest 는 매 세션 0바이트를 반환하면서 아무 신호도 내지 않았습니다.
+
+**sample 파일을 복사한 뒤에는 frontmatter 를 직접 추가하세요.** sample 자체는
+frontmatter 를 넣지 않습니다 — 넣으면 실제 파일과 중복으로 요약에 잡힙니다.
+
+현재 쓰이는 값:
+
+```yaml
+VAULT.md     access: cli   triggers: ["시크릿", "토큰", "비밀번호", "credentials", "vault"]
+IAC.md       access: doc   triggers: ["IaC", "배포", "terraform", "kubernetes", "helm"]
+SERVICES.md  access: doc   triggers: ["서비스", "인프라", "엔드포인트", "도메인", "포트"]
+SECURITY.md  access: doc   triggers: ["보안", "커밋 금지", "민감정보", "secret scan"]
+CONTEXT.md   access: doc   triggers: ["프로젝트 컨텍스트", ".context", "문서화 표준", "인수인계"]
+KOREAN.md    access: doc   triggers: ["한국어", "윤문", "문체", "번역투"]
+NOTION.md    access: doc   triggers: ["notion", "노션", "페이지 업로드"]
+OBSIDIAN.md  access: doc   triggers: ["obsidian", "옵시디언", "노트", "볼트"]
+README.md    access: none
+```
+
 ## 파일 목록
 
 | 파일 | Sample | 용도 | 관리 스킬 |
@@ -136,6 +178,9 @@ cd ~/.agt
 
 # 3. 스킬 설치
 ./install.sh
+
+# 4. sample 을 복사한 실제 파일에 frontmatter 추가
+#    (빠뜨리면 SessionStart digest 가 조용히 빈 출력을 냅니다 — 위 Frontmatter 절 참고)
 ```
 
 ## 주의사항
