@@ -102,14 +102,16 @@ cmd_convert() {
         esac
     done
 
-    # ffmpeg 옵션 구성
-    local opts="-hide_banner -y"
-    [[ -n "$sample_rate" ]] && opts="$opts -ar $sample_rate"
-    [[ -n "$channels" ]] && opts="$opts -ac $channels"
+    # ffmpeg 출력 옵션 구성
+    # -ar/-ac/-c:a 는 출력 옵션이므로 반드시 -i 뒤에 와야 한다.
+    # -i 앞에 두면 입력 디코딩 옵션으로 해석되어 변환이 조용히 무시된다.
+    local out_opts=""
+    [[ -n "$sample_rate" ]] && out_opts="$out_opts -ar $sample_rate"
+    [[ -n "$channels" ]] && out_opts="$out_opts -ac $channels"
 
     # PCM 출력 시 코덱 지정
     if [[ "$output" == *.wav ]]; then
-        opts="$opts -c:a pcm_s16le"
+        out_opts="$out_opts -c:a pcm_s16le"
     fi
 
     # 원본 정보
@@ -120,7 +122,7 @@ cmd_convert() {
     local orig_ch_str=$([[ "$orig_ch" == "1" ]] && echo "mono" || echo "stereo")
 
     echo "Converting: $input -> $output"
-    ffmpeg $opts -i "$input" "$output" 2>/dev/null
+    ffmpeg -hide_banner -y -i "$input" $out_opts "$output" 2>/dev/null
 
     # 결과 정보
     local new_info=$(ffprobe -v quiet -print_format json -show_format -show_streams "$output" 2>/dev/null)
@@ -231,10 +233,11 @@ cmd_batch() {
 
     mkdir -p "$outdir"
 
-    local opts="-hide_banner -y"
-    [[ -n "$sample_rate" ]] && opts="$opts -ar $sample_rate"
-    [[ -n "$channels" ]] && opts="$opts -ac $channels"
-    [[ "$format" == "wav" ]] && opts="$opts -c:a pcm_s16le"
+    # -ar/-ac/-c:a 는 출력 옵션이므로 반드시 -i 뒤에 와야 한다.
+    local out_opts=""
+    [[ -n "$sample_rate" ]] && out_opts="$out_opts -ar $sample_rate"
+    [[ -n "$channels" ]] && out_opts="$out_opts -ac $channels"
+    [[ "$format" == "wav" ]] && out_opts="$out_opts -c:a pcm_s16le"
 
     local total=0
     local success=0
@@ -247,7 +250,7 @@ cmd_batch() {
         local output="$outdir/${basename}.$format"
 
         echo -n "Processing: $(basename "$file")... "
-        if ffmpeg $opts -i "$file" "$output" 2>/dev/null; then
+        if ffmpeg -hide_banner -y -i "$file" $out_opts "$output" 2>/dev/null; then
             echo -e "${GREEN}OK${NC}"
             success=$((success + 1))
         else
