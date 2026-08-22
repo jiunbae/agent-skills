@@ -43,9 +43,15 @@ Claude는 이 스크립트를 Bash 도구로 직접 실행합니다.
 
 ## Prerequisites
 
+스크립트는 `ffmpeg`, `ffprobe`, `jq`, `bc` 를 사용한다. 넷 중 하나라도 없으면
+작업을 시작하기 전에 이름을 밝히며 멈춘다.
+
 ```bash
-# ffmpeg 설치 확인
+# 의존 명령 확인 (ffprobe 는 ffmpeg 패키지에 포함된다)
 ffmpeg -version
+ffprobe -version
+jq --version
+bc --version
 
 # 스크립트 실행 권한
 chmod +x /path/to/agt/ml/audio-processor/scripts/audio-process.sh
@@ -65,18 +71,22 @@ chmod +x /path/to/agt/ml/audio-processor/scripts/audio-process.sh
 # 스크립트 경로
 SCRIPT=./scripts/audio-process.sh
 
-# 포맷 변환
-$SCRIPT convert <input> <output> [--sr <rate>] [--mono|--stereo]
+# 포맷 변환 (출력 포맷은 <output> 확장자로 결정된다)
+$SCRIPT convert <input> <output> [--sr <rate>] [--mono|--stereo] [--overwrite]
 
 # 세그먼트 분할
-$SCRIPT segment <input> <output_dir> --duration <sec>
+$SCRIPT segment <input> <output_dir> [--duration <sec>|--timestamps <t1,t2,...>] [--overwrite]
 
 # 배치 변환
-$SCRIPT batch <input_dir> <output_dir> --format <fmt> [--sr <rate>] [--mono]
+$SCRIPT batch <input_dir> <output_dir> [--format <fmt>] [--sr <rate>] [--mono|--stereo] [--overwrite]
 
 # 파일 정보 조회
 $SCRIPT info <file>
 ```
+
+각 명령은 자기 옵션만 받는다. 모르는 옵션은 조용히 버려지지 않고 오류로 멈추므로,
+`--mono` 를 `--mno` 로 잘못 쓰면 변환이 안 된 채 성공으로 보고되는 일이 없다.
+기존 파일은 기본적으로 덮어쓰지 않는다: `--overwrite` 를 붙여야 덮어쓴다.
 
 **Step 3**: 결과 보고
 - 스크립트 출력을 사용자에게 전달
@@ -146,11 +156,11 @@ $ audio-process.sh segment long_audio.wav segments/ --duration 10
 
 ✅ 분할 완료
 - 입력: long_audio.wav (2:30)
-- 출력: 15개 세그먼트
-  - segments/seg_000.wav (10s)
-  - segments/seg_001.wav (10s)
+- 출력: 15개 세그먼트 (입력 파일 이름 + _000 부터)
+  - segments/long_audio_000.wav (10s)
+  - segments/long_audio_001.wav (10s)
   ...
-  - segments/seg_014.wav (10s)
+  - segments/long_audio_014.wav (10s)
 ```
 
 ### 예시 4: 배치 처리
@@ -177,13 +187,18 @@ $ audio-process.sh batch recordings/ converted/ --format wav --sr 16000 --mono
 스크립트 상단에서 기본값 수정 가능:
 
 ```bash
-DEFAULT_SAMPLE_RATE=16000
-DEFAULT_CHANNELS=1  # mono
-DEFAULT_FORMAT="wav"
-DEFAULT_SEGMENT_DURATION=10
+DEFAULT_FORMAT="wav"          # batch --format 미지정 시
+DEFAULT_SEGMENT_DURATION=10   # segment --duration 미지정 시
 ```
 
+샘플레이트와 채널에는 기본값이 없다. `--sr`/`--mono`/`--stereo` 를 주지 않으면
+`convert` 와 `batch` 는 원본 값을 그대로 유지한다.
+
 ### 출력 포맷별 권장 설정
+
+아래 표는 참고용 권장값이다. 스크립트가 자동으로 넣는 코덱 옵션은 wav 출력의
+`-c:a pcm_s16le` 뿐이고, 나머지 포맷은 ffmpeg 기본 코덱과 기본 비트레이트를
+사용한다. 아래 비트레이트가 필요하면 ffmpeg 를 직접 호출해야 한다.
 
 | 포맷 | 코덱 | 품질 옵션 |
 |------|------|-----------|
@@ -233,9 +248,14 @@ sudo apt install libopus-dev
 
 ### 메모리 부족 (대용량 파일)
 
+전용 스트리밍 모드는 없다. 먼저 세그먼트로 나눈 뒤 조각별로 변환한다.
+
 ```bash
-# 스트리밍 모드 사용
-audio-process.sh convert large.wav output.wav --streaming
+# 1) 60초 단위로 분할 (재인코딩 없이 -c copy 로 잘라내므로 메모리를 거의 쓰지 않는다)
+audio-process.sh segment large.wav chunks/ --duration 60
+
+# 2) 조각별 변환
+audio-process.sh batch chunks/ converted/ --format wav --sr 16000 --mono
 ```
 
 ---
@@ -245,3 +265,4 @@ audio-process.sh convert large.wav output.wav --streaming
 | 파일 | 설명 |
 |------|------|
 | `scripts/audio-process.sh` | 오디오 처리 통합 스크립트 |
+| `tests/test-audio-process.sh` | 옵션 처리/종료 코드/덮어쓰기 방지 회귀 테스트 (ffmpeg 불필요) |
