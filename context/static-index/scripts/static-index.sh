@@ -46,6 +46,26 @@ resolve_file_type() {
     printf '%s\n' "$fallback"
 }
 
+# Choose one match deterministically: shallowest path first, then lexicographic.
+# `find -print -quit` returns whatever the filesystem happens to yield first, so a
+# nested shadow copy such as `$AGENTS_DIR/prev/WHOAMI.md` could win over the
+# canonical `$AGENTS_DIR/WHOAMI.md`.  Depth is the ordering that expresses the
+# real preference: the canonical file lives at the root of the context directory.
+pick_canonical() {
+    local best="" best_depth=-1 candidate slashes depth
+    while IFS= read -r -d '' candidate; do
+        slashes=${candidate//[!\/]/}
+        depth=${#slashes}
+        if (( best_depth < 0 )) || (( depth < best_depth )) ||
+           { (( depth == best_depth )) && [[ "$candidate" < "$best" ]]; }; then
+            best=$candidate
+            best_depth=$depth
+        fi
+    done
+    [[ -n "$best" ]] && printf '%s\n' "$best"
+    return 0
+}
+
 find_by_pattern() {
     local pattern="$1"
     local ext match
@@ -53,25 +73,36 @@ find_by_pattern() {
     if [[ "$pattern" == */ ]]; then
         find -L "$AGENTS_DIR/$pattern" \
             \( -name '*.yaml' -o -name '*.yml' -o -name '*.md' \) \
-            -type f -print -quit 2>/dev/null || true
+            -type f -print0 2>/dev/null | pick_canonical || true
         return 0
     fi
 
     if [[ "$pattern" == *.* ]]; then
+        if [[ -f "$AGENTS_DIR/$pattern" ]]; then
+            printf '%s\n' "$AGENTS_DIR/$pattern"
+            return 0
+        fi
         find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
-            -name "$pattern" -type f -print -quit 2>/dev/null || true
+            -name "$pattern" -type f -print0 2>/dev/null | pick_canonical || true
         return 0
     fi
 
     for ext in yaml yml md; do
+        if [[ -f "$AGENTS_DIR/$pattern.$ext" ]]; then
+            printf '%s\n' "$AGENTS_DIR/$pattern.$ext"
+            return 0
+        fi
+    done
+
+    for ext in yaml yml md; do
         match=$(find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
-            -name "$pattern.$ext" -type f -print -quit 2>/dev/null || true)
+            -name "$pattern.$ext" -type f -print0 2>/dev/null | pick_canonical || true)
         [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
     done
 
     for ext in yaml yml md; do
         match=$(find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
-            -name "*$pattern*.$ext" ! -name '*.sample.*' -type f -print -quit 2>/dev/null || true)
+            -name "*$pattern*.$ext" ! -name '*.sample.*' -type f -print0 2>/dev/null | pick_canonical || true)
         [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
     done
 
