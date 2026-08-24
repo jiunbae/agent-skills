@@ -184,6 +184,18 @@ pick_canonical() {
     return 0
 }
 
+# Print "$1" only when it is a regular file whose real location is outside the
+# excluded skills tree; print nothing otherwise.  `find_by_pattern`'s direct-hit
+# branches answer from a path they build themselves rather than from a `find`
+# pipeline, and `[[ -f ]]` stats *through* a symlink, so without this they
+# served `$AGENTS_DIR/SECURITY.md -> skills/x/SKILL.md` while `list` denied it.
+# Containment stays defined in exactly one place -- `exclude_skills_tree` --
+# so every surface answers from the same rule and fails closed the same way.
+contained_direct_hit() {
+    [[ -f "$1" ]] || return 0
+    printf '%s\0' "$1" | exclude_skills_tree | pick_canonical
+}
+
 find_by_pattern() {
     local pattern="$1"
     local ext match
@@ -196,10 +208,8 @@ find_by_pattern() {
     fi
 
     if [[ "$pattern" == *.* ]]; then
-        if [[ -f "$AGENTS_DIR/$pattern" ]]; then
-            printf '%s\n' "$AGENTS_DIR/$pattern"
-            return 0
-        fi
+        match=$(contained_direct_hit "$AGENTS_DIR/$pattern")
+        [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
         find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
             -name "$pattern" -type f -print0 2>/dev/null |
             exclude_skills_tree | pick_canonical || true
@@ -207,10 +217,8 @@ find_by_pattern() {
     fi
 
     for ext in yaml yml md; do
-        if [[ -f "$AGENTS_DIR/$pattern.$ext" ]]; then
-            printf '%s\n' "$AGENTS_DIR/$pattern.$ext"
-            return 0
-        fi
+        match=$(contained_direct_hit "$AGENTS_DIR/$pattern.$ext")
+        [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
     done
 
     for ext in yaml yml md; do

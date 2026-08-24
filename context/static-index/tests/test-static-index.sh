@@ -389,5 +389,98 @@ else
         "rc=$RC out='$OUT'"
 fi
 
+# --- 19. `get` refuses a direct-hit symlink into the skills tree -----------
+# `find_by_pattern`'s two direct-hit branches short-circuit before any pipeline
+# that applies containment, and `[[ -f ]]` stats *through* the link.  So a
+# planted `$AGENTS_DIR/SECURITY.md -> skills/x/SKILL.md` was served by `get`
+# even while `list` correctly denied it: the same byte, two different answers.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x"
+printf 'secret skill body\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# profile\n' > "$CASE_DIR/WHOAMI.md"
+ln -s "$CASE_DIR/skills/x/SKILL.md" "$CASE_DIR/SECURITY.md"
+
+run_sut "$CASE_DIR" get security
+if [[ $RC -ne 0 && "$OUT" != *"SECURITY.md"* ]]; then
+    ok "get refuses a direct-hit symlink into the skills tree"
+else
+    nope "get refuses a direct-hit symlink into the skills tree" \
+        "rc=$RC out='$OUT'"
+fi
+
+# --- 20. the keyword branch of `search` refuses it too ---------------------
+# `search` resolves a matching type through the same `find_by_pattern`, so the
+# bypass surfaced under the type label rather than the content fallback.  Cases
+# 15 to 18 all assert through `list` or the content fallback and miss this.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x"
+printf 'secret skill body\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# profile\n' > "$CASE_DIR/WHOAMI.md"
+ln -s "$CASE_DIR/skills/x/SKILL.md" "$CASE_DIR/SECURITY.md"
+
+run_sut "$CASE_DIR" search "보안 규칙"
+if [[ $RC -ne 0 && "$OUT" != *"SECURITY.md"* && "$OUT" == *"No matches found"* ]]; then
+    ok "the keyword branch of search refuses a direct-hit symlink"
+else
+    nope "the keyword branch of search refuses a direct-hit symlink" \
+        "rc=$RC out='$OUT'"
+fi
+
+# --- 21. the extension-probing direct hit is contained as well -------------
+# A pattern without a dot takes a *different* direct-hit branch: it probes
+# `$AGENTS_DIR/$pattern.{yaml,yml,md}` in turn.  Containment has to reach that
+# branch too, not only the one that matches a dotted filename.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x"
+printf 'secret skill body\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# profile\n' > "$CASE_DIR/WHOAMI.md"
+ln -s "$CASE_DIR/skills/x/SKILL.md" "$CASE_DIR/NOTION.md"
+
+run_sut "$CASE_DIR" get notion
+if [[ $RC -ne 0 && "$OUT" != *"NOTION.md"* ]]; then
+    ok "the extension-probing direct hit is contained as well"
+else
+    nope "the extension-probing direct hit is contained as well" \
+        "rc=$RC out='$OUT'"
+fi
+
+# --- 22. an ordinary direct hit is still served ----------------------------
+# The over-correction guard for cases 19 to 21.  Containment must cost nothing
+# when the candidate is an ordinary file and a skills tree exists beside it.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x"
+printf 'skill\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# rules\n' > "$CASE_DIR/SECURITY.md"
+
+run_sut "$CASE_DIR" get security
+if [[ $RC -eq 0 && "$OUT" == "$CASE_DIR/SECURITY.md" ]]; then
+    ok "an ordinary direct hit is still served"
+else
+    nope "an ordinary direct hit is still served" "rc=$RC out='$OUT'"
+fi
+
+# --- 23. a refused direct hit still falls through to a legitimate file -----
+# Refusing the planted root link must not blind `get` to a real file deeper in
+# the tree.  `list` would show that file, so `get` has to agree with it rather
+# than report the type missing.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x" "$CASE_DIR/nested"
+printf 'skill\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# real rules\n' > "$CASE_DIR/nested/SECURITY.md"
+ln -s "$CASE_DIR/skills/x/SKILL.md" "$CASE_DIR/SECURITY.md"
+
+run_sut "$CASE_DIR" get security
+if [[ $RC -eq 0 && "$OUT" == "$CASE_DIR/nested/SECURITY.md" ]]; then
+    ok "a refused direct hit still falls through to a legitimate file"
+else
+    nope "a refused direct hit still falls through to a legitimate file" \
+        "rc=$RC out='$OUT'"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

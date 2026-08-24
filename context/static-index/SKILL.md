@@ -43,11 +43,14 @@ contain only a subset; `list` is the source of truth.
 
 ## Boundaries
 
-- `~/.agents/skills` is Codex's user skill directory, not static context. The
-  helper excludes it by each candidate's own real location, so neither a
-  directory symlink nor a file symlink pointing into that tree reintroduces it
-  under another name. A candidate whose real location cannot be resolved is
-  dropped rather than published.
+- `~/.agents/skills` is Codex's user skill directory, not static context. Every
+  candidate that `list`, `refresh`, `search`, or `get` would return is excluded
+  by its own real location, so neither a directory symlink nor a file symlink
+  nor a symlink chain pointing into that tree reintroduces it under another
+  name. A candidate whose real location cannot be resolved is dropped rather
+  than published. Refusing a candidate never hides a legitimate file of the same
+  name deeper in the tree: `get` and `search` fall through to it, so they agree
+  with `list` instead of reporting the type missing.
 - When several files share a name, the shallowest path wins and ties break
   lexicographically, so a nested backup copy is never served in place of the
   live root file.
