@@ -20,6 +20,8 @@ import React, {
 } from "react";
 import { createRoot } from "react-dom/client";
 
+import { nextFlowReadiness } from "./flow-readiness.mjs";
+
 const NODE_WIDTH = 236;
 const NODE_HEIGHT = 104;
 const LAYER_GAP = 120;
@@ -185,7 +187,7 @@ function GraphCanvas({
   }, [domainNodes, layout, readOnly, selectedNodeId]);
 
   const [flowNodes, setFlowNodes] = useState(projectNodes);
-  const [flowReady, setFlowReady] = useState(false);
+  const [flowState, setFlowState] = useState("loading");
 
   useEffect(() => {
     if (resetLayoutEpoch !== resetLayoutRef.current) {
@@ -206,18 +208,29 @@ function GraphCanvas({
   });
 
   useEffect(() => {
-    setFlowReady(false);
+    setFlowState("loading");
     let frame = 0;
-    let attempts = 0;
+    let elapsedFrames = 0;
+    let carried = { observedEdges: 0, stalledFrames: 0 };
     const expectedEdges = domainEdges.length;
     const check = () => {
       const mountedEdges =
         canvasRef.current?.querySelectorAll(".react-flow__edge").length ?? 0;
-      if (mountedEdges >= expectedEdges || attempts >= 30) {
-        setFlowReady(true);
+      const next = nextFlowReadiness({
+        elapsedFrames,
+        expectedEdges,
+        mountedEdges,
+        observedEdges: carried.observedEdges,
+        stalledFrames: carried.stalledFrames,
+      });
+      // `ready` and `incomplete` are different facts: the graph settled, or the
+      // poll gave up before it did. Publish whichever actually happened.
+      if (next.state !== "polling") {
+        setFlowState(next.state);
         return;
       }
-      attempts += 1;
+      carried = next;
+      elapsedFrames += 1;
       frame = requestAnimationFrame(check);
     };
     frame = requestAnimationFrame(check);
@@ -364,7 +377,11 @@ function GraphCanvas({
   return (
     <ReactFlow
       aria-label="Workflow graph"
-      className={flowReady ? "air-flow-ready" : "air-flow-loading"}
+      className={
+        flowState === "loading"
+          ? "air-flow-loading"
+          : `air-flow-settled air-flow-${flowState}`
+      }
       deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
       edges={flowEdges}
       edgesReconnectable={!readOnly}

@@ -38,6 +38,22 @@ const BACKGROUND_IMPLEMENTER = resolve(
   REPOSITORY_ROOT,
   "agents/background-implementer/SKILL.md",
 );
+
+// RPF-246. `air-flow-ready` means the expected edges actually mounted; a canvas
+// that gave up before that publishes `air-flow-incomplete` instead. Both carry
+// `air-flow-settled`, so waiting on settlement still terminates inside the
+// canvas's own bounded poll and a canvas that never finished drawing fails
+// here with a specific message instead of hanging until the suite times out.
+async function waitForFlowReady(target) {
+  await target
+    .locator(".react-flow.air-flow-settled")
+    .waitFor({ state: "visible" });
+  assert.equal(
+    await target.locator(".react-flow.air-flow-incomplete").count(),
+    0,
+    "The graph canvas gave up before its expected edges mounted.",
+  );
+}
 const SKILL_A = "skill_AAAAAAAAAAAAAAAAAAAAAA";
 const SKILL_B = "skill_BBBBBBBBBBBBBBBBBBBBBB";
 const SKILL_C = "skill_EEEEEEEEEEEEEEEEEEEEEE";
@@ -523,7 +539,7 @@ async function runPass(browser, executablePath, pass) {
       `http://127.0.0.1:${address.port}/?token=${encodeURIComponent(studio.token)}`,
       { waitUntil: "domcontentloaded" },
     );
-    await page.locator(".react-flow.air-flow-ready").waitFor({ state: "visible" });
+    await waitForFlowReady(page);
     assert.equal(await page.locator(".react-flow__node").count(), 5);
     assert.equal(await page.locator(".react-flow__edge").count(), 4);
     assert.equal(await page.locator(".resource-row", {
@@ -1161,8 +1177,7 @@ test("AIR Workbench reviews checked native AIR plan and trace profiles with carr
       }&initial=explicit`,
       { waitUntil: "domcontentloaded" },
     );
-    await page.locator(".react-flow.air-flow-ready")
-      .waitFor({ state: "visible" });
+    await waitForFlowReady(page);
     return { page, studio };
   }
 
@@ -1593,8 +1608,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
         }&initial=explicit`,
         { waitUntil: "domcontentloaded" },
       );
-      await explicitPage.locator(".react-flow.air-flow-ready")
-        .waitFor({ state: "visible" });
+      await waitForFlowReady(explicitPage);
       assert.equal(await explicitPage.locator(".react-flow__node").count(), 2);
       await explicitPage.waitForFunction(
         () => document.querySelector("#resourceStatus")?.textContent
@@ -1708,8 +1722,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
         }&initial=explicit`,
         { waitUntil: "domcontentloaded" },
       );
-      await mixedPage.locator(".react-flow.air-flow-ready")
-        .waitFor({ state: "visible" });
+      await waitForFlowReady(mixedPage);
       assert.equal(await mixedPage.locator(".react-flow__node").count(), 1);
       const carrierPath = await downloadAndValidate(
         mixedPage,
@@ -1773,8 +1786,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
         }&initial=explicit`,
         { waitUntil: "domcontentloaded" },
       );
-      await pseudoFencePage.locator(".react-flow.air-flow-ready")
-        .waitFor({ state: "visible" });
+      await waitForFlowReady(pseudoFencePage);
       assert.equal(
         await pseudoFencePage.locator("#downloadMarkdown").isEnabled(),
         true,
@@ -1809,8 +1821,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
       await retainedCatalogPage.goto(baseUrl, {
         waitUntil: "domcontentloaded",
       });
-      await retainedCatalogPage.locator(".react-flow.air-flow-ready")
-        .waitFor({ state: "visible" });
+      await waitForFlowReady(retainedCatalogPage);
       const visibleSkillRows = () => retainedCatalogPage.locator(
         '.resource-tree .resource-row[data-resource-key^="skill:"]',
       );
@@ -1972,8 +1983,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     const refreshFirstPage = await context.newPage();
     try {
       await refreshFirstPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
-      await refreshFirstPage.locator(".react-flow.air-flow-ready")
-        .waitFor({ state: "visible" });
+      await waitForFlowReady(refreshFirstPage);
       const refreshFirstRow = (id) => refreshFirstPage.locator(
         `.resource-row[data-resource-key="skill:${id}"]`,
       );
@@ -2220,8 +2230,7 @@ test("AIR Workbench discovery failures terminate and retry", async (t) => {
     const stalePage = await context.newPage();
     try {
       await stalePage.goto(baseUrl, { waitUntil: "domcontentloaded" });
-      await stalePage.locator(".react-flow.air-flow-ready")
-        .waitFor({ state: "visible" });
+      await waitForFlowReady(stalePage);
       const skillRow = (id) => stalePage.locator(
         `.resource-row[data-resource-key="skill:${id}"]`,
       );
@@ -2641,7 +2650,7 @@ test("AIR Workbench resource roving model remains bounded at 1,000 rows", async 
       `http://127.0.0.1:${address.port}/?token=${encodeURIComponent(studio.token)}`,
       { waitUntil: "domcontentloaded" },
     );
-    await page.locator(".react-flow.air-flow-ready").waitFor({ state: "visible" });
+    await waitForFlowReady(page);
     const rows = page.locator(".resource-tree .resource-row");
     assert.equal(await rows.count(), 1_000);
     assert.equal(
@@ -2790,7 +2799,7 @@ test("AIR Workbench shows on screen whether a step was read or guessed at", asyn
       }&initial=explicit`,
       { waitUntil: "domcontentloaded" },
     );
-    await page.locator(".react-flow.air-flow-ready").waitFor({ state: "visible" });
+    await waitForFlowReady(page);
     assert.equal(await page.locator(".react-flow__node").count(), 3);
 
     await page.locator(".react-flow__node").first().click();
@@ -2860,8 +2869,7 @@ test("AIR Workbench shows on screen whether a step was read or guessed at", asyn
         }&initial=explicit`,
         { waitUntil: "domcontentloaded" },
       );
-      await declaredPage.locator(".react-flow.air-flow-ready")
-        .waitFor({ state: "visible" });
+      await waitForFlowReady(declaredPage);
       assert.equal(await declaredPage.locator(".react-flow__node").count(), 2);
       await declaredPage.locator(".react-flow__node").first().click();
       await declaredPage.locator("#nodeAssertion").waitFor({ state: "visible" });
@@ -2949,7 +2957,7 @@ test("AIR Workbench finds a Skill by the directory label the catalog discloses",
       }`,
       { waitUntil: "domcontentloaded" },
     );
-    await page.locator(".react-flow.air-flow-ready").waitFor({ state: "visible" });
+    await waitForFlowReady(page);
     const workspaceRows = page.locator("#workspaceSkillList .resource-row");
     await page.waitForFunction(
       () => document.querySelectorAll("#workspaceSkillList .resource-row")
