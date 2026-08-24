@@ -44,8 +44,10 @@ contain only a subset; `list` is the source of truth.
 ## Boundaries
 
 - `~/.agents/skills` is Codex's user skill directory, not static context. The
-  helper excludes it by real location, so a symlink pointing into that tree does
-  not reintroduce it under another name.
+  helper excludes it by each candidate's own real location, so neither a
+  directory symlink nor a file symlink pointing into that tree reintroduces it
+  under another name. A candidate whose real location cannot be resolved is
+  dropped rather than published.
 - When several files share a name, the shallowest path wins and ties break
   lexicographically, so a nested backup copy is never served in place of the
   live root file.

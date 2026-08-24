@@ -313,5 +313,81 @@ else
         "type_rc=$type_rc content_rc=$content_rc"
 fi
 
+# --- 15. a *file* symlink into the skills tree is not indexed --------------
+# `exclude_skills_tree` resolved only `${file%/*}`, so containment was decided
+# by where the name sat rather than where the bytes lived.  A directory symlink
+# was caught (case 1) but `$AGENTS_DIR/leak.md -> $AGENTS_DIR/skills/x/SKILL.md`
+# resolved to `$AGENTS_DIR` and was published.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x"
+printf 'secret skill body marker-zzz\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# profile\n' > "$CASE_DIR/WHOAMI.md"
+ln -s "$CASE_DIR/skills/x/SKILL.md" "$CASE_DIR/leak.md"
+
+run_sut "$CASE_DIR" list
+if [[ $RC -eq 0 && "$OUT" != *"leak.md"* && "$OUT" == *"WHOAMI.md"* ]]; then
+    ok "list drops a file symlinked into the excluded skills tree"
+else
+    nope "list drops a file symlinked into the excluded skills tree" \
+        "rc=$RC out='$OUT'"
+fi
+
+# --- 16. the search content fallback cannot read that file either ----------
+# `search` greps the same inventory, so the escaped body was searchable even
+# when the caller never learned the path from `list`.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x"
+printf 'secret skill body marker-zzz\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# profile\n' > "$CASE_DIR/WHOAMI.md"
+ln -s "$CASE_DIR/skills/x/SKILL.md" "$CASE_DIR/leak.md"
+
+run_sut "$CASE_DIR" search "marker-zzz"
+if [[ "$OUT" != *"leak.md"* && "$OUT" == *"No matches found"* ]]; then
+    ok "search does not grep a file symlinked into the skills tree"
+else
+    nope "search does not grep a file symlinked into the skills tree" \
+        "rc=$RC out='$OUT'"
+fi
+
+# --- 17. a symlink chain into the skills tree is followed to the end -------
+# One hop is not the interesting case: the resolver has to keep going until it
+# reaches a real file, or a two-link indirection reintroduces the tree.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x"
+printf 'secret skill body\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# profile\n' > "$CASE_DIR/WHOAMI.md"
+ln -s "$CASE_DIR/skills/x/SKILL.md" "$CASE_DIR/hop.md"
+ln -s "$CASE_DIR/hop.md" "$CASE_DIR/leak.md"
+
+run_sut "$CASE_DIR" list
+if [[ $RC -eq 0 && "$OUT" != *"leak.md"* && "$OUT" != *"hop.md"* \
+      && "$OUT" == *"WHOAMI.md"* ]]; then
+    ok "list follows a symlink chain before deciding containment"
+else
+    nope "list follows a symlink chain before deciding containment" \
+        "rc=$RC out='$OUT'"
+fi
+
+# --- 18. a symlink that leaves the skills tree alone is still indexed ------
+# The over-correction guard for cases 15 to 17: containment is aimed at the
+# skills tree only, and it must still hold when a skills tree exists.
+
+new_case
+mkdir -p "$CASE_DIR/skills/x" "$CASE_DIR/dotfiles"
+printf 'skill\n' > "$CASE_DIR/skills/x/SKILL.md"
+printf '# real profile\n' > "$CASE_DIR/dotfiles/WHOAMI.md"
+ln -s "$CASE_DIR/dotfiles/WHOAMI.md" "$CASE_DIR/WHOAMI.md"
+
+run_sut "$CASE_DIR" list
+if [[ $RC -eq 0 && "$OUT" == *"WHOAMI.md"* && "$OUT" != *"SKILL.md"* ]]; then
+    ok "a symlink to a file outside the skills tree is still indexed"
+else
+    nope "a symlink to a file outside the skills tree is still indexed" \
+        "rc=$RC out='$OUT'"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

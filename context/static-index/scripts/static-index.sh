@@ -33,19 +33,59 @@ skills_root_physical() {
     ( cd -P -- "$AGENTS_DIR/skills" 2>/dev/null && pwd -P ) || return 1
 }
 
+# Report the directory that *physically* holds "$1", following a symlink chain
+# on the final component first.  `${file%/*}` only names the directory the
+# candidate was reached through, so a plain file symlink such as
+# `$AGENTS_DIR/leak.md -> $AGENTS_DIR/skills/x/SKILL.md` used to resolve to
+# `$AGENTS_DIR` and walk straight past the exclusion.  Returns nonzero and
+# prints nothing when the real location cannot be determined.
+physical_holder() {
+    local target="$1" depth=0 link dir
+    while [[ -L "$target" ]]; do
+        depth=$((depth + 1))
+        [[ "$depth" -le 64 ]] || return 1
+        link=$(readlink -- "$target") || return 1
+        if [[ "$link" == /* ]]; then
+            target=$link
+        else
+            dir=${target%/*}
+            [[ "$dir" != "$target" ]] || dir=.
+            [[ -n "$dir" ]] || dir=/
+            target="$dir/$link"
+        fi
+    done
+    dir=${target%/*}
+    [[ "$dir" != "$target" ]] || dir=.
+    [[ -n "$dir" ]] || dir=/
+    ( cd -P -- "$dir" 2>/dev/null && pwd -P ) || return 1
+}
+
 exclude_skills_tree() {
-    local skills="" file dir last_dir="" last_phys=""
+    local skills="" file phys dir last_dir="" last_phys=""
     skills=$(skills_root_physical) || skills=""
     while IFS= read -r -d '' file; do
         if [[ -n "$skills" ]]; then
-            dir=${file%/*}
-            [[ -n "$dir" ]] || dir=/
-            if [[ "$dir" != "$last_dir" ]]; then
-                last_dir=$dir
-                last_phys=$( cd -P -- "$dir" 2>/dev/null && pwd -P ) || last_phys=""
+            if [[ -L "$file" ]]; then
+                # Each symlinked candidate is resolved on its own: two links in
+                # one directory can name completely different targets, so the
+                # per-directory cache below cannot answer for them.
+                phys=$(physical_holder "$file") || phys=""
+            else
+                dir=${file%/*}
+                [[ "$dir" != "$file" ]] || dir=.
+                [[ -n "$dir" ]] || dir=/
+                if [[ "$dir" != "$last_dir" ]]; then
+                    last_dir=$dir
+                    last_phys=$( cd -P -- "$dir" 2>/dev/null && pwd -P ) || last_phys=""
+                fi
+                phys=$last_phys
             fi
-            if [[ -n "$last_phys" ]] &&
-               [[ "$last_phys" == "$skills" || "$last_phys" == "$skills"/* ]]; then
+            # Fail closed.  An unresolvable location used to be treated as
+            # "definitely not in the skills tree", which is exactly backwards:
+            # the one case where containment cannot be checked is the case
+            # where publishing the file is unsafe.
+            [[ -n "$phys" ]] || continue
+            if [[ "$phys" == "$skills" || "$phys" == "$skills"/* ]]; then
                 continue
             fi
         fi
