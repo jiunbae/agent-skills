@@ -21,11 +21,59 @@ persona	personas/	페르소나 persona reviewer 리뷰어
 EOF
 }
 
-context_files() {
-    find -L "$AGENTS_DIR" \
-        -path "$AGENTS_DIR/skills" -prune -o \
-        \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \) \
-        -type f -print0 2>/dev/null
+# `find -L` follows symlinks on purpose: a context file may legitimately be a
+# symlink into a dotfiles checkout.  The cost is that `-path
+# "$AGENTS_DIR/skills" -prune` only prunes the *literal* path, so a symlink such
+# as `$AGENTS_DIR/codex -> $AGENTS_DIR/skills` is walked under its own name and
+# republishes the whole excluded Codex skill tree as static context.  Resolve
+# each candidate's real location and drop anything that actually lives inside
+# the skills tree, whatever name it was reached by.
+skills_root_physical() {
+    [[ -d "$AGENTS_DIR/skills" ]] || return 1
+    ( cd -P -- "$AGENTS_DIR/skills" 2>/dev/null && pwd -P ) || return 1
+}
+
+exclude_skills_tree() {
+    local skills="" file dir last_dir="" last_phys=""
+    skills=$(skills_root_physical) || skills=""
+    while IFS= read -r -d '' file; do
+        if [[ -n "$skills" ]]; then
+            dir=${file%/*}
+            [[ -n "$dir" ]] || dir=/
+            if [[ "$dir" != "$last_dir" ]]; then
+                last_dir=$dir
+                last_phys=$( cd -P -- "$dir" 2>/dev/null && pwd -P ) || last_phys=""
+            fi
+            if [[ -n "$last_phys" ]] &&
+               [[ "$last_phys" == "$skills" || "$last_phys" == "$skills"/* ]]; then
+                continue
+            fi
+        fi
+        printf '%s\0' "$file"
+    done
+}
+
+# Collect the context inventory into CONTEXT_FILES, failing closed when the
+# directory walk itself fails.  A walk that errored used to be indistinguishable
+# from a directory that legitimately holds no context files, so `refresh` wrote
+# an empty index over a good one and still reported success.
+CONTEXT_FILES=()
+collect_context_files() {
+    CONTEXT_FILES=()
+    local tmp file
+    tmp=$(mktemp "${TMPDIR:-/tmp}/static-index-walk.XXXXXX") || return 1
+    if ! find -L "$AGENTS_DIR" \
+            -path "$AGENTS_DIR/skills" -prune -o \
+            \( -name '*.md' -o -name '*.yml' -o -name '*.yaml' \) \
+            -type f -print0 > "$tmp" 2>/dev/null; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    while IFS= read -r -d '' file; do
+        CONTEXT_FILES[${#CONTEXT_FILES[@]}]=$file
+    done < <(exclude_skills_tree < "$tmp")
+    rm -f -- "$tmp"
+    return 0
 }
 
 resolve_file_type() {
@@ -46,23 +94,53 @@ resolve_file_type() {
     printf '%s\n' "$fallback"
 }
 
-# Choose one match deterministically: shallowest path first, then lexicographic.
-# `find -print -quit` returns whatever the filesystem happens to yield first, so a
-# nested shadow copy such as `$AGENTS_DIR/prev/WHOAMI.md` could win over the
-# canonical `$AGENTS_DIR/WHOAMI.md`.  Depth is the ordering that expresses the
-# real preference: the canonical file lives at the root of the context directory.
-pick_canonical() {
-    local best="" best_depth=-1 candidate slashes depth
+# Canonical order: shallowest path first, then lexicographic.  The canonical
+# file lives at the root of the context directory, so depth expresses the real
+# preference and a nested shadow copy can never win.
+path_precedes() {
+    local a="$1" b="$2" sa sb
+    sa=${a//[!\/]/}
+    sb=${b//[!\/]/}
+    (( ${#sa} < ${#sb} )) && return 0
+    (( ${#sa} > ${#sb} )) && return 1
+    [[ "$a" < "$b" ]]
+}
+
+# Emit at most `limit` paths from a NUL-delimited stream in canonical order.
+# Selection runs in the shell rather than through `sort` because the stream is
+# NUL-delimited and a path may legally contain a newline, which a line-oriented
+# sort would split.
+pick_canonical_n() {
+    local limit="${1:-1}" candidate i best emitted=0
+    local -a paths taken
+    paths=()
+    taken=()
     while IFS= read -r -d '' candidate; do
-        slashes=${candidate//[!\/]/}
-        depth=${#slashes}
-        if (( best_depth < 0 )) || (( depth < best_depth )) ||
-           { (( depth == best_depth )) && [[ "$candidate" < "$best" ]]; }; then
-            best=$candidate
-            best_depth=$depth
-        fi
+        paths[${#paths[@]}]=$candidate
+        taken[${#taken[@]}]=0
     done
-    [[ -n "$best" ]] && printf '%s\n' "$best"
+    while (( emitted < limit )); do
+        best=-1
+        for (( i = 0; i < ${#paths[@]}; i++ )); do
+            (( taken[i] )) && continue
+            if (( best < 0 )) || path_precedes "${paths[i]}" "${paths[best]}"; then
+                best=$i
+            fi
+        done
+        (( best < 0 )) && break
+        taken[best]=1
+        printf '%s\0' "${paths[best]}"
+        emitted=$(( emitted + 1 ))
+    done
+    return 0
+}
+
+pick_canonical() {
+    local best=""
+    while IFS= read -r -d '' best; do
+        printf '%s\n' "$best"
+        return 0
+    done < <(pick_canonical_n 1)
     return 0
 }
 
@@ -73,7 +151,7 @@ find_by_pattern() {
     if [[ "$pattern" == */ ]]; then
         find -L "$AGENTS_DIR/$pattern" \
             \( -name '*.yaml' -o -name '*.yml' -o -name '*.md' \) \
-            -type f -print0 2>/dev/null | pick_canonical || true
+            -type f -print0 2>/dev/null | exclude_skills_tree | pick_canonical || true
         return 0
     fi
 
@@ -83,7 +161,8 @@ find_by_pattern() {
             return 0
         fi
         find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
-            -name "$pattern" -type f -print0 2>/dev/null | pick_canonical || true
+            -name "$pattern" -type f -print0 2>/dev/null |
+            exclude_skills_tree | pick_canonical || true
         return 0
     fi
 
@@ -96,13 +175,15 @@ find_by_pattern() {
 
     for ext in yaml yml md; do
         match=$(find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
-            -name "$pattern.$ext" -type f -print0 2>/dev/null | pick_canonical || true)
+            -name "$pattern.$ext" -type f -print0 2>/dev/null |
+            exclude_skills_tree | pick_canonical || true)
         [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
     done
 
     for ext in yaml yml md; do
         match=$(find -L "$AGENTS_DIR" -path "$AGENTS_DIR/skills" -prune -o \
-            -name "*$pattern*.$ext" ! -name '*.sample.*' -type f -print0 2>/dev/null | pick_canonical || true)
+            -name "*$pattern*.$ext" ! -name '*.sample.*' -type f -print0 2>/dev/null |
+            exclude_skills_tree | pick_canonical || true)
         [[ -n "$match" ]] && printf '%s\n' "$match" && return 0
     done
 
@@ -117,12 +198,45 @@ file_modified() {
     stat -L -f%m "$1" 2>/dev/null || stat -Lc%Y "$1" 2>/dev/null || stat -c%Y "$1" 2>/dev/null || printf '0\n'
 }
 
+# A JSON number position must never receive an empty or non-numeric value: one
+# failed `stat` would otherwise emit a bare `,` and invalidate the document.
+numeric_or_zero() {
+    case "${1-}" in
+        '' | *[!0-9]*) printf '0' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+# The inventory stream is NUL-delimited, so a newline or tab inside a filename
+# reaches this function intact.  Escaping only `\` and `"` would emit a raw
+# control character inside a JSON string, which every parser rejects.
 json_escape() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+    local s="${1-}" i c esc
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\r'/\\r}
+    s=${s//$'\t'/\\t}
+    s=${s//$'\b'/\\b}
+    s=${s//$'\f'/\\f}
+    for i in 1 2 3 4 5 6 7 11 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+        c=$(printf "\\$(printf '%03o' "$i")")
+        case "$s" in
+            *"$c"*)
+                esc=$(printf '\\u%04x' "$i")
+                s=${s//"$c"/$esc}
+                ;;
+        esac
+    done
+    printf '%s' "$s"
 }
 
 build_index() {
     [[ -d "$AGENTS_DIR" ]] || { printf 'Directory not found: %s\n' "$AGENTS_DIR" >&2; return 1; }
+    collect_context_files || {
+        printf 'Could not enumerate context files under: %s\n' "$AGENTS_DIR" >&2
+        return 1
+    }
 
     printf '{\n'
     printf '  "updated": "%s",\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -130,39 +244,55 @@ build_index() {
     printf '  "files": ['
 
     local first=true file filename relpath size modified file_type
-    while IFS= read -r -d '' file; do
-        filename=$(basename "$file")
+    for file in ${CONTEXT_FILES[@]+"${CONTEXT_FILES[@]}"}; do
+        filename=$(basename -- "$file")
         relpath=${file#"$AGENTS_DIR"/}
-        size=$(file_size "$file")
-        modified=$(file_modified "$file")
+        size=$(numeric_or_zero "$(file_size "$file")")
+        modified=$(numeric_or_zero "$(file_modified "$file")")
         file_type=$(resolve_file_type "$filename" "$relpath")
 
         [[ "$first" == true ]] || printf ','
         first=false
         printf '\n    {"path": "%s", "type": "%s", "size": %s, "modified": %s}' \
             "$(json_escape "$relpath")" "$file_type" "$size" "$modified"
-    done < <(context_files)
+    done
 
     printf '\n  ]\n}\n'
 }
 
 list_files() {
     [[ -d "$AGENTS_DIR" ]] || { printf 'Directory not found: `%s`\n' "$AGENTS_DIR"; return 1; }
+    collect_context_files || {
+        printf 'Could not enumerate context files under: `%s`\n' "$AGENTS_DIR" >&2
+        return 1
+    }
 
     printf '## Static Files Index\n\n'
     printf '| File | Type | Size | Path |\n'
     printf '|------|------|------|------|\n'
 
     local file filename relpath size file_type
-    while IFS= read -r -d '' file; do
-        filename=$(basename "$file")
+    for file in ${CONTEXT_FILES[@]+"${CONTEXT_FILES[@]}"}; do
+        filename=$(basename -- "$file")
         relpath=${file#"$AGENTS_DIR"/}
-        size=$(file_size "$file")
+        size=$(numeric_or_zero "$(file_size "$file")")
         file_type=$(resolve_file_type "$filename" "$relpath" other)
         printf '| `%s` | %s | %sB | `%s` |\n' "$filename" "$file_type" "$size" "$relpath"
-    done < <(context_files)
+    done
 
     printf '\n**Base Path**: `%s`\n' "$AGENTS_DIR"
+}
+
+# Order the content fallback the same way the type branch is ordered, so a
+# nested shadow copy is never printed ahead of the canonical root file and can
+# never crowd it out of the match window.  `grep -F` keeps the user's words a
+# literal string rather than a basic regular expression.
+content_matches() {
+    local query="$1" file
+    for file in ${CONTEXT_FILES[@]+"${CONTEXT_FILES[@]}"}; do
+        grep -qiF -- "$query" "$file" 2>/dev/null || continue
+        printf '%s\0' "$file"
+    done
 }
 
 search_files() {
@@ -184,13 +314,15 @@ search_files() {
     done < <(type_records)
 
     if [[ "$found" == false ]]; then
+        collect_context_files || {
+            printf 'Could not enumerate context files under: `%s`\n' "$AGENTS_DIR" >&2
+            return 1
+        }
         local file matches=0
         while IFS= read -r -d '' file; do
-            grep -qi -- "$query" "$file" 2>/dev/null || continue
             printf -- '- content: `%s`\n' "$file"
-            matches=$((matches + 1))
-            [[ "$matches" -ge 3 ]] && break
-        done < <(context_files)
+            matches=$(( matches + 1 ))
+        done < <(content_matches "$query" | pick_canonical_n 3)
         [[ "$matches" -gt 0 ]] && found=true
     fi
 
@@ -217,8 +349,30 @@ get_file() {
     return 1
 }
 
+# Build into a sibling temporary file and rename it into place.  The previous
+# form redirected straight onto the index, which truncated the only good copy
+# before the build had produced a single byte.
 refresh_index() {
-    build_index > "$INDEX_FILE"
+    [[ -d "$AGENTS_DIR" ]] || { printf 'Directory not found: %s\n' "$AGENTS_DIR" >&2; return 1; }
+
+    local tmp
+    tmp=$(mktemp "$AGENTS_DIR/.index.json.XXXXXX") || {
+        printf 'Could not create a temporary index beside: %s\n' "$INDEX_FILE" >&2
+        return 1
+    }
+
+    if ! build_index > "$tmp"; then
+        rm -f -- "$tmp"
+        printf 'Index build failed; %s left unchanged\n' "$INDEX_FILE" >&2
+        return 1
+    fi
+
+    if ! mv -f -- "$tmp" "$INDEX_FILE"; then
+        rm -f -- "$tmp"
+        printf 'Could not replace: %s\n' "$INDEX_FILE" >&2
+        return 1
+    fi
+
     printf 'Index saved to: %s\n' "$INDEX_FILE"
 }
 

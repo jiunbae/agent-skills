@@ -23,7 +23,8 @@ task needs. Never assume a listed type exists; verify it first.
 # Discover the actual files currently present. Installed skills are excluded.
 scripts/static-index.sh list
 
-# Search paths by user intent.
+# Search paths by user intent. The query is matched as a literal string, both
+# against the type keywords and, when none match, against file contents.
 scripts/static-index.sh search "보안 규칙"
 scripts/static-index.sh search "IaC 배포"
 
@@ -40,13 +41,22 @@ contain only a subset; `list` is the source of truth.
 ## Boundaries
 
 - `~/.agents/skills` is Codex's user skill directory, not static context. The
-  helper excludes it.
+  helper excludes it by real location, so a symlink pointing into that tree does
+  not reintroduce it under another name.
+- When several files share a name, the shallowest path wins and ties break
+  lexicographically, so a nested backup copy is never served in place of the
+  live root file.
 - Do not create missing files unless the user asks to configure that context.
 - Do not expose secret values from Vault, Notion, or other integration files in
   summaries.
 - Do not refresh `.index.json` unless a persistent index was requested; normal
   `list`, `search`, and `get` operations are read-only.
+- `refresh` builds into a sibling temporary file and renames it into place, and
+  fails without touching the existing index when the directory walk fails. An
+  empty `files` array therefore means the directory really is empty.
 
 ## Resource
 
 - `scripts/static-index.sh`: Bash 3.2-compatible context discovery helper.
+- `tests/test-static-index.sh`: hermetic behavioural tests. Each case builds its
+  own throwaway `AGENTS_DIR`, so the suite never touches `~/.agents`.
