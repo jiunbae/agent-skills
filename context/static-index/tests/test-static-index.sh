@@ -289,5 +289,35 @@ else
         "rc=$RC out='$OUT'"
 fi
 
+# --- 13. a search that matched nothing reports failure ---------------------
+# `get` already fails for a missing type. `search` printed "No matches found"
+# and exited 0, so a caller gating on exit status could not tell an empty
+# result from a hit.
+
+new_case
+printf '# profile\n' > "$CASE_DIR/WHOAMI.md"
+run_sut "$CASE_DIR" search "nothing here matches this string"
+if [[ $RC -ne 0 && "$OUT" == *"No matches found"* ]]; then
+    ok "a search that matched nothing reports failure"
+else
+    nope "a search that matched nothing reports failure" "rc=$RC out='$OUT'"
+fi
+
+# --- 14. a search that matched still reports success -----------------------
+# The over-correction guard for case 13.
+
+new_case
+printf '# rules\n' > "$CASE_DIR/SECURITY.md"
+run_sut "$CASE_DIR" search "보안 규칙"
+type_rc=$RC
+run_sut "$CASE_DIR" search "rules"
+content_rc=$RC
+if [[ $type_rc -eq 0 && $content_rc -eq 0 ]]; then
+    ok "a search that matched still reports success"
+else
+    nope "a search that matched still reports success" \
+        "type_rc=$type_rc content_rc=$content_rc"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

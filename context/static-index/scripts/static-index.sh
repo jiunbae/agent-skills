@@ -326,7 +326,13 @@ search_files() {
         [[ "$matches" -gt 0 ]] && found=true
     fi
 
-    [[ "$found" == true ]] || printf 'No matches found for: "%s"\n' "$query"
+    # A search that found nothing must not report success: a caller gating on
+    # exit status cannot otherwise tell "no such context" from "here it is".
+    [[ "$found" == true ]] || {
+        printf 'No matches found for: "%s"\n' "$query"
+        return 1
+    }
+    return 0
 }
 
 get_file() {

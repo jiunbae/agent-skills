@@ -28,6 +28,9 @@ scripts/static-index.sh list
 scripts/static-index.sh search "보안 규칙"
 scripts/static-index.sh search "IaC 배포"
 
+# A search that matches nothing also returns non-zero, so exit status alone
+# distinguishes "no such context" from a hit.
+
 # Resolve one known type. A missing optional file returns non-zero.
 scripts/static-index.sh get security
 scripts/static-index.sh get iac
