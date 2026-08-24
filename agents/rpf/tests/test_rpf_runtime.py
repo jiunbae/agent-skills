@@ -3983,5 +3983,78 @@ class RpfRuntimeContractTest(unittest.TestCase):
             ]
             self.assertEqual(1, len(retained))
             self.assertEqual(current + marker, retained[0].read_bytes())
+
+
+class RpfUiMarkerScopeTest(unittest.TestCase):
+    """`router` and `navigate` must name UI code, not any prose containing them.
+
+    As bare substrings they claimed six unverifiable UI obligations for a
+    Markdown table documenting a CLI subcommand named `navigate`, and twelve
+    more for a `router_commands()` helper registering CLI verbs. Neither file
+    renders anything, so the obligations could never be discharged.
+    """
+
+    REAL_UI_USAGES = (
+        b'router.push("/a")',
+        b'const r = useRouter()',
+        b'const r = use_router()',
+        b'createRouter({})',
+        b'<router-link to="/a"/>',
+        b'<RouterView/>',
+        b'this.router.navigate(["/a"])',
+        b'navigate("/home")',
+        b'const n = useNavigate()',
+        b'navigateTo("/a")',
+    )
+
+    NON_UI_MENTIONS = (
+        b'| `navigate` | `nav` | Load a URL and report the final page |',
+        b'npm run pw -- navigate https://example.com --wait networkidle',
+        b'# Flags handled by the router itself rather than by a command.',
+        b'def router_commands() -> dict[str, str]:\n    return {}\n',
+        b'See the navigation guide for how to navigate the archive.',
+    )
+
+    def test_router_and_navigate_usage_is_still_a_ui_surface(self) -> None:
+        for source in self.REAL_UI_USAGES:
+            with self.subTest(source=source):
+                mapping = runtime.derive_ui_mapping({"view.ts": source})
+                self.assertEqual(len(runtime.UI_KINDS), len(mapping))
+
+    def test_router_and_navigate_prose_is_not_a_ui_surface(self) -> None:
+        for source in self.NON_UI_MENTIONS:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    {}, dict(runtime.derive_ui_mapping({"doc.md": source}))
+                )
+
+    def test_unambiguous_markup_still_wins_regardless_of_suffix(self) -> None:
+        """Narrowing two words must not narrow the markup markers."""
+        for source in (
+            b'<div aria-label="x"/>',
+            b'<button onclick="go()">go</button>',
+            b'@media (max-width: 40em) { .a { overflow: auto } }',
+            b'<meta name="viewport" content="width=device-width">',
+            b'def view(): return render_template("a.html")',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    len(runtime.UI_KINDS),
+                    len(runtime.derive_ui_mapping({"page.md": source})),
+                )
+
+    def test_the_repository_ui_surface_is_still_detected(self) -> None:
+        """The guard against narrowing coverage to make a gap count fall."""
+        canvas = "agents/air-workbench/ui/graph-canvas.jsx"
+        mapping = runtime.derive_ui_mapping(
+            {canvas: (REPO_ROOT / canvas).read_bytes()}
+        )
+        self.assertGreaterEqual(len(mapping), 6 * len(runtime.UI_KINDS))
+        fixture = runtime.derive_ui_mapping(
+            {UI_SOURCE_PATH: (REPO_ROOT / UI_SOURCE_PATH).read_bytes()}
+        )
+        self.assertEqual(2 * len(runtime.UI_KINDS), len(fixture))
+
+
 if __name__ == "__main__":
     unittest.main()

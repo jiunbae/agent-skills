@@ -5353,7 +5353,29 @@ def derive_game_topology(source_bytes: Mapping[str, bytes]) -> Mapping[str, Mapp
     return topology
 
 
+# `router` and `navigate` are ordinary English words. As bare substrings they
+# matched a Markdown table documenting a CLI subcommand named `navigate`, and a
+# `router_commands()` helper that registers CLI verbs -- neither of which is a
+# rendered surface, and each of which then claimed six unverifiable UI
+# obligations. Require the shapes these words take when they really do drive a
+# view: a call, a member access, a hook, a factory, or a router element.
+_UI_USAGE_MARKERS = re.compile(
+    rb"\brouter\s*[.(\[]"
+    rb"|\buse_?router\b"
+    rb"|\bcreate_?router\b"
+    rb"|<router\b"
+    rb"|\brouter-?(?:link|view|outlet|module)\b"
+    rb"|\bnavigate\s*[(:]"
+    rb"|\.navigate\b"
+    rb"|\buse_?navigate\b"
+    rb"|\bnavigate_?to\b"
+)
+
+
 def derive_ui_mapping(source_bytes: Mapping[str, bytes]) -> Mapping[str, str]:
+    # Unambiguous markup, DOM and CSS markers: any file carrying one of these
+    # is a UI surface whatever its suffix, so an HTML fragment embedded in a
+    # document is still detected.
     ui_markers = (
         b"<div",
         b"<button",
@@ -5365,8 +5387,6 @@ def derive_ui_mapping(source_bytes: Mapping[str, bytes]) -> Mapping[str, str]:
         b"sharescreen",
         b"viewport",
         b"@media",
-        b"router",
-        b"navigate",
         b"render_",
     )
     surface_pattern = re.compile(
@@ -5377,7 +5397,9 @@ def derive_ui_mapping(source_bytes: Mapping[str, bytes]) -> Mapping[str, str]:
     mapping: dict[str, str] = {}
     for path in sorted(source_bytes, key=lambda value: value.encode("utf-8")):
         lowered = source_bytes[path].lower()
-        if not any(marker in lowered for marker in ui_markers):
+        if not any(marker in lowered for marker in ui_markers) and not (
+            _UI_USAGE_MARKERS.search(lowered)
+        ):
             continue
         surfaces = [
             (line_number, match.start(), match.group(0))
