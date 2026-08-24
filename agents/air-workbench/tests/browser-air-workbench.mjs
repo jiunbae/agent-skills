@@ -775,6 +775,15 @@ async function runPass(browser, executablePath, pass) {
     await page.waitForFunction(
       () => document.querySelectorAll(".evidence-row").length === 3,
     );
+    // The evidence list and the canvas settle on independent paths, and the
+    // canvas marks itself ready after a bounded number of frames whether or not
+    // its edges rendered, so neither signal alone proves the graph is drawn.
+    // Wait for the exact counts: a wrong settle still fails here rather than
+    // racing the assertions below.
+    await page.waitForFunction(
+      () => document.querySelectorAll(".react-flow__node").length === 3 &&
+        document.querySelectorAll(".react-flow__edge").length === 2,
+    );
     assert.equal(await page.locator(".react-flow__node").count(), 3);
     assert.equal(await page.locator(".react-flow__edge").count(), 2);
     assert.match(
