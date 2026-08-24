@@ -5,32 +5,78 @@ description: Provides Playwright-based browser automation and E2E testing. Suppo
 
 # Playwright Browser Automation
 
-E2E testing, screenshots, and web scraping.
+This skill ships its own CLI, `pw`, for E2E testing, screenshots and web
+scraping. Prefer it over hand-written scripts: it opens and closes the browser
+for you and returns a single result line or JSON.
 
 ## Quick Start
 
+The package lives in this skill directory. Install once, then run commands
+through `npm run pw`:
+
 ```bash
-# Install
-npm init playwright@latest
+# From this skill directory
+npm install
+npx playwright install chromium   # download the browser binary
 
-# Run tests
-npx playwright test
-
-# Debug mode
-npx playwright test --debug
+# Run a command (note the `--` before the command)
+npm run pw -- screenshot https://example.com --output /tmp/example.png
 ```
 
-## Common Patterns
+`npm run pw` uses `tsx`, so no build step is required. To run the compiled
+entry point instead:
+
+```bash
+npm run build
+node dist/bin/pw.js screenshot https://example.com
+```
+
+## Commands
+
+| Command | Alias | Purpose |
+|---------|-------|---------|
+| `navigate` | `nav` | Load a URL and report the final page |
+| `screenshot` | `ss` | Capture a page to a file |
+| `click` | - | Click an element |
+| `type` | - | Type text into an element |
+| `scrape` | - | Extract text from matching elements |
+| `eval` | - | Evaluate JavaScript in the page |
+
+```bash
+npm run pw -- navigate https://example.com --wait networkidle
+npm run pw -- screenshot https://example.com --output /tmp/example.png --full-page
+npm run pw -- click "#submit" --url https://example.com
+npm run pw -- type "#email" "user@example.com" --url https://example.com
+npm run pw -- scrape https://example.com ".title" --json
+npm run pw -- eval "document.title" --url https://example.com
+```
+
+`npm run pw -- --help` lists the commands, and `npm run pw -- <command> --help`
+prints that command's own options. Add `--json` to any command to get a
+machine-readable result instead of the human summary.
+
+See [references/cli-reference.md](references/cli-reference.md) for every option
+of every command.
+
+## Using the library directly
+
+For anything the CLI does not cover, import the Playwright API. This package
+sets `"type": "module"`, so use `import` — a `require()` call fails here with
+`ReferenceError: require is not defined in ES module scope`.
 
 ### Screenshot
 
 ```typescript
-const { chromium } = require('playwright');
+import { chromium } from 'playwright';
+
 const browser = await chromium.launch();
-const page = await browser.newPage();
-await page.goto('https://example.com');
-await page.screenshot({ path: 'screenshot.png', fullPage: true });
-await browser.close();
+try {
+  const page = await browser.newPage();
+  await page.goto('https://example.com');
+  await page.screenshot({ path: 'screenshot.png', fullPage: true });
+} finally {
+  await browser.close();
+}
 ```
 
 ### Fill Form
@@ -55,13 +101,15 @@ await page.waitForLoadState('networkidle');
 await page.waitForResponse(resp => resp.url().includes('/api'));
 ```
 
+See [references/wait-strategies.md](references/wait-strategies.md).
+
 ### Extract Data
 
 ```typescript
 const items = await page.$$eval('.item', els =>
   els.map(el => ({
-    title: el.querySelector('.title').textContent,
-    price: el.querySelector('.price').textContent,
+    title: el.querySelector('.title')?.textContent,
+    price: el.querySelector('.price')?.textContent,
   }))
 );
 ```
@@ -75,11 +123,16 @@ const items = await page.$$eval('.item', els =>
 | Role | `page.click('role=button[name="Submit"]')` |
 | XPath | `page.click('//button')` |
 
+See [references/selector-guide.md](references/selector-guide.md) for advanced
+selectors.
+
 ## Best Practices
 
 - Use `data-testid` attributes for stable selectors
-- Always close browser in finally block
+- Always close the browser in a `finally` block
 - Use `waitFor*` instead of arbitrary delays
 - Run headless in CI, headed for debugging
 
-See [references/selector-guide.md](references/selector-guide.md) for advanced selectors.
+When a command fails, check
+[references/troubleshooting.md](references/troubleshooting.md); it is written
+against these same `npm run pw` invocations.
