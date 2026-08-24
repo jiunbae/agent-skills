@@ -13,6 +13,7 @@ lifecycle, restricted state machine, and artifact publication rules in
 - [Exact source fences and later-cycle regression watch](#exact-source-fences-and-later-cycle-regression-watch)
 - [Reproducible inventory and coverage](#reproducible-inventory-and-coverage)
 - [Incident-derived adversarial probes](#incident-derived-adversarial-probes)
+- [Coverage evidence tokens and regression verdicts](#coverage-evidence-tokens-and-regression-verdicts)
 - [Test prohibitions and static source contracts](#test-prohibitions-and-static-source-contracts)
 - [UI runtime status](#ui-runtime-status)
 - [Secret-safe inputs and outputs](#secret-safe-inputs-and-outputs)
@@ -285,6 +286,62 @@ and an applicable result returns the exact ordered, duplicate-free
 `source-ref:path:line:symbol` list with no invented additions. Map each applicable
 probe to producers, consumers, error paths, variants, and its next-cycle watch.
 Record `not-applicable` with evidence instead of silently omitting a probe.
+
+## Coverage evidence tokens and regression verdicts
+
+A dispatch prompt that asks for a different shape than the one the reducer
+derives cannot be repaired afterwards: `_coverage_evidence_valid()` compares the
+returned tuple for equality, so a row whose evidence is merely *plausible*
+reduces to a coverage gap, and `carry_open_watches()` leaves a watch open even
+when the falsifier genuinely verified it. State these shapes verbatim in every
+role prompt.
+
+Return one coverage row per obligation, in the exact order
+`coverage_obligations_for_role()` returns for that role instance — same length,
+same order, no additions. Each row's `evidence` is ordered, duplicate-free, and
+**equal** to the canonical token list its obligation kind derives:
+
+| Obligation kind | Canonical `evidence` token list |
+|---|---|
+| `source` | `source:<obligation path>:<sha256 of the exact fenced bytes>` |
+| `regression` | `watch:<watch ID>` |
+| `ui` | `ui:<UI obligation ID>` |
+| `source-contract` | `source-contract:<contract ID>` |
+| `probe` | that claim's own ordered `refs`, each as `source-ref:<path>:<line>:<symbol>` |
+| `topology`, `incident` | that family's own ordered `refs`, each as `source-ref:<path>:<line>:<symbol>` |
+| `audit` | the obligation ID itself, unchanged |
+
+A `source-ref:<path>:<line>:<symbol>` string is canonical for `probe`,
+`topology`, and `incident` only. It is **not** an evidence token for any other
+kind: a `source` row needs the digest of the fenced bytes, and a `regression`
+row needs `watch:<ID>`. Do not ask a role for free-form
+`source-ref:`/`path:line` evidence across the board — that single prompt defect
+silently reduces every obligation of every role to a coverage gap while each
+individual result still decodes and is accepted.
+
+Set `disposition` to `verified`. `not-applicable` is accepted only for a
+`topology` or `incident` family whose captured authority already records
+`applicable: false`; for every other kind it fails closed.
+
+A regression falsifier clears a watch only when its result carries a verdict
+object in `payload.verdicts` whose keys are **exactly**:
+
+```json
+{"watch_id": "<watch ID>", "status": "passed",
+ "counterexample_search": "<nonempty description of the search that failed to find one>",
+ "evidence": ["watch:<watch ID>", "..."]}
+```
+
+`status` must be exactly `passed`, `counterexample_search` a nonempty string,
+and `watch:<watch ID>` must appear in `evidence`. A `{watch_id, verdict,
+evidence, reasoning}` object — or any other key set — is rejected by the exact
+key-set comparison, so the watch stays open no matter what the falsifier found.
+The envelope must also be kind `regression`, role instance
+`regression-falsifier`, status `passed`, on the current cycle, run, and fence,
+and its coverage obligation IDs must equal the dispatch ledger's expected list.
+Separately, the watch row itself carries `clearance_result_id`, a
+`cleared_cycle` equal to the current cycle and strictly greater than
+`changed_cycle`, and `validated-result:<clearance_result_id>` in its evidence.
 
 ## Test prohibitions and static source contracts
 

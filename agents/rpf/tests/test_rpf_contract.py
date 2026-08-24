@@ -9,6 +9,7 @@ pointer migration. Production dispatch and reduction use the exact semantic
 obligation inventory in ``rpf_runtime.DispatchLedger``.
 """
 
+import ast
 import hashlib
 import re
 import subprocess
@@ -97,6 +98,51 @@ def ordered(text: str, *needles: str) -> bool:
     haystack = normalize(text)
     positions = [haystack.find(normalize(needle)) for needle in needles]
     return all(position >= 0 for position in positions) and positions == sorted(positions)
+
+
+def runtime_function(name: str) -> ast.FunctionDef:
+    """Locate a runtime function so a doc claim is checked against real code."""
+
+    tree = ast.parse((ROOT / "scripts" / "rpf_runtime.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"missing runtime function: {name}")
+
+
+def evidence_token_prefixes() -> set[str]:
+    """The literal token prefixes the reducer actually derives."""
+
+    prefixes: set[str] = set()
+    for name in ("_source_ref_token", "_required_evidence_tokens"):
+        for node in ast.walk(runtime_function(name)):
+            if not isinstance(node, ast.JoinedStr):
+                continue
+            for part in node.values:
+                if (
+                    isinstance(part, ast.Constant)
+                    and isinstance(part.value, str)
+                    and part.value.endswith(":")
+                    and len(part.value) > 1
+                ):
+                    prefixes.add(part.value)
+    return prefixes
+
+
+def regression_verdict_keys() -> frozenset[str]:
+    """The exact verdict key set `carry_open_watches` compares against."""
+
+    for node in ast.walk(runtime_function("carry_open_watches")):
+        if not isinstance(node, ast.Set):
+            continue
+        if all(
+            isinstance(element, ast.Constant) and isinstance(element.value, str)
+            for element in node.elts
+        ):
+            keys = frozenset(element.value for element in node.elts)
+            if "watch_id" in keys:
+                return keys
+    raise AssertionError("missing regression verdict key set in carry_open_watches")
 
 
 def exact_fence_valid(value: object) -> bool:
@@ -2002,6 +2048,40 @@ class RpfContractTest(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 self.assertIn(field, self.pointer)
+
+    def test_prompts_document_the_exact_shapes_the_reducer_requires(self) -> None:
+        """The prompt-shape contract must be written down, not inferred.
+
+        R55 asked every role for free-form `source-ref:path:line:symbol`
+        evidence and for a `{watch_id, verdict, evidence, reasoning}` verdict.
+        Both decode and are accepted, so nothing looked wrong -- but
+        `_coverage_evidence_valid()` compares evidence tuples for equality and
+        `carry_open_watches()` compares the verdict key set exactly, so every
+        obligation silently reduced to a coverage gap and two watches that were
+        genuinely verified could not clear. The reference never stated either
+        shape, so this asserts the doc against the code that enforces it.
+        """
+
+        tokens = section(self.verification, "Coverage evidence tokens and regression verdicts")
+
+        for prefix in evidence_token_prefixes():
+            with self.subTest(prefix=prefix):
+                self.assertIn(prefix, tokens)
+
+        for key in regression_verdict_keys():
+            with self.subTest(key=key):
+                self.assertIn(key, tokens)
+
+        for phrase in (
+            "in the exact order `coverage_obligations_for_role()` returns",
+            "sha256 of the exact fenced bytes",
+            "is **not** an evidence token for any other",
+            "`status` must be exactly `passed`",
+            "`applicable: false`",
+            "validated-result:<clearance_result_id>",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(normalize(phrase), normalize(tokens))
 
     def test_free_form_actions_are_preflighted_before_any_sink(self) -> None:
         deploy = section(self.detection, "Asking the user about deployment")
