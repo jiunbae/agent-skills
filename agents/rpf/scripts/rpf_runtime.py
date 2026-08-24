@@ -7368,7 +7368,7 @@ def evaluate_cycle_evidence(
             if len(accepted) == 1
         ),
         "missing_or_duplicate_roles": missing_or_duplicate,
-        "total_cycle": recovery_ledger._limit_cycle,
+        "total_cycle": root["cycle"],
         "launch_telemetry": launch_telemetry,
         "accepted_coverage": tuple(
             accepted_coverage[obligation_id]

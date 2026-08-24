@@ -145,6 +145,39 @@ def regression_verdict_keys() -> frozenset[str]:
     raise AssertionError("missing regression verdict key set in carry_open_watches")
 
 
+def reducer_total_cycle_source() -> str:
+    """The exact expression `evaluate_cycle_evidence` seals as `total_cycle`."""
+
+    for node in ast.walk(runtime_function("evaluate_cycle_evidence")):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if isinstance(key, ast.Constant) and key.value == "total_cycle":
+                return ast.unparse(value)
+    raise AssertionError("evaluate_cycle_evidence seals no total_cycle field")
+
+
+def total_cycle_is_the_allocated_cycle(expression: str) -> bool:
+    """`total_cycle` is the allocated cycle, never a recovery budget bound.
+
+    `AdaptiveRecoveryLedger._limit_cycle` is `start_cycle + total_cycles - 1`:
+    the last cycle this invocation is *allowed* to reach, not the cycle it
+    actually allocated. Reporting it as `TOTAL_CYCLE` publishes a number the
+    loop never reached, and every later invocation resumes from it.
+    """
+
+    flat = expression.replace(" ", "")
+    return all(
+        (
+            "recovery_ledger" not in flat,
+            "_limit_cycle" not in flat,
+            "_start_cycle" not in flat,
+            "_total_cycles" not in flat,
+            flat in {"root['cycle']", "captured['root_authority']['cycle']"},
+        )
+    )
+
+
 def exact_fence_valid(value: object) -> bool:
     return runtime.fence_shape_valid(value)
 
@@ -2082,6 +2115,31 @@ class RpfContractTest(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(normalize(phrase), normalize(tokens))
+
+    def test_reducer_reports_the_allocated_cycle_not_the_recovery_budget_bound(
+        self,
+    ) -> None:
+        """`TOTAL_CYCLE` is what the loop allocated, not what it may reach.
+
+        R56 reported `total 58` while the pointer had allocated 56, because
+        the reducer sealed `recovery_ledger._limit_cycle` -- the recovery
+        budget's upper bound (`start_cycle + total_cycles - 1`) -- as
+        `total_cycle`. A cycle budget bounds cycles; it is not a cycle count.
+        The published number is the one a later `$rpf` invocation resumes
+        from, so the conflation corrupts the resume point of every later run.
+        """
+
+        self.assertTrue(
+            total_cycle_is_the_allocated_cycle(reducer_total_cycle_source())
+        )
+        for counterexample in (
+            "recovery_ledger._limit_cycle",
+            "recovery_ledger._start_cycle + recovery_ledger._total_cycles - 1",
+            "root['cycle'] + recovery_ledger._total_cycles",
+            "captured['recovery_snapshot']",
+        ):
+            with self.subTest(counterexample=counterexample):
+                self.assertFalse(total_cycle_is_the_allocated_cycle(counterexample))
 
     def test_free_form_actions_are_preflighted_before_any_sink(self) -> None:
         deploy = section(self.detection, "Asking the user about deployment")
