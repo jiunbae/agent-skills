@@ -370,5 +370,60 @@ else
         "rc=$RC out='$OUT'"
 fi
 
+# --- 22. a dangling symlink at the output path does not become a write -----
+# `[[ -e ]]` stats *through* a symlink, so a link whose target does not exist
+# yet reports false and the no-clobber guard concludes the destination is free.
+# ffmpeg then opens the output with -y, follows the link and creates whatever
+# it names - an arbitrary-file write with attacker-chosen content, reported as
+# a successful conversion.
+
+new_case
+ln -s "$CASE_DIR/victim" "$CASE_DIR/out.wav"
+run_sut "$CASE_DIR" convert in.wav out.wav
+if [[ $RC -ne 0 && ! -e "$CASE_DIR/victim" ]]; then
+    ok "convert refuses to write through a dangling symlink"
+else
+    nope "convert refuses to write through a dangling symlink" \
+        "rc=$RC victim=[$(cat "$CASE_DIR/victim" 2>/dev/null)] err='$ERR'"
+fi
+
+# --- 23. --overwrite does not license writing through a symlink -----------
+# --overwrite authorises replacing *this* output, not following a link to some
+# other path the caller never named.
+
+new_case
+ln -s "$CASE_DIR/victim2" "$CASE_DIR/out.wav"
+run_sut "$CASE_DIR" convert in.wav out.wav --overwrite
+if [[ $RC -ne 0 && ! -e "$CASE_DIR/victim2" ]]; then
+    ok "--overwrite still refuses to write through a symlink"
+else
+    nope "--overwrite still refuses to write through a symlink" \
+        "rc=$RC victim=[$(cat "$CASE_DIR/victim2" 2>/dev/null)] err='$ERR'"
+fi
+
+# --- 24. segment refuses a planted symlink among its outputs --------------
+
+new_case
+mkdir -p "$CASE_DIR/segs"
+ln -s "$CASE_DIR/victim3" "$CASE_DIR/segs/in_000.wav"
+run_sut "$CASE_DIR" segment in.wav segs --duration 10 --overwrite
+if [[ $RC -ne 0 && ! -e "$CASE_DIR/victim3" ]]; then
+    ok "segment refuses to write through a planted symlink"
+else
+    nope "segment refuses to write through a planted symlink" \
+        "rc=$RC victim=[$(cat "$CASE_DIR/victim3" 2>/dev/null)] err='$ERR'"
+fi
+
+# --- 25. an ordinary conversion is unaffected -----------------------------
+# The over-correction guard for cases 22 to 24.
+
+new_case
+run_sut "$CASE_DIR" convert in.wav out.wav
+if [[ $RC -eq 0 && -f "$CASE_DIR/out.wav" ]]; then
+    ok "an ordinary conversion still succeeds"
+else
+    nope "an ordinary conversion still succeeds" "rc=$RC err='$ERR'"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]

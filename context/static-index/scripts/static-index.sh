@@ -261,7 +261,7 @@ build_index() {
 }
 
 list_files() {
-    [[ -d "$AGENTS_DIR" ]] || { printf 'Directory not found: `%s`\n' "$AGENTS_DIR"; return 1; }
+    [[ -d "$AGENTS_DIR" ]] || { printf 'Directory not found: `%s`\n' "$AGENTS_DIR" >&2; return 1; }
     collect_context_files || {
         printf 'Could not enumerate context files under: `%s`\n' "$AGENTS_DIR" >&2
         return 1

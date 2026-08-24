@@ -17,7 +17,7 @@ if [[ ! -f "$SUT" ]]; then
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/static-index-tests.XXXXXX")"
-trap 'chmod -R u+rwX "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
+trap 'chmod -R u+rwX "$WORK" 2>/dev/null ||:; rm -rf "$WORK"' EXIT
 
 PASS=0
 FAIL=0
@@ -39,10 +39,8 @@ new_case() {
 run_sut() {
     local agents="$1"
     shift
-    set +e
     OUT="$(AGENTS_DIR="$agents" bash "$SUT" "$@" 2>&1)"
     RC=$?
-    set -e
 }
 
 # --- 1. the excluded skills tree is not reachable through a symlink --------
@@ -208,10 +206,8 @@ exit 1
 STUB
 chmod +x "$stub_bin/find"
 
-set +e
 OUT="$(PATH="$stub_bin:$PATH" AGENTS_DIR="$CASE_DIR" bash "$SUT" refresh 2>&1)"
 RC=$?
-set -e
 after_index="$(cat "$CASE_DIR/.index.json" 2>/dev/null || printf 'MISSING')"
 
 if [[ $RC -ne 0 && "$after_index" == "$good_index" ]]; then
@@ -234,10 +230,8 @@ exit 1
 STUB
 chmod +x "$stub_bin/find"
 
-set +e
 OUT="$(PATH="$stub_bin:$PATH" AGENTS_DIR="$CASE_DIR" bash "$SUT" list 2>&1)"
 RC=$?
-set -e
 if [[ $RC -ne 0 ]]; then
     ok "a failed walk makes list report failure instead of an empty inventory"
 else

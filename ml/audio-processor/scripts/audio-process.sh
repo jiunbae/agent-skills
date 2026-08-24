@@ -70,7 +70,10 @@ collect_segments() {
     local candidate
     SEGMENTS=()
     for candidate in "$1/$2_"*; do
-        [[ -e "$candidate" ]] && SEGMENTS+=("$candidate")
+        # -e follows the link and reports false for a dangling symlink, so a
+        # planted link would slip past the guard and ffmpeg -y would write
+        # through it. -L catches the link itself.
+        [[ -e "$candidate" || -L "$candidate" ]] && SEGMENTS+=("$candidate")
     done
     return 0
 }
@@ -205,8 +208,13 @@ cmd_convert() {
     require_tools ffmpeg ffprobe jq bc
     [[ -f "$input" ]] || die "input file not found: $input"
     # 기존 결과를 말없이 지우지 않는다.
-    if [[ -e "$output" && "$overwrite" != "true" ]]; then
+    if [[ ( -e "$output" || -L "$output" ) && "$overwrite" != "true" ]]; then
         die "output already exists: $output (pass --overwrite to replace it)"
+    fi
+    # Never write through a symlink: -y would follow it and create or truncate
+    # whatever it names, anywhere on the filesystem.
+    if [[ -L "$output" ]]; then
+        die "output is a symbolic link, refusing to write through it: $output"
     fi
 
     # ffmpeg 출력 옵션 구성
@@ -298,6 +306,12 @@ cmd_segment() {
     if [[ "$existing" -gt 0 && "$overwrite" != "true" ]]; then
         die "$existing existing segment(s) under $outdir/ match ${basename}_* (pass --overwrite to replace them)"
     fi
+    # Even with --overwrite, never write through a symbolic link: ffmpeg -y
+    # follows it and creates or truncates whatever it names.
+    local seg
+    for seg in ${SEGMENTS[@]+"${SEGMENTS[@]}"}; do
+        [[ -L "$seg" ]] && die "segment target is a symbolic link, refusing to write through it: $seg"
+    done
 
     if [[ -n "$timestamps" ]]; then
         # 타임스탬프 기반 분할
@@ -420,8 +434,13 @@ cmd_batch() {
         claimed="$claimed$output"$'\n'
 
         # 이미 있는 파일은 --overwrite 없이는 건드리지 않는다.
-        if [[ -e "$output" && "$overwrite" != "true" ]]; then
+        if [[ ( -e "$output" || -L "$output" ) && "$overwrite" != "true" ]]; then
             echo -e "${YELLOW}SKIPPED (exists; pass --overwrite)${NC}"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        if [[ -L "$output" ]]; then
+            printf '%bSKIPPED (symbolic link)%b\n' "$YELLOW" "$NC"
             skipped=$((skipped + 1))
             continue
         fi
