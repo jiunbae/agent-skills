@@ -50,8 +50,17 @@ if [[ -n "${FFPROBE_HOSTILE:-}" ]]; then
 JSON
     exit 0
 fi
-cat <<'JSON'
-{"format":{"format_name":"wav","duration":"12.000000","size":"1024"},
+# Per-file durations, so a test can make the produced file differ from the
+# input the way a truncated conversion really does.
+for last; do :; done
+dur="12.000000"
+if [[ -n "${FFPROBE_DUR_MAP:-}" && -f "${FFPROBE_DUR_MAP}" ]]; then
+    while IFS=$'\t' read -r probe_name probe_dur; do
+        [[ "${last##*/}" == "$probe_name" ]] && dur="$probe_dur"
+    done < "$FFPROBE_DUR_MAP"
+fi
+cat <<JSON
+{"format":{"format_name":"wav","duration":"$dur","size":"1024"},
  "streams":[{"sample_rate":"44100","channels":2,"codec_name":"pcm_s16le"}]}
 JSON
 STUB
@@ -77,6 +86,7 @@ run_sut() {
     export FFMPEG_EXIT="${FFMPEG_EXIT:-0}"
     export FFPROBE_EXIT="${FFPROBE_EXIT:-0}"
     export FFPROBE_HOSTILE="${FFPROBE_HOSTILE:-}"
+    export FFPROBE_DUR_MAP="${FFPROBE_DUR_MAP:-}"
     OUT="$(cd "$dir" && PATH="$BIN:/usr/bin:/bin" "$SUT" "$@" 2>"$WORK/stderr")"
     RC=$?
     ERR="$(cat "$WORK/stderr")"
@@ -369,6 +379,10 @@ else
     nope "non-numeric probe metadata still yields a complete table" \
         "rc=$RC out='$OUT'"
 fi
+# `VAR=value func` leaves VAR set in the calling shell once the function
+# returns, so without this every later case ran against hostile metadata and
+# quietly lost the ability to assert on a duration at all.
+unset FFPROBE_HOSTILE
 
 # --- 22. a dangling symlink at the output path does not become a write -----
 # `[[ -e ]]` stats *through* a symlink, so a link whose target does not exist
@@ -423,6 +437,54 @@ if [[ $RC -eq 0 && -f "$CASE_DIR/out.wav" ]]; then
     ok "an ordinary conversion still succeeds"
 else
     nope "an ordinary conversion still succeeds" "rc=$RC err='$ERR'"
+fi
+
+# --- 26. convert measures the produced file, not the input ----------------
+# `new_info` was probed and then never read for duration: `duration_fmt` came
+# from `orig_dur` and was printed in *both* columns, so a conversion that
+# truncated twelve seconds to three still reported "0:12 -> 0:12".
+
+new_case
+printf 'out.wav\t3.000000\n' > "$CASE_DIR/durations"
+FFPROBE_DUR_MAP="$CASE_DIR/durations" run_sut "$CASE_DIR" convert in.wav out.wav
+if [[ $RC -eq 0 && "$OUT" == *"| Duration | 0:12 | 0:03 |"* ]]; then
+    ok "convert reports the output's own duration"
+else
+    nope "convert reports the output's own duration" \
+        "rc=$RC out='$OUT'"
+fi
+unset FFPROBE_DUR_MAP
+
+# --- 27. an unchanged duration still reads as unchanged -------------------
+# The over-correction guard for case 26.
+
+new_case
+run_sut "$CASE_DIR" convert in.wav out.wav
+if [[ $RC -eq 0 && "$OUT" == *"| Duration | 0:12 | 0:12 |"* ]]; then
+    ok "convert still shows equal durations when nothing was lost"
+else
+    nope "convert still shows equal durations when nothing was lost" \
+        "rc=$RC out='$OUT'"
+fi
+
+# --- 28. the existing-segment guard is literal, not a glob pattern --------
+# `collect_segments` builds `"$1/$2_"*`.  The prefix comes from a *quoted*
+# expansion, so `a[1]_` stays literal and only the trailing `*` globs.  This
+# case pins that: were the prefix ever unquoted, `a[1]_*` would become a
+# bracket expression, the guard would count zero existing segments, and
+# ffmpeg -y would replace them without --overwrite.
+
+new_case
+mkdir -p "$CASE_DIR/segs"
+: > "$CASE_DIR/a[1].wav"
+printf 'PRECIOUS' > "$CASE_DIR/segs/a[1]_000.wav"
+run_sut "$CASE_DIR" segment "a[1].wav" segs --duration 10
+if [[ $RC -ne 0 && "$ERR$OUT" == *"existing segment"* \
+      && "$(cat "$CASE_DIR/segs/a[1]_000.wav")" == "PRECIOUS" ]]; then
+    ok "the segment guard matches a glob-metacharacter basename literally"
+else
+    nope "the segment guard matches a glob-metacharacter basename literally" \
+        "rc=$RC err='$ERR' kept=[$(cat "$CASE_DIR/segs/a[1]_000.wav" 2>/dev/null)]"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

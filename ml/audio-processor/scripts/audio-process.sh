@@ -246,15 +246,20 @@ cmd_convert() {
     [[ -s "$output" ]] || die "ffmpeg exited 0 but produced no output: $output"
 
     # 결과 정보
-    local new_info new_sr new_ch new_size new_ch_str new_size_mb duration_fmt
+    local new_info new_sr new_ch new_size new_ch_str new_size_mb
+    local new_dur orig_dur_fmt new_dur_fmt
     new_info=$(ffprobe -v quiet -print_format json -show_format -show_streams "$output" 2>/dev/null) \
         || die "conversion produced a file ffprobe cannot read: $output"
     new_sr=$(echo "$new_info" | jq -r '.streams[0].sample_rate // "unknown"')
     new_ch=$(echo "$new_info" | jq -r '.streams[0].channels // "unknown"')
     new_size=$(echo "$new_info" | jq -r '.format.size // "0"')
+    # 출력 길이는 출력 파일에서 읽는다. 원본 길이를 두 칸에 그대로 찍으면
+    # 잘려 나온 파일도 "길이가 보존됐다"고 보고하게 된다.
+    new_dur=$(echo "$new_info" | jq -r '.format.duration // "0"')
     new_ch_str=$([[ "$new_ch" == "1" ]] && echo "mono" || echo "stereo")
     new_size_mb=$(format_megabytes "$new_size")
-    duration_fmt=$(format_duration "$orig_dur")
+    orig_dur_fmt=$(format_duration "$orig_dur")
+    new_dur_fmt=$(format_duration "$new_dur")
 
     echo -e "${GREEN}Done${NC}"
     cat << EOF
@@ -266,7 +271,7 @@ cmd_convert() {
 | File | $(basename "$input") | $(basename "$output") |
 | Sample Rate | ${orig_sr}Hz | ${new_sr}Hz |
 | Channels | $orig_ch_str | $new_ch_str |
-| Duration | $duration_fmt | $duration_fmt |
+| Duration | $orig_dur_fmt | $new_dur_fmt |
 | Size | - | ${new_size_mb}MB |
 EOF
 }
