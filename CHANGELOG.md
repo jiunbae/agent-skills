@@ -16,7 +16,33 @@ Nothing below has been tagged. The most recent `v*` tag is `v2026.08.22.1`
 tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
 
+### Changed
+- CI returns to GitHub Actions: `.gitea/workflows/` moves back to
+  `.github/workflows/`, reversing `7792d6d`. That move was justified by Actions
+  minutes, which this repository — public — is not billed for, and it cost the
+  `pull_request` trigger, because the Gitea side is a read-only mirror while
+  pull requests live on GitHub. Since then no contributor's pull request has
+  been tested. The three Gitea-only workarounds go with it: the `runuser` drop
+  to uid 1001 (`act` runs as root, GitHub's `ubuntu-latest` does not, and
+  `runuser` would fail there anyway), the `ruby` apt install with its
+  transit-corruption retry (`ubuntu-latest` ships ruby), and the
+  `PLAYWRIGHT_BROWSERS_PATH` pin that only existed to bridge those two users.
+  Three host-independent gains are kept: `timeout-minutes` on every job,
+  `workflow_dispatch` for manual re-runs, and the guard that rejects a non-tag
+  ref instead of releasing `refs/heads/main`.
+- Releases are published by `softprops/action-gh-release` with
+  `secrets.GITHUB_TOKEN` again, replacing the direct `api.github.com` call that
+  only existed because that secret resolves to a *Gitea* token on Gitea. The
+  action is pinned to `v2.6.2`; the `v1` this repository used before `7792d6d`
+  runs on node16 and no longer executes on GitHub-hosted runners, so restoring
+  it verbatim would have broken every release.
+- The SHA pins from #14 carry across the move and now cover `tests.yml` as well,
+  which semgrep never flagged — leaving it on mutable tags while `release.yml`
+  is pinned would just be the same drift in a quieter file. Each SHA was
+  re-verified against its upstream repository.
+
 ### Fixed
+- The `COUNT` write in the release workflow quotes `$GITHUB_OUTPUT` (SC2086).
 - `slack-skill`: the Database Security example in `SECURITY_BEST_PRACTICES.md`
   set `rejectUnauthorized: false` on the production branch, so the document
   whose job is to teach certificate discipline taught the opposite in the one

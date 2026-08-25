@@ -1,0 +1,108 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python skill tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # validate-k8s.sh renders every overlay and then parses the result, so the
+      # suite needs a YAML parser and a kustomize implementation. Both are pinned
+      # rather than taken from the runner image: an unpinned kubectl carries
+      # whatever kustomize it was built against, and a mismatch fails every
+      # overlay build with the tool's error suppressed.
+      - name: Install YAML validation dependency
+        run: python -m pip install --disable-pip-version-check 'PyYAML==6.0.3'
+
+      - name: Set up pinned kubectl for kustomize rendering
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede  # v4.0.1
+        with:
+          version: 'v1.36.3'
+
+      - name: Run skill test suites
+        run: |
+          # A skill owns its tests at <group>/<skill>/tests/test_*.py. Each
+          # suite runs from its own skill root so relative script paths resolve.
+          set -e
+          FOUND=0
+          while IFS= read -r dir; do
+            FOUND=1
+            echo "::group::${dir}"
+            (cd "${dir}" && python -m unittest discover -s tests -v)
+            echo "::endgroup::"
+          done < <(find . -mindepth 3 -maxdepth 3 -type d -name tests -not -path "./.git/*" \
+                     -exec sh -c 'ls "$1"/test_*.py >/dev/null 2>&1' _ {} \; -print | sed 's|/tests$||' | sort)
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "no python skill tests found" >&2
+            exit 1
+          fi
+
+      - name: Run hermetic non-Python skill test suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          suites=(
+            development/appstore-screenshots/tests/run.sh
+            development/git-commit-pr/tests/commit-check.test.sh
+            development/iac-deploy-prep/tests/test-scripts.sh
+            integrations/vault-secrets/tests/security-smoke.sh
+            ml/ml-benchmark/tests/ml-benchmark.test.sh
+            ml/triton-deploy/tests/test-triton-deploy.sh
+            security/security-auditor/tests/test-security-audit.sh
+          )
+
+          for suite in "${suites[@]}"; do
+            if [[ ! -f "${suite}" ]]; then
+              echo "required suite is missing: ${suite}" >&2
+              exit 1
+            fi
+            echo "::group::${suite}"
+            bash "${suite}"
+            echo "::endgroup::"
+          done
+
+      - name: Check generated files are current
+        run: |
+          # Generated rulebooks drift silently when the canonical source
+          # changes without a rebuild, so the check gates every push.
+          python common/korean-editor/scripts/build_runtime_rules.py --check
+
+  air:
+    name: AIR source release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Set up supported Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: '22.22.0'
+
+      - name: Install exact browser acceptance dependencies
+        working-directory: development/playwright
+        run: npm ci --ignore-scripts
+
+      - name: Install acceptance Chromium
+        working-directory: development/playwright
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Verify AIR source, generated assets, and examples
+        env:
+          WORKFLOW_STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/development/playwright/node_modules/playwright-core/index.mjs
+        run: node agents/air-workbench/scripts/verify-release.mjs --source
