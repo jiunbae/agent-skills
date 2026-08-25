@@ -3,8 +3,13 @@
 # agent-skills — Remote Installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash -s -- --core --codex
+#   curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh -o setup.sh
+#   bash setup.sh --core --codex
+#
+# Fetch the script and run it as a file rather than piping it into a shell, so
+# it can be read before it executes. Note the flags pass straight through: the
+# `-s --` separator belongs to the piped form and this option loop rejects a
+# bare `--` as an unknown option.
 #
 # Options:
 #   --version REF       Install a branch or tag (default: main)
@@ -49,8 +54,8 @@ usage() {
 agent-skills — Remote Installer
 
 Usage:
-  curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash
-  curl -fsSL ... | bash -s -- [options]
+  curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh -o setup.sh
+  bash setup.sh [options]
 
 Options:
   --version REF       Install a branch or tag (default: main)
@@ -64,17 +69,20 @@ Options:
   -h, --help          Help
 
 Examples:
+  # Fetch once, then run it as a file
+  curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh -o setup.sh
+
   # Recommended: Core skills + CLI tools
-  curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh | bash -s -- --core --cli --codex
+  bash setup.sh --core --cli --codex
 
   # Full install
-  curl -fsSL ... | bash -s -- --all --cli --static
+  bash setup.sh --all --cli --static
 
   # Specific version
-  curl -fsSL ... | bash -s -- --version v1.0.0 --core
+  bash setup.sh --version v1.0.0 --core
 
   # Uninstall
-  curl -fsSL ... | bash -s -- --uninstall
+  bash setup.sh --uninstall
 
 EOF
     exit 0

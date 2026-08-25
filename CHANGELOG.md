@@ -42,6 +42,12 @@ empty `[Unreleased]` section above it.
   re-verified against its upstream repository.
 
 ### Fixed
+- `setup.sh`: its own usage header, `usage()` and every example fetch the script
+  and run it as a file instead of piping it into a shell. #14 changed the Quick
+  Install block in the generated release notes, but not the script documenting
+  itself, so the two told a reader to install two different ways. The examples
+  also drop the `-s --` separator, which belongs to the piped form — the option
+  loop rejects a bare `--` as an unknown option and exits 1.
 - The `COUNT` write in the release workflow quotes `$GITHUB_OUTPUT` (SC2086).
 - `slack-skill`: the Database Security example in `SECURITY_BEST_PRACTICES.md`
   set `rejectUnauthorized: false` on the production branch, so the document
