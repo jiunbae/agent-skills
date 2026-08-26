@@ -61,6 +61,7 @@ RPF_SOURCE_SURFACES = (
     "agents/rpf/references/runtime-contract.md",
     "agents/rpf/references/technical-recovery.md",
     "agents/rpf/scripts/rpf_bootstrap.py",
+    "agents/rpf/scripts/rpf_rescue.py",
     "agents/rpf/scripts/rpf_runtime.py",
     "agents/rpf/tests/test_rpf_bootstrap.py",
     "agents/rpf/tests/test_rpf_contract.py",
@@ -4109,6 +4110,8 @@ class RpfContractTest(unittest.TestCase):
             "Keep the RPF objective active",
             "Defer only the affected sink",
             "same technical symptom appeared in three goal turns",
+            "reconcile-interrupted-attempt",
+            "export_state(authentication_key=...)",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalize(self.technical))

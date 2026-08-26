@@ -74,6 +74,14 @@ If no coherent bundle exists, retain active technical recovery without reading
 target bytes or marking the RPF/host goal blocked. Follow
 `technical-recovery.md`.
 
+If the loaded `rpf_bootstrap.py` itself cannot parse/import or returns
+unavailable, invoke only sibling `scripts/rpf_rescue.py pin`. The rescue reads
+no target bytes and executes the nearest syntax-valid prior committed
+bootstrap. That bootstrap still selects and validates one complete coherent
+bundle; the result discloses `rescue_source_revision`. If rescue is also
+unavailable, retain pre-phase-zero technical recovery rather than treating the
+interpreter failure as a goal blocker.
+
 ## Phase-zero capability handshake
 
 Use only the invocation-pinned `RUNTIME_SCRIPT`; do not reimplement its checks
@@ -146,6 +154,15 @@ python3 <RUNTIME_SCRIPT> probe-exchange <existing-pointer-parent>
 All authority-bearing publication, dispatch, capture, source-contract, UI, and
 recovery operations remain typed Python APIs so sealed in-process tokens cannot
 be reconstructed from caller JSON.
+
+Persist `TechnicalRecoveryLedger.snapshot()` only as current-process
+projection evidence. Across a process boundary use its authenticated
+`export_state(authentication_key=...)` and `from_snapshot()` with the opaque
+host-held restart key. Restoration never trusts a serialized process-local
+action seal: a pending attempt becomes `reconcile-interrupted-attempt` before
+any retry, while a completed recovery is restored only from authenticated
+closed metadata. Missing or invalid authentication discards claimed technical
+progress and regenerates safe recovery work; it never yields `blocked`.
 
 ## Protected intake
 

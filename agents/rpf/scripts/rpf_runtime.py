@@ -3930,6 +3930,12 @@ class TechnicalRecoveryLedger:
             if existing["failure_kind"] != failure_kind:
                 raise RpfContractError("technical failure identity changed")
             existing["observations"] += 1
+            if existing["resolved"]:
+                existing["attempted"] = []
+                existing["carry_count"] = 0
+                existing["pending_attempt_id"] = None
+                existing["pending_strategy"] = None
+                existing["interrupted_strategy"] = None
             existing["resolved"] = False
             return failure_id
         self._rows[failure_id] = {
@@ -3938,6 +3944,8 @@ class TechnicalRecoveryLedger:
             "attempted": [],
             "carry_count": 0,
             "pending_attempt_id": None,
+            "pending_strategy": None,
+            "interrupted_strategy": None,
             "resolved": False,
         }
         return failure_id
@@ -3948,16 +3956,20 @@ class TechnicalRecoveryLedger:
             return None
         if row["pending_attempt_id"] is not None:
             raise RpfContractError("technical recovery action is already pending")
-        strategies = self._STRATEGIES[row["failure_kind"]]
-        attempted = row["attempted"]
-        if len(attempted) < len(strategies):
-            strategy = strategies[len(attempted)]
-            attempted.append(strategy)
+        if row["interrupted_strategy"] is not None:
+            strategy = "reconcile-interrupted-attempt"
         else:
-            strategy = "carry-forward-retry"
-            row["carry_count"] += 1
+            strategies = self._STRATEGIES[row["failure_kind"]]
+            attempted = row["attempted"]
+            if len(attempted) < len(strategies):
+                strategy = strategies[len(attempted)]
+                attempted.append(strategy)
+            else:
+                strategy = "carry-forward-retry"
+                row["carry_count"] += 1
         attempt_id = f"rpf-tech-{secrets.token_hex(16)}"
         row["pending_attempt_id"] = attempt_id
+        row["pending_strategy"] = strategy
         return _issue_technical_recovery_action(failure_id, attempt_id, strategy)
 
     def finish_action(
@@ -3969,9 +3981,16 @@ class TechnicalRecoveryLedger:
         ):
             raise RpfContractError("technical recovery action is invalid")
         row = self._row(action.failure_id)
-        if row["pending_attempt_id"] != action.attempt_id or row["resolved"]:
+        if (
+            row["pending_attempt_id"] != action.attempt_id
+            or row["pending_strategy"] != action.strategy
+            or row["resolved"]
+        ):
             raise RpfContractError("technical recovery action is stale")
         row["pending_attempt_id"] = None
+        row["pending_strategy"] = None
+        if action.strategy == "reconcile-interrupted-attempt":
+            row["interrupted_strategy"] = None
         _TECHNICAL_RECOVERY_ACTION_REGISTRY.pop(id(action), None)
         _ISSUED_FINGERPRINTS.pop(id(action), None)
         if recovered:
@@ -3995,12 +4014,158 @@ class TechnicalRecoveryLedger:
         return json.dumps(
             {
                 "format": "rpf-technical-recovery-v1",
-                "rows": self._rows,
+                "rows": {
+                    failure_id: dict(row)
+                    for failure_id, row in sorted(self._rows.items())
+                },
             },
             ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
+
+    def export_state(self, *, authentication_key: bytes) -> bytes:
+        """Persist safe technical recovery state for a later host process."""
+
+        payload = json.loads(
+            self.snapshot().decode("utf-8"),
+            object_pairs_hook=_strict_pairs,
+            parse_constant=_reject_json_constant,
+        )
+        return _encode_authenticated_state(
+            payload, authentication_key=authentication_key
+        )
+
+    @classmethod
+    def from_snapshot(
+        cls, raw: bytes, *, authentication_key: bytes
+    ) -> "TechnicalRecoveryLedger":
+        """Restore authenticated state without trusting a stale sealed action."""
+
+        value = _decode_authenticated_state(
+            raw,
+            authentication_key=authentication_key,
+            expected_format="rpf-technical-recovery-v1",
+        )
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"format", "rows"}
+            or not isinstance(value.get("rows"), dict)
+        ):
+            raise RpfContractError("technical recovery snapshot is malformed")
+        ledger = cls()
+        row_keys = {
+            "failure_kind",
+            "observations",
+            "attempted",
+            "carry_count",
+            "pending_attempt_id",
+            "pending_strategy",
+            "interrupted_strategy",
+            "resolved",
+        }
+        safe_count_limit = (1 << 63) - 1
+        for failure_id, saved in value["rows"].items():
+            if not isinstance(saved, dict) or set(saved) != row_keys:
+                raise RpfContractError("technical recovery snapshot row is malformed")
+            failure_kind = saved["failure_kind"]
+            expected_id = (
+                "TECH-" + failure_kind.upper()
+                if isinstance(failure_kind, str)
+                else None
+            )
+            strategies = cls._STRATEGIES.get(failure_kind)
+            attempted = saved["attempted"]
+            pending_id = saved["pending_attempt_id"]
+            pending_strategy = saved["pending_strategy"]
+            interrupted_strategy = saved["interrupted_strategy"]
+            if (
+                failure_id != expected_id
+                or strategies is None
+                or type(saved["observations"]) is not int
+                or not 1 <= saved["observations"] <= safe_count_limit
+                or not isinstance(attempted, list)
+                or tuple(attempted) != strategies[: len(attempted)]
+                or type(saved["carry_count"]) is not int
+                or not 0 <= saved["carry_count"] <= safe_count_limit
+                or (
+                    saved["carry_count"] > 0
+                    and len(attempted) != len(strategies)
+                )
+                or type(saved["resolved"]) is not bool
+                or (
+                    pending_id is not None
+                    and (
+                        not isinstance(pending_id, str)
+                        or re.fullmatch(r"rpf-tech-[0-9a-f]{32}", pending_id)
+                        is None
+                    )
+                )
+                or (
+                    pending_strategy is not None
+                    and pending_strategy
+                    not in {
+                        *strategies,
+                        "carry-forward-retry",
+                        "reconcile-interrupted-attempt",
+                    }
+                )
+                or (pending_id is None) != (pending_strategy is None)
+                or (
+                    interrupted_strategy is not None
+                    and interrupted_strategy
+                    not in {*strategies, "carry-forward-retry"}
+                )
+                or (
+                    pending_strategy == "reconcile-interrupted-attempt"
+                    and interrupted_strategy is None
+                )
+                or (
+                    pending_strategy not in {None, "reconcile-interrupted-attempt"}
+                    and interrupted_strategy is not None
+                )
+                or (
+                    pending_strategy in strategies
+                    and (
+                        not attempted
+                        or attempted[-1] != pending_strategy
+                    )
+                )
+                or (
+                    pending_strategy == "carry-forward-retry"
+                    and saved["carry_count"] < 1
+                )
+                or (
+                    interrupted_strategy in strategies
+                    and (
+                        not attempted
+                        or attempted[-1] != interrupted_strategy
+                    )
+                )
+                or (
+                    interrupted_strategy == "carry-forward-retry"
+                    and saved["carry_count"] < 1
+                )
+                or (
+                    saved["resolved"]
+                    and (pending_id is not None or interrupted_strategy is not None)
+                )
+            ):
+                raise RpfContractError("technical recovery snapshot row is malformed")
+            restored_interrupted = interrupted_strategy
+            if pending_strategy not in {None, "reconcile-interrupted-attempt"}:
+                restored_interrupted = pending_strategy
+            ledger._rows[failure_id] = {
+                "failure_kind": failure_kind,
+                "observations": saved["observations"],
+                "attempted": list(attempted),
+                "carry_count": saved["carry_count"],
+                "pending_attempt_id": None,
+                "pending_strategy": None,
+                "interrupted_strategy": restored_interrupted,
+                "resolved": saved["resolved"],
+            }
+        return ledger
 
     def _row(self, failure_id: str) -> dict[str, Any]:
         try:

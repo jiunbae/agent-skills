@@ -34,6 +34,15 @@ local strategies are exhausted, use
 `carry-forward-retry`; do not convert recurrence count, elapsed goal turns, or
 unchanged hashes into `blocked`.
 
+Keep `snapshot()` in process only. For a host/process restart, persist the
+ledger with `export_state(authentication_key=...)` and restore it with
+authenticated `from_snapshot()` using the opaque host-held restart key. Never
+serialize or print that key. A process-local pending action cannot survive as
+authority: restoration converts it to `reconcile-interrupted-attempt`, so the
+controller observes the affected sink before retrying or advancing. Invalid or
+missing authentication discards claimed progress and recreates the closed safe
+failure row; it does not block the goal.
+
 | Failure kind | Continue with |
 |---|---|
 | bundle refresh or runtime import | Re-pin; then use the disclosed coherent verified ancestor bundle when the current commit is invalid |
@@ -56,6 +65,12 @@ syntax-invalid bundle, it searches a bounded first-parent window and may use
 only the nearest complete syntax-valid bundle. It returns both
 `requested_revision` and `source_revision`; this recovery is never silent.
 One invocation keeps that exact bundle until cleanup.
+
+If the loaded bootstrap cannot parse/import or returns unavailable, execute
+only sibling `scripts/rpf_rescue.py pin`. It reads a bounded first-parent
+history for a syntax-valid prior committed bootstrap and discloses its
+`rescue_source_revision`. The rescued bootstrap, not the rescue wrapper,
+validates and pins the complete bundle. Neither entry point reads target bytes.
 
 If no bundle can be pinned, do not inspect target bytes. Keep retrying with
 bounded backoff across continuation opportunities and report

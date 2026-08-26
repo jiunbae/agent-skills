@@ -38,10 +38,12 @@ BUNDLE_PATHS = (
     "references/runtime-contract.md",
     "references/technical-recovery.md",
     "scripts/rpf_bootstrap.py",
+    "scripts/rpf_rescue.py",
     "scripts/rpf_runtime.py",
 )
 RUNTIME_PATH = "scripts/rpf_runtime.py"
 BOOTSTRAP_PATH = "scripts/rpf_bootstrap.py"
+RESCUE_PATH = "scripts/rpf_rescue.py"
 
 
 class RpfBootstrapError(RuntimeError):
@@ -215,6 +217,7 @@ def _validate_files(files: Mapping[str, bytes]) -> str:
         raise RpfBootstrapError("RPF bundle inventory is incomplete or reordered")
     for relative, label in (
         (BOOTSTRAP_PATH, "bootstrap"),
+        (RESCUE_PATH, "rescue"),
         (RUNTIME_PATH, "runtime"),
     ):
         try:

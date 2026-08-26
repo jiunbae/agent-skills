@@ -2330,6 +2330,67 @@ class RpfRuntimeContractTest(unittest.TestCase):
         )
         self.assertEqual(first, reopened)
         self.assertIn(first, recovery.unresolved_failures())
+        restarted = recovery.next_action(first)
+        assert restarted is not None
+        self.assertEqual(
+            runtime.TechnicalRecoveryLedger._STRATEGIES[
+                first.removeprefix("TECH-").lower()
+            ][0],
+            restarted.strategy,
+        )
+        recovery.finish_action(restarted, recovered=False)
+
+        process_recovery = runtime.TechnicalRecoveryLedger()
+        process_failure = process_recovery.record_failure(
+            failure_kind="bundle-refresh"
+        )
+        interrupted = process_recovery.next_action(process_failure)
+        assert interrupted is not None
+        exported = process_recovery.export_state(
+            authentication_key=self.restart_key
+        )
+        restored = runtime.TechnicalRecoveryLedger.from_snapshot(
+            exported, authentication_key=self.restart_key
+        )
+        reconciliation = restored.next_action(process_failure)
+        assert reconciliation is not None
+        self.assertEqual("reconcile-interrupted-attempt", reconciliation.strategy)
+        restored.finish_action(reconciliation, recovered=False)
+        next_distinct = restored.next_action(process_failure)
+        assert next_distinct is not None
+        self.assertEqual("pin-verified-ancestor-bundle", next_distinct.strategy)
+        restored.finish_action(next_distinct, recovered=False)
+
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.TechnicalRecoveryLedger.from_snapshot(
+                process_recovery.snapshot(), authentication_key=self.restart_key
+            )
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.TechnicalRecoveryLedger.from_snapshot(
+                exported,
+                authentication_key=runtime.create_restart_authentication_key(),
+            )
+        authenticated_payload = json.loads(exported)["payload"]
+        forged_payload = copy.deepcopy(authenticated_payload)
+        forged_payload["rows"][process_failure]["failure_kind"] = "push"
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.TechnicalRecoveryLedger.from_snapshot(
+                runtime._encode_authenticated_state(
+                    forged_payload, authentication_key=self.restart_key
+                ),
+                authentication_key=self.restart_key,
+            )
+        impossible_pending = copy.deepcopy(authenticated_payload)
+        impossible_pending["rows"][process_failure][
+            "interrupted_strategy"
+        ] = "retry-bundle-pin"
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.TechnicalRecoveryLedger.from_snapshot(
+                runtime._encode_authenticated_state(
+                    impossible_pending, authentication_key=self.restart_key
+                ),
+                authentication_key=self.restart_key,
+            )
 
     def test_n2_barrier_failures_adapt_and_continue_instead_of_stalled_stop(self) -> None:
         recovery = runtime.AdaptiveRecoveryLedger(total_cycles=128)

@@ -37,6 +37,18 @@ run the small bootstrap from the skill directory that the host loaded:
 python3 <LOADED_SKILL_DIR>/scripts/rpf_bootstrap.py pin
 ```
 
+If that entry point cannot parse/import or returns `status=unavailable`, run
+the independent committed-ancestor rescue entry point once:
+
+```text
+python3 <LOADED_SKILL_DIR>/scripts/rpf_rescue.py pin
+```
+
+The rescue executes no target bytes. It loads a syntax-valid prior committed
+bootstrap, which still validates and pins one coherent complete bundle. Accept
+only its single ready result and also freeze/report its
+`rescue_source_revision`; never reconstruct bootstrap code in a prompt.
+
 Accept only its single `rpf-pinned-bundle-v1` JSON result with `status=ready`.
 Freeze its `skill_dir`, `runtime_script`, `requested_revision`,
 `source_revision`, and `bundle_sha256` for the entire invocation as
@@ -188,7 +200,7 @@ Writer rules:
   atomic exchange with displaced-identity validation and rollback. A
   cooperative replace is not publication authority: when exchange is absent
   or fails, preserve every nonrestricted base/current/candidate variant and
-  block that write before the root changes. For a restricted variant preserve
+  defer that write before the root changes. For a restricted variant preserve
   only an opaque random incident ID—never copy or value-hash its bytes.
   Reconcile safe records and escalate only unresolved meaning.
   See
@@ -491,6 +503,10 @@ For an infrastructure exception or unavailable capability, read technical-
 recovery.md, register only its closed safe failure kind in
 `TechnicalRecoveryLedger`, and execute the returned distinct action. Never put
 exception text, repository bytes, credentials, or findings in that ledger.
+Persist it only with `export_state(authentication_key=...)` using the same
+opaque host-held restart key, and reconstruct it with authenticated
+`from_snapshot()`. A pending process-local action restores as
+`reconcile-interrupted-attempt`, never as completed or safe to repeat blindly.
 Technical recurrence keeps status `running`, or `limit-reached` at the exact
 invocation boundary; it never yields `blocked` or consumes a same-blocker goal
 turn. Continue independent safe lanes and defer only the failed sink.
