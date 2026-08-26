@@ -1289,3 +1289,68 @@ test("promotion writes core-compatible managed sequence and parallel edges", (t)
     ],
   );
 });
+
+test("terminal evidence reads exit status and error fields the way providers write them", () => {
+  const limits = {
+    maxEvents: 100,
+    maxEventBytes: 64 * 1024,
+    maxTotalBytes: 1024 * 1024,
+  };
+  const statusOf = (agent, event) =>
+    normalizeProviderEvent(agent, event, 1, limits).status;
+
+  // A signal-terminated run encodes -1, and a provider that writes a
+  // non-numeric code has told us something went wrong either way. Reading
+  // "not greater than zero" as success published both as completed while the
+  // retained event still carried the failing code.
+  // A literal NaN never reaches here: the event validator rejects non-finite
+  // numbers first, and JSON cannot carry one.
+  for (const exitCode of [-1, "failed", 7, "7"]) {
+    assert.equal(
+      statusOf("codex", { type: "turn.completed", exit_code: exitCode }),
+      "failed",
+      `codex exit_code ${String(exitCode)} must not read as success`,
+    );
+    assert.equal(
+      statusOf("claude", { type: "result", exit_code: exitCode }),
+      "failed",
+      `claude exit_code ${String(exitCode)} must not read as success`,
+    );
+  }
+  assert.equal(
+    statusOf("codex", { type: "turn.completed", exit_code: 0 }),
+    "completed",
+  );
+  assert.equal(statusOf("codex", { type: "turn.completed" }), "completed");
+
+  // An absent error and an explicit null error are the same claim: no error.
+  for (const agent of ["codex", "claude"]) {
+    const type = agent === "codex" ? "turn.completed" : "result";
+    assert.equal(
+      statusOf(agent, { type, error: null }),
+      "completed",
+      `${agent} error:null must not read as failure`,
+    );
+    assert.equal(statusOf(agent, { type, error: "boom" }), "failed");
+  }
+
+  // The same two readings apply to nested item and tool evidence.
+  assert.equal(
+    statusOf("codex", {
+      type: "item.completed",
+      item: { type: "command_execution", exit_code: -1 },
+    }),
+    "failed",
+  );
+  assert.equal(
+    statusOf("codex", {
+      type: "item.completed",
+      item: { type: "command_execution", error: null },
+    }),
+    "completed",
+  );
+  assert.equal(
+    statusOf("claude", { type: "tool_result", error: null }),
+    "completed",
+  );
+});

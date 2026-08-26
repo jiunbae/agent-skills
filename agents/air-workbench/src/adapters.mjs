@@ -729,6 +729,22 @@ function rawType(agent, event) {
   return "unknown";
 }
 
+// A provider reports "no error" as an absent field or an explicit null, and both
+// mean the same thing. Reading a present-but-null field as evidence published
+// successful runs as failed ones.
+function errorEvidence(value) {
+  return value !== undefined && value !== null;
+}
+
+// Success is exit status zero, not "not greater than zero". The previous test
+// read -1 - the conventional signal-terminated encoding - and any non-numeric
+// value as success, so a killed run was published as completed while its own
+// retained event still carried the non-zero code.
+function exitCodeEvidence(value) {
+  if (value === undefined || value === null) return false;
+  return !(typeof value === "number" && value === 0);
+}
+
 function portableEvent(agent, event) {
   const type = rawType(agent, event);
   if (agent === "codex") {
@@ -740,8 +756,8 @@ function portableEvent(agent, event) {
       const failed =
         explicitNonSuccessStatus ||
         event.is_error === true ||
-        event.error !== undefined ||
-        event.exit_code > 0;
+        errorEvidence(event.error) ||
+        exitCodeEvidence(event.exit_code);
       return ["turn.completed", failed ? "failed" : "completed"];
     }
     if (type === "turn.failed" || type === "error") {
@@ -753,11 +769,11 @@ function portableEvent(agent, event) {
       const itemFailed =
         ending === "completed" &&
         (event.is_error === true ||
-          event.error !== undefined ||
+          errorEvidence(event.error) ||
           event.item?.is_error === true ||
-          event.item?.error !== undefined ||
+          errorEvidence(event.item?.error) ||
           ["error", "failed"].includes(event.item?.status) ||
-          event.item?.exit_code > 0);
+          exitCodeEvidence(event.item?.exit_code));
       if (
         itemType === "command_execution" ||
         itemType === "mcp_tool_call" ||
@@ -800,8 +816,8 @@ function portableEvent(agent, event) {
         explicitNonSuccessStatus ||
         explicitNonSuccessSubtype ||
         event.is_error === true ||
-        event.error !== undefined ||
-        event.exit_code > 0;
+        errorEvidence(event.error) ||
+        exitCodeEvidence(event.exit_code);
       return [failed ? "run.failed" : "run.completed", failed ? "failed" : "completed"];
     }
     if (type === "assistant") {
@@ -825,7 +841,7 @@ function portableEvent(agent, event) {
             (block) =>
               block.is_error === true ||
               block.status === "failed" ||
-              block.error !== undefined,
+              errorEvidence(block.error),
           );
           return [
             failed ? "tool.failed" : "tool.completed",
@@ -841,7 +857,7 @@ function portableEvent(agent, event) {
       const failed =
         event.is_error === true ||
         event.status === "failed" ||
-        event.error !== undefined;
+        errorEvidence(event.error);
       return [failed ? "tool.failed" : "tool.completed", failed ? "failed" : "completed"];
     }
     if (type === "hook_progress") return ["provider.retrying", "running"];
