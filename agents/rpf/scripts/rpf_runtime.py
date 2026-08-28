@@ -861,7 +861,11 @@ def _normalized_scope(scope: object) -> tuple[str, ...] | None:
             or "\\" in path
             or any(ord(char) < 32 or ord(char) == 127 for char in path)
             or any(part in {"", ".", ".."} for part in parts)
-            or any(char in path for char in "*?[")
+            # "[" and "]" are literal path bytes. SCOPE entries are exact paths,
+            # never patterns: they are resolved verbatim and never reach a glob
+            # engine or a git pathspec, so framework-mandated literal filenames
+            # such as Expo Router's app/[id].tsx stay addressable.
+            or any(char in path for char in "*?")
         ):
             return None
     return paths

@@ -171,10 +171,15 @@ Fence ID alias:
    current fence and for every row consumed by a convergence reducer.
 2. `SCOPE` is a nonempty sequence of exact regular-file paths from the approved
    source snapshot. Normalize each path to repository-relative POSIX form and
-   reject an empty path, absolute path, `.` or `..` segment, backslash, glob
-   metacharacter (`*`, `?`, `[`), directory, symlink, device, socket, or missing
-   path. Require unique paths in bytewise ascending UTF-8 order; never sort or
-   deduplicate a malformed supplied scope into validity.
+   reject an empty path, absolute path, `.` or `..` segment, backslash,
+   glob-expansion metacharacter (`*`, `?`), directory, symlink, device, socket,
+   or missing path. `[` and `]` are accepted as literal path bytes: SCOPE
+   entries are exact paths, never patterns, and implementations must resolve
+   them verbatim without ever passing them to a glob engine or a git pathspec —
+   framework-mandated literal filenames such as Expo Router's
+   `src/app/task/[id].tsx` are valid scope members. Require unique paths in
+   bytewise ascending UTF-8 order; never sort or deduplicate a malformed
+   supplied scope into validity.
 3. `SCOPE_HASH` is exactly 64 lowercase hexadecimal bytes and equals a separate
    recomputation over the approved immutable snapshot: for every supplied path
    in its already validated order, append its exact UTF-8 path, `NUL`, the
