@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-31-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-30-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-20-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#quickstart-for-agents">Quickstart</a> •
@@ -53,14 +53,14 @@ Install the agent-skills toolkit into this project:
    npx @open330/agt skill list --agent codex
    npx @open330/agt persona list
 
-5. Optional — the "core" profile does not include `agents/air-workbench`.
-   Install that one explicitly only if you want the local graph workbench:
-   npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
+5. Optional — AIR Workbench is maintained separately. Install it only if you
+   want the local graph workbench:
+   npx @open330/agt skill install --from jiunbae/AIR/air-workbench --global
 
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
-<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=31+skills&model=Opus+4.8&project=agent-skills" width="100%" /></div>
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=30+skills&model=Opus+4.8&project=agent-skills" width="100%" /></div>
 
 ---
 
@@ -133,37 +133,34 @@ Installed by default with `--core`:
 A Skill's `name` frontmatter must equal its directory name. A host lists a Skill
 by its directory, so any other declared name is a second name nobody can type,
 and catalog items are keyed on the frontmatter name, which makes the divergence
-observable rather than cosmetic. `agents/air-workbench` enforces this in
-`tests/core.test.mjs`.
+observable rather than cosmetic. `meta/skill-manager/tests/test_skill_names.py`
+enforces this repository's fixed-depth Skill inventory.
 
 ### Opt-in Skills (not in `core`)
 
-Every other skill in the catalog is installed on request. `agents/air-workbench`
-is deliberately one of them: it ships a local HTTP server, a checked-in browser
-bundle, and an approval-gated native-run path, so it stays opt-in rather than
-being added to every workspace by default. Nothing in `--profile core` or
-`--core` installs it. Pick whichever path you already use:
+Every other skill in the catalog is installed on request. Pick whichever path
+you already use, for example:
 
 ```bash
-# npx
-npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
-
-# agt CLI
-agt skill install -g --from jiunbae/agent-skills/agents/air-workbench
-
-# install.sh, from a repository checkout
-./install.sh agents/air-workbench
+npx @open330/agt skill install \
+  --from jiunbae/agent-skills/development/playwright \
+  --global
 ```
 
-Then run it from the installed copy — it needs no `npm install`:
+### AIR Workbench
+
+AIR Workbench has moved to the separate
+[`jiunbae/AIR`](https://github.com/jiunbae/AIR) repository. It remains opt-in
+and is no longer part of this catalog or its release cycle:
 
 ```bash
-node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
+npx @open330/agt skill install \
+  --from jiunbae/AIR/air-workbench \
+  --global
 ```
 
-The same form works for any other catalog entry, for example
-`--from jiunbae/agent-skills/development/playwright` or
-`./install.sh integrations/slack-skill`.
+See the AIR repository for runtime and migration instructions. Historical
+`agent-skills` tags retain the formerly bundled package.
 
 ---
 
@@ -178,7 +175,6 @@ The same form works for any other catalog entry, for example
 | `background-reviewer` | Bounded parallel persona review with adversarial verification and root-cause merge |
 | `incident-writer` | Structured incident and status-page reports |
 | `rpf` | Explicit pointer-driven multi-agent review, plan, work, and feedback loop |
-| `air-workbench` | AIR Skill workflow editing, local Skill discovery, plan approval, and observable tracing |
 
 ### 🛠 development/ — Dev Tools
 

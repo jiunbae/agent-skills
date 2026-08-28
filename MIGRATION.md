@@ -5,6 +5,7 @@
 | Repository | Owns |
 |---|---|
 | `jiunbae/agent-skills` | Skills, personas, hooks, profiles, and static context |
+| `jiunbae/AIR` | AIR Workbench, AIR schemas, specification, and release gate |
 | `Open330/agt` | Rust CLI, npm packages, platform binaries, and release automation |
 
 The old Rust and npm sources that were embedded in `agent-skills` were removed.
@@ -44,18 +45,24 @@ ln -s ~/workspace/agent-skills ~/.agent-skills
 `agt` resolves `~/.agent-skills` before legacy `~/.agt` and `~/agt` fallbacks.
 Remove old duplicate skill checkouts after confirming the canonical checkout.
 
-## AIR Workbench Package Directory Rename
+## AIR Workbench Repository Extraction
 
-The AIR Workbench package directory was renamed from `agents/workflow-studio`
-to `agents/air-workbench`, matching the name both READMEs already list. Install
-it with the documented path:
+AIR Workbench moved from `agents/air-workbench` to the standalone
+`jiunbae/AIR` repository. Install the new canonical package path with:
 
 ```bash
-./install.sh agents/air-workbench
+npx @open330/agt skill install \
+  --from jiunbae/AIR/air-workbench \
+  --global
 ```
 
-If you installed it under the old path before this change, remove the orphaned
-copy once:
+Historical `agent-skills` tags retain the old package. The standalone
+repository preserves its filtered Git history, but owns all future AIR code,
+schema, specification, test, and release changes.
+
+The package was named `agents/workflow-studio` before it became
+`agents/air-workbench`. If that older directory is still installed, remove the
+orphaned copy once:
 
 ```bash
 ./install.sh --codex --uninstall agents/workflow-studio
@@ -69,10 +76,12 @@ Passing `--codex` on an uninstall does not install anything.
 Marker, error-code, environment-variable and legacy hash spellings, the
 `schemas/workflow-ir.schema.json` `$id`, and the `scripts/workflow-studio.mjs`
 compatibility entry point intentionally keep the historical `workflow-studio`
-name so existing artifacts stay valid. No artifact migration is required.
+name in the AIR repository so existing artifacts stay valid. No artifact
+migration is required.
 
 ## Maintainer Rule
 
 - Skill changes are committed only to `jiunbae/agent-skills`.
+- AIR Workbench and AIR contract changes are committed only to `jiunbae/AIR`.
 - CLI and release changes are committed only to `Open330/agt`.
-- Install examples must use `--from jiunbae/agent-skills`.
+- Install examples use the repository that owns the selected package.

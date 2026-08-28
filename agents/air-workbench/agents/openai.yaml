@@ -1,7 +1,0 @@
-interface:
-  display_name: "AIR Workbench"
-  short_description: "Visualize, round-trip, and promote Agent Skills as AIR"
-  default_prompt: "Use $air-workbench to discover local Agent Skills, edit a Skill workflow as an AIR graph, review a native Codex or Claude plan, inspect observable execution evidence, or promote a reviewed plan or trace into a Skill draft."
-
-policy:
-  allow_implicit_invocation: false

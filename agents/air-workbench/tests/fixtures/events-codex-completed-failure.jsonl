@@ -1,2 +1,0 @@
-{"type":"thread.started"}
-{"type":"turn.completed","status":"failed","error":{"message":"boom"}}

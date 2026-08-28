@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#라이선스"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-31-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-30-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-20-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#스킬-카탈로그">스킬</a> •
@@ -44,9 +44,8 @@ npx @open330/agt skill install --profile core --from jiunbae/agent-skills --agen
 npx @open330/agt skill list
 npx @open330/agt skill list --agent codex
 
-# 선택 사항: core 프로필에는 agents/air-workbench가 포함되지 않는다.
-# 로컬 그래프 워크벤치가 필요할 때만 따로 설치한다.
-npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
+# 선택 사항: AIR Workbench는 별도 저장소에서 관리한다.
+npx @open330/agt skill install --from jiunbae/AIR/air-workbench --global
 
 # 또는 install.sh 직접 사용
 git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
@@ -115,36 +114,33 @@ cd ~/.agent-skills
 스킬의 `name` frontmatter는 디렉터리명과 같아야 한다. 호스트는 스킬을 디렉터리명으로
 노출하므로 다른 이름을 선언하면 아무도 입력할 수 없는 두 번째 이름이 생긴다. 카탈로그
 아이템은 frontmatter의 `name`을 키로 쓰기 때문에 이 불일치는 표기 문제가 아니라 실제로
-관측된다. `agents/air-workbench`의 `tests/core.test.mjs`가 이를 강제한다.
+관측된다. `meta/skill-manager/tests/test_skill_names.py`가 이 저장소의 고정 깊이 스킬 목록을
+검사한다.
 
 ### 선택 설치 스킬 (`core`에 없음)
 
-카탈로그의 나머지 스킬은 요청할 때만 설치된다. `agents/air-workbench`도
-의도적으로 그중 하나다. 로컬 HTTP 서버와 체크인된 브라우저 번들, 승인 게이트가
-붙은 네이티브 실행 경로를 함께 제공하므로 모든 워크스페이스에 기본 포함하지 않고
-선택 설치로 남겨 두었다. `--profile core`나 `--core`로는 설치되지 않는다.
-평소 쓰던 방식 중 하나를 고르면 된다.
+카탈로그의 나머지 스킬은 요청할 때만 설치된다. 예를 들면 다음과 같다.
 
 ```bash
-# npx
-npx @open330/agt skill install --from jiunbae/agent-skills/agents/air-workbench --global
-
-# agt CLI
-agt skill install -g --from jiunbae/agent-skills/agents/air-workbench
-
-# 레포지토리 체크아웃에서 install.sh 사용
-./install.sh agents/air-workbench
+npx @open330/agt skill install \
+  --from jiunbae/agent-skills/development/playwright \
+  --global
 ```
 
-설치된 사본에서 바로 실행한다. `npm install`은 필요하지 않다.
+### AIR Workbench
+
+AIR Workbench는 별도
+[`jiunbae/AIR`](https://github.com/jiunbae/AIR) 저장소로 이동했다. 계속
+선택 설치 항목이지만 더 이상 이 카탈로그와 릴리스 주기에 포함되지 않는다.
 
 ```bash
-node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
+npx @open330/agt skill install \
+  --from jiunbae/AIR/air-workbench \
+  --global
 ```
 
-같은 형식을 다른 카탈로그 항목에도 쓸 수 있다. 예를 들어
-`--from jiunbae/agent-skills/development/playwright`,
-`./install.sh integrations/slack-skill`.
+실행 및 마이그레이션 방법은 AIR 저장소를 참고한다. 이전에 함께 배포된
+패키지는 과거 `agent-skills` 태그에 그대로 남아 있다.
 
 ---
 
@@ -159,7 +155,6 @@ node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
 | `background-reviewer` | 페르소나 병렬 리뷰 + 적대적 검증 + root-cause 병합 |
 | `incident-writer` | 구조화된 장애 및 상태 페이지 보고서 작성 |
 | `rpf` | 하나의 동적 pointer 문서를 따르는 다중 에이전트 리뷰·계획·작업·피드백 루프 |
-| `air-workbench` | AIR Skill 워크플로 편집·로컬 Skill 탐색·계획 승인·관찰 가능한 추적 |
 
 ### 🛠 development/ — 개발 도구
 

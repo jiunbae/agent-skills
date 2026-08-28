@@ -32,7 +32,3 @@ records its origin in its own `SKILL.md`.
   by hletrd, used with permission under the MIT License.
 - `development/grill-me` is adapted from
   [`mattpocock/skills · grill-me`](https://github.com/mattpocock/skills/blob/main/skills/productivity/grill-me/SKILL.md).
-
-`agents/air-workbench` bundles third-party build output. Its exact package
-inventory, versions and license notices are recorded in
-`agents/air-workbench/THIRD_PARTY_NOTICES.md`.

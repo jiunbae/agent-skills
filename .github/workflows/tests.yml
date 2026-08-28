@@ -80,29 +80,3 @@ jobs:
           # Generated rulebooks drift silently when the canonical source
           # changes without a rebuild, so the check gates every push.
           python common/korean-editor/scripts/build_runtime_rules.py --check
-
-  air:
-    name: AIR source release gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-
-      - name: Set up supported Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
-        with:
-          node-version: '22.22.0'
-
-      - name: Install exact browser acceptance dependencies
-        working-directory: development/playwright
-        run: npm ci --ignore-scripts
-
-      - name: Install acceptance Chromium
-        working-directory: development/playwright
-        run: ./node_modules/.bin/playwright install --with-deps chromium
-
-      - name: Verify AIR source, generated assets, and examples
-        env:
-          WORKFLOW_STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/development/playwright/node_modules/playwright-core/index.mjs
-        run: node agents/air-workbench/scripts/verify-release.mjs --source

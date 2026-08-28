@@ -17,6 +17,12 @@ tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
 
 ### Changed
+- AIR Workbench moved to the standalone `jiunbae/AIR` repository with its Git
+  history, schemas, specification, tests, browser acceptance dependencies, and
+  release gate. `agents/air-workbench` and its repository-specific CI job are
+  removed here; the canonical install source is now
+  `jiunbae/AIR/air-workbench`. Historical `agent-skills` tags retain the old
+  package for reproducible installs.
 - `context/context-manager` leaves the `core` profile and its two scripts are
   deleted. `find_context.py` scored only filenames and parent directory names,
   never document bodies, so a term that appears in the text — the normal case —
