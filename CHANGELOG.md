@@ -17,6 +17,19 @@ tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
 
 ### Changed
+- `context/context-manager` leaves the `core` profile and its two scripts are
+  deleted. `find_context.py` scored only filenames and parent directory names,
+  never document bodies, so a term that appears in the text — the normal case —
+  scored zero; `README.md` was pinned to 0.7 and always ranked first; and the
+  10% recency weight penalised exactly the stable, canonical documents worth
+  reading. On a real `context/` the gap between the correct document and an
+  unrelated one was 0.009, which is noise. `grep -ril` over the bodies is
+  strictly more accurate, so the SKILL.md now says to do that. `update_context.py`
+  went with it: the skill does not write documents on its own initiative.
+  `references/context_patterns.md` duplicated `static/CONTEXT.md` and cited
+  project layouts that no longer exist. The skill remains installable on
+  request and keeps its `managing-context` frontmatter name, which is the
+  gerund convention `e529d78` applied across the catalog.
 - CI returns to GitHub Actions: `.gitea/workflows/` moves back to
   `.github/workflows/`, reversing `7792d6d`. That move was justified by Actions
   minutes, which this repository — public — is not billed for, and it cost the

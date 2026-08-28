@@ -161,7 +161,7 @@ README.md    access: none
 프로젝트 컨텍스트 관리 표준을 정의합니다. 암묵지 감소 및 에이전트 간 맥락 공유를 위한 `.context/` 디렉토리 활용 가이드를 제공합니다.
 
 **관리 방법:**
-- `context-manager` 스킬이 참조 및 업데이트 권장
+- `context-manager` 스킬(선택 설치)이 참조 및 업데이트 권장
 - [CONTEXT.md 상세 보기](./CONTEXT.md)
 
 ```
@@ -194,5 +194,5 @@ cd ~/.agt
 
 - **static-index**: WHOAMI.md 생성/관리
 - **git-commit-pr**: SECURITY.md 참조
-- **context-manager**: 프로젝트 컨텍스트 로드 시 참조
+- **context-manager**(선택 설치): 프로젝트 컨텍스트 로드 시 참조
 - **korean-editor**: KOREAN.md의 기준에 어긋난 한국어 초안을 퇴고

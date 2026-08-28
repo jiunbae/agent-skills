@@ -121,7 +121,6 @@ cd ~/.agent-skills
 Installed by default with `--core`:
 
 - `development/git-commit-pr` — Git commit & PR guide
-- `context/context-manager` — Project context auto-loader
 - `context/static-index` — Global static context index
 - `security/security-auditor` — Repository security audit
 - `agents/background-implementer` — Isolated parallel implementation with verified integration
@@ -409,7 +408,7 @@ core:
   description: "Essential skills for every workspace"
   skills:                          # Explicit skill paths
     - development/git-commit-pr
-    - context/context-manager
+    - context/static-index
   groups:                          # Include entire groups
     - agents
 

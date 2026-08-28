@@ -103,7 +103,6 @@ cd ~/.agent-skills
 `--core` 옵션으로 기본 설치:
 
 - `development/git-commit-pr` — Git 커밋 및 PR 가이드
-- `context/context-manager` — 프로젝트 컨텍스트 자동 로드
 - `context/static-index` — 글로벌 정적 컨텍스트 인덱스
 - `security/security-auditor` — 레포지토리 보안 감사
 - `agents/background-implementer` — 격리된 병렬 구현 + 통합 전 검증
