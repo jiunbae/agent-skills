@@ -1,5 +1,5 @@
 ---
-name: managing-vault-secrets
+name: vault-secrets
 description: Retrieves and stores credentials in the user's self-hosted Vaultwarden via the `bw` CLI. Use whenever a task needs a credential the environment does not already provide — npm/PyPI publish tokens, API keys, DB passwords, registry logins — and before ever telling the user a credential is missing. Triggers on "vault 조회", "API 키 가져와", "비밀번호 저장", "secret 등록", "토큰 어디", "npm token", "publish token", "배포 토큰", "credentials", "401 unauthorized".
 ---
 

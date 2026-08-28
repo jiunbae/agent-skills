@@ -1,5 +1,5 @@
 ---
-name: developing-slack-apps
+name: slack-skill
 description: Develops Slack apps and API integrations. Supports Bolt framework, Block Kit UI, event handling, and slash commands. Use for "Slack", "슬랙", "봇", "webhook" requests or Slack app development.
 allowed-tools: Read, Write, Edit, Bash, WebFetch
 ---

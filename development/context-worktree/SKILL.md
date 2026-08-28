@@ -1,5 +1,5 @@
 ---
-name: managing-context-worktree
+name: context-worktree
 description: Evaluates context similarity between new and existing work, automatically creating git worktree on a new branch when tasks differ. Activates on task start, new feature implementation, or switching to different issues.
 ---
 

@@ -2211,10 +2211,10 @@ test("previously recognized Skills keep their exact imported shape and firing ru
     { sourcePath: securityRelative },
   );
   assert.deepEqual(security.graph.nodes.map((node) => node.id), [
-    "step-ddc70b615de2b6be",
-    "step-77114f8b1a777cb7",
-    "step-a4555ff8f575b6c4",
-    "step-8ce2d4240178f02c",
+    "step-bd12735489d902d3",
+    "step-0ae10bc0741544bd",
+    "step-ab326142f7cf73ed",
+    "step-f1714923bb0ccf9d",
   ]);
   // The same bytes read through the absolute path keep the same shape; only the
   // path-derived ids differ.
@@ -2227,6 +2227,38 @@ test("previously recognized Skills keep their exact imported shape and firing ru
     absolute.graph.nodes.map((node) => node.source_map.span),
     security.graph.nodes.map((node) => node.source_map.span),
   );
+});
+
+test("every repository Skill declares the name a reader actually types", async () => {
+  const { readdirSync, statSync, readFileSync } = await import("node:fs");
+  const skills = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === ".git" || name === ".claude") continue;
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (name === "SKILL.md") skills.push(path);
+    }
+  };
+  walk(ROOT);
+  // A host lists a Skill by its directory, so a frontmatter name that says
+  // anything else is a second name nobody can type. Catalog items are keyed on
+  // the frontmatter name, which makes the divergence observable rather than
+  // merely cosmetic. Keep the two identical.
+  const mismatched = [];
+  for (const path of skills) {
+    const directory = path.slice(0, path.lastIndexOf("/")).split("/").pop();
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(
+      readFileSync(path, "utf8"),
+    );
+    if (!frontmatter) continue;
+    const declared = /^name:[ \t]*(?<name>\S+)[ \t]*$/mu.exec(frontmatter[1])
+      ?.groups?.name;
+    if (declared && declared !== directory) {
+      mismatched.push(`${path.slice(ROOT.length + 1)}: ${declared} != ${directory}`);
+    }
+  }
+  assert.deepEqual(mismatched, []);
 });
 
 test("the recognition ladder covers every repository Skill and round-trips byte for byte", async () => {

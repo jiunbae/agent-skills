@@ -952,7 +952,7 @@ test("Workbench proves a source checkout, discovers only grouped Skills, and doe
   assert.equal(checkout.physical_record_count, 31);
   assert.equal(checkout.item_count, 31);
   assert.ok(
-    checkout.items.some((item) => item.name === "analyzing-business-model"),
+    checkout.items.some((item) => item.name === "bm-analyzer"),
   );
   assert.equal(
     checkout.items.some((item) => item.name === "hello-agent"),

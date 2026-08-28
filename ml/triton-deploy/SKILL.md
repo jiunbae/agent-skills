@@ -1,5 +1,5 @@
 ---
-name: deploying-triton
+name: triton-deploy
 description: Deploys and manages NVIDIA Triton Inference Server containers. Automates model repository setup, config generation, and health checks. Use for "triton 서버", "triton 실행", "모델 서빙", "inference server" requests.
 ---
 

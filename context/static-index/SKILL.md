@@ -1,5 +1,5 @@
 ---
-name: indexing-static-context
+name: static-index
 description: Locates existing global context files under ~/.agents without assuming that optional files exist. Use when a task needs the user's profile, security rules, IaC conventions, service registry, Notion/Obsidian/Vault configuration, personas, or a direct "내 정보" or "글로벌 설정" lookup. Do not use it to enumerate installed skills.
 ---
 

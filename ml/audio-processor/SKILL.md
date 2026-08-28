@@ -1,5 +1,5 @@
 ---
-name: processing-audio
+name: audio-processor
 description: Converts and processes audio files using ffmpeg. Supports format conversion, sample rate changes, mono/stereo conversion, and segment splitting. Use for "오디오 변환", "wav 변환", "샘플레이트", "ffmpeg" requests.
 ---
 

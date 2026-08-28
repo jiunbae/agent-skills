@@ -1,81 +1,58 @@
 ---
-name: managing-context
-description: Discovers relevant project context in Markdown documentation by matching the current task to plans, architecture, guides, and operations notes. Use when a request depends on existing project decisions or explicitly asks to inspect project context. Do not trigger for simple questions or tasks that already have sufficient context.
+name: context-manager
+description: Locates a project's own Markdown context directory (.context/ or context/) and loads only the documents the current task depends on. Use when a request turns on existing project decisions — architecture, operational procedures, planning status — or when the user asks to inspect project context. Do not trigger for simple questions, or when the project's CLAUDE.md already names the document to read.
 ---
 
 # Context Manager
 
-Auto-load relevant project documentation.
-
-## Context Directory Structure
-
-```
-context/
-├── planning/       # Roadmaps, implementation plans
-├── architecture/   # System design, decisions
-├── guides/         # Getting started, tutorials
-├── operations/     # Deployment, troubleshooting
-└── README.md       # Context overview
-```
+Projects in this workspace keep durable decisions in `.context/` (or `context/`).
+Load what the task depends on and skip the rest.
 
 ## Workflow
 
-### Step 1: Check for Context
+### Locate
 
 ```bash
-ls -la context/ 2>/dev/null || echo "No context directory"
+ls .context context 2>/dev/null
 ```
 
-### Step 2: Match Documents
+If neither exists, say so and continue without context. Do not create the
+directory.
 
-Based on task keywords:
-- "monitoring" → `context/monitoring/`
-- "deploy" → `context/operations/`
-- "API" → `context/architecture/`
+### Select
 
-### Step 3: Load Relevant Docs
+Read `README.md` first when the directory has one — it is the index.
 
-Read top 3-5 matching documents:
+Then search **document contents**, not filenames. A category name is a weak
+relevance signal and a filename is a weaker one; the term that matters is
+usually in the body.
+
 ```bash
-# Example matches for "add monitoring"
-context/monitoring/architecture.md (score: 0.92)
-context/operations/alerting.md (score: 0.85)
+grep -ril '<term>' .context context 2>/dev/null
 ```
 
-### Step 4: Summarize
+Route by task type when the search is ambiguous: new feature → `planning/`,
+`architecture/`; bug or incident → `operations/`; environment setup →
+`guides/`. The full category convention lives in `~/.agents/CONTEXT.md`.
 
-Brief user on loaded context:
-```
-📄 Loaded context:
-- monitoring/architecture.md: Prometheus + Grafana stack
-- operations/alerting.md: Alert rules and escalation
-```
+Open two to five documents. Loading the whole directory defeats the purpose.
 
-## Matching Algorithm
+### Report
 
-| Factor | Weight |
-|--------|--------|
-| Keyword in filename | 40% |
-| Keyword in category | 30% |
-| Task type match | 20% |
-| Recency | 10% |
+Name the documents you loaded and, for each, the one point that changed your
+plan. If nothing changed it, say that instead of summarizing the file.
 
-## After Task: Update Context When Requested
+### Write back only when asked
 
-Do not mutate context documentation automatically. Update an existing status or
-planning document only when the user requested documentation changes or when the
-task explicitly includes keeping that document current. Preserve its structure
-and use the host's normal safe-editing workflow.
+Do not mutate context documents on your own initiative. Update a status or
+planning document only when the user asked for documentation changes, or when
+the task explicitly includes keeping that document current. Preserve the
+existing structure and headings, and use the host's normal editing workflow.
 
-## Best Practices
+## Notes
 
-**DO:**
-- Check context at task start
-- Update status after completing work when the task authorizes it
-- Keep docs concise
-
-**DON'T:**
-- Load entire context directory
-- Create duplicate documentation
-- Use date-based filenames (git tracks history)
-- Change context documents without task authorization
+- A project's `CLAUDE.md` outranks any search here. When it names the document
+  to read, read that one.
+- Keep documents concise and cross-link them with relative paths.
+- No dates in filenames — git already tracks history. Record `Last Updated`
+  inside the document instead.

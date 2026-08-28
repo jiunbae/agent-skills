@@ -2,7 +2,6 @@ core:
   description: "Essential skills for every workspace"
   skills:
     - development/git-commit-pr
-    - context/context-manager
     - context/static-index
     - security/security-auditor
     - agents/background-implementer

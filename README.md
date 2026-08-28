@@ -121,13 +121,20 @@ cd ~/.agent-skills
 Installed by default with `--core`:
 
 - `development/git-commit-pr` — Git commit & PR guide
-- `context/context-manager` — Project context auto-loader
 - `context/static-index` — Global static context index
 - `security/security-auditor` — Repository security audit
 - `agents/background-implementer` — Isolated parallel implementation with verified integration
 - `agents/background-planner` — Parallel persona planning with stance-steered synthesis
 - `agents/background-reviewer` — Parallel persona review with adversarial verification
 - `agents/rpf` — Pointer-driven iterative review, plan, work, and feedback
+
+### Skill Naming
+
+A Skill's `name` frontmatter must equal its directory name. A host lists a Skill
+by its directory, so any other declared name is a second name nobody can type,
+and catalog items are keyed on the frontmatter name, which makes the divergence
+observable rather than cosmetic. `agents/air-workbench` enforces this in
+`tests/core.test.mjs`.
 
 ### Opt-in Skills (not in `core`)
 
@@ -409,7 +416,7 @@ core:
   description: "Essential skills for every workspace"
   skills:                          # Explicit skill paths
     - development/git-commit-pr
-    - context/context-manager
+    - context/static-index
   groups:                          # Include entire groups
     - agents
 

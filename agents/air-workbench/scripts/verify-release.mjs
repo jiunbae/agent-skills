@@ -58,7 +58,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "air.test.mjs": 22,
   "catalog.test.mjs": 48,
   "cli.test.mjs": 18,
-  "core.test.mjs": 46,
+  "core.test.mjs": 47,
   "editor.test.mjs": 66,
   "graph-canvas.test.mjs": 10,
   "identity.test.mjs": 4,
