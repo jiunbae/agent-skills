@@ -4117,5 +4117,26 @@ class RpfUiMarkerScopeTest(unittest.TestCase):
         self.assertEqual(2 * len(runtime.UI_KINDS), len(fixture))
 
 
+class LiteralBracketScopeTest(unittest.TestCase):
+    def test_literal_bracket_route_path_is_a_valid_exact_scope_member(self) -> None:
+        # Expo Router-style dynamic-route filenames are literal paths: "[" and
+        # "]" must not be rejected as glob metacharacters in an exact scope.
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            route = Path(directory) / "[id].tsx"
+            route.write_text("export default null;\n", encoding="utf-8")
+            relative = route.relative_to(REPO_ROOT).as_posix()
+            source = {relative: route.read_bytes()}
+            digest = runtime.scope_digest((relative,), source)
+            fence = runtime.canonical_fence(
+                BASE, [relative], digest, source, repository_root=REPO_ROOT
+            )
+            self.assertEqual((BASE, (relative,), digest), fence)
+
+    def test_glob_expansion_metacharacters_remain_rejected(self) -> None:
+        for bad in ("app/*.tsx", "app/?.tsx"):
+            with self.assertRaises(runtime.RpfContractError):
+                runtime.scope_digest((bad,), {bad: b""})
+
+
 if __name__ == "__main__":
     unittest.main()
