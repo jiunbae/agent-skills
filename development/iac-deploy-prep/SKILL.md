@@ -1,5 +1,5 @@
 ---
-name: preparing-iac-deployment
+name: iac-deploy-prep
 description: Prepares IaC project deployment by analyzing the current project and generating K8s manifests, Dockerfiles, CI/CD workflows, Prometheus metrics, Grafana dashboards, Gitea mirror, webhooks, and secrets. Use for "배포 준비", "IaC 설정", "k8s 매니페스트", "deploy prep" requests.
 ---
 

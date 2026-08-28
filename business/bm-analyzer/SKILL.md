@@ -1,5 +1,5 @@
 ---
-name: analyzing-business-model
+name: bm-analyzer
 description: Analyzes the current repository's service from a business model perspective. Multiple BM expert agents (revenue strategist, market analyst, user value analyst, growth strategist) analyze in parallel and suggest monetization strategies. Use for "BM 분석", "수익화 분석", "비즈니스 모델 분석" requests.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: benchmarking-ml-models
+name: ml-benchmark
 description: Guides ML model benchmarks and evaluations. Measures inference speed, memory usage, and accuracy metrics. Use for "벤치마크", "모델 평가", "성능 테스트", "inference 속도" requests.
 ---
 

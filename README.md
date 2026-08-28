@@ -128,6 +128,14 @@ Installed by default with `--core`:
 - `agents/background-reviewer` — Parallel persona review with adversarial verification
 - `agents/rpf` — Pointer-driven iterative review, plan, work, and feedback
 
+### Skill Naming
+
+A Skill's `name` frontmatter must equal its directory name. A host lists a Skill
+by its directory, so any other declared name is a second name nobody can type,
+and catalog items are keyed on the frontmatter name, which makes the divergence
+observable rather than cosmetic. `agents/air-workbench` enforces this in
+`tests/core.test.mjs`.
+
 ### Opt-in Skills (not in `core`)
 
 Every other skill in the catalog is installed on request. `agents/air-workbench`

@@ -1,5 +1,5 @@
 ---
-name: auditing-security
+name: security-auditor
 description: Audits repository security by analyzing current code and commit history for sensitive information leaks. Detects API keys, passwords, and credentials. Use for "보안 점검", "보안 감사", "security audit", "민감 정보 검사" requests.
 ---
 

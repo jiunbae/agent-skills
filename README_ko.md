@@ -110,6 +110,13 @@ cd ~/.agent-skills
 - `agents/background-reviewer` — 페르소나 병렬 리뷰 + 적대적 검증
 - `agents/rpf` — Pointer 기반 반복 리뷰·계획·작업·피드백
 
+### 스킬 이름 규칙
+
+스킬의 `name` frontmatter는 디렉터리명과 같아야 한다. 호스트는 스킬을 디렉터리명으로
+노출하므로 다른 이름을 선언하면 아무도 입력할 수 없는 두 번째 이름이 생긴다. 카탈로그
+아이템은 frontmatter의 `name`을 키로 쓰기 때문에 이 불일치는 표기 문제가 아니라 실제로
+관측된다. `agents/air-workbench`의 `tests/core.test.mjs`가 이를 강제한다.
+
 ### 선택 설치 스킬 (`core`에 없음)
 
 카탈로그의 나머지 스킬은 요청할 때만 설치된다. `agents/air-workbench`도

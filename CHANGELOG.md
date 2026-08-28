@@ -28,8 +28,16 @@ empty `[Unreleased]` section above it.
   went with it: the skill does not write documents on its own initiative.
   `references/context_patterns.md` duplicated `static/CONTEXT.md` and cited
   project layouts that no longer exist. The skill remains installable on
-  request and keeps its `managing-context` frontmatter name, which is the
-  gerund convention `e529d78` applied across the catalog.
+  request.
+- Every Skill's `name` frontmatter now equals its directory name, replacing the
+  gerund names `e529d78` applied to 22 of them. A host lists a Skill by its
+  directory, so `managing-vault-secrets` on `integrations/vault-secrets` was a
+  second name nobody could type; `air-workbench`'s catalog keys items on the
+  frontmatter name, so the two disagreed about what a Skill is called. Renaming
+  the directories instead would have broken every published
+  `--from jiunbae/agent-skills/<group>/<skill>` path, so the declaration moved.
+  `tests/core.test.mjs` now fails on any future divergence, and the frozen
+  `security-auditor` node ids move with the shortened frontmatter line.
 - CI returns to GitHub Actions: `.gitea/workflows/` moves back to
   `.github/workflows/`, reversing `7792d6d`. That move was justified by Actions
   minutes, which this repository — public — is not billed for, and it cost the

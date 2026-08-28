@@ -1,5 +1,5 @@
 ---
-name: managing-context
+name: context-manager
 description: Locates a project's own Markdown context directory (.context/ or context/) and loads only the documents the current task depends on. Use when a request turns on existing project decisions — architecture, operational procedures, planning status — or when the user asks to inspect project context. Do not trigger for simple questions, or when the project's CLAUDE.md already names the document to read.
 ---
 

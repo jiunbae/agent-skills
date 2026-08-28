@@ -2907,10 +2907,10 @@ test("AIR Workbench finds a Skill by the directory label the catalog discloses",
     return;
   }
   const { catalog, first, sessionRegistry, controls } = await fixtures();
-  // The real repository Skill at development/playwright is filed under the
-  // frontmatter name "automating-browser". Neither the name, the description,
-  // nor any source label carries the substring a reader actually types, so
-  // only the published relative_path can satisfy this query.
+  // A Skill whose frontmatter name diverges from its directory. Neither the
+  // name, the description, nor any source label carries the substring a reader
+  // actually types, so only the published relative_path can satisfy this query.
+  // The repository keeps the two aligned, so this case is constructed.
   controls.setSkillCatalog([
     {
       ...skillItem(SKILL_A, "a".repeat(64), "repository"),

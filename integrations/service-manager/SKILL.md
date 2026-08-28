@@ -1,5 +1,5 @@
 ---
-name: managing-services
+name: service-manager
 description: Centrally manages Docker containers and services. Supports service registration, listing, status updates, and port conflict detection. Use for "서비스 등록", "서비스 목록", "포트 확인", "컨테이너 관리", "docker 상태" requests.
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
