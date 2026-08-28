@@ -1,5 +1,5 @@
 ---
-name: grilling-plans
+name: grill-me
 description: Interviews the user relentlessly about a plan or design until you both reach a shared understanding, resolving each branch of the decision tree before any code is written. Use when the user wants to stress-test a plan, pressure-test a design, or says "grill me", "계획 검증", "그릴미", "설계 압박 질문".
 ---
 

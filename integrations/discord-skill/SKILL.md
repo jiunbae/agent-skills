@@ -1,5 +1,5 @@
 ---
-name: managing-discord
+name: discord-skill
 description: Manages Discord servers/channels via REST API. Supports channel CRUD, permissions, messaging, and webhooks. Use for "Discord", "디스코드", "채널 관리", "discord bot" requests.
 allowed-tools: Read, Write, Edit, Bash, WebFetch
 ---

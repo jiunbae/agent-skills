@@ -1,5 +1,5 @@
 ---
-name: analyzing-proposals
+name: proposal-analyzer
 description: Analyzes business proposals and RFP documents, evaluating pricing, deadlines, and technical specifications for feasibility. Generates go/no-go reports. Use for proposal analysis, RFP review, bidding assessment, or business feasibility evaluation.
 ---
 

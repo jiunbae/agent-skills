@@ -1,5 +1,5 @@
 ---
-name: automating-browser
+name: playwright
 description: Provides Playwright-based browser automation and E2E testing. Supports screenshots, web scraping, and form automation. Use for "브라우저", "스크린샷", "E2E 테스트", "웹 스크래핑" requests.
 ---
 

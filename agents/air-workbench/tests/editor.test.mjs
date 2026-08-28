@@ -3221,8 +3221,10 @@ test("Skill search matches the path and source label, not only the name", async 
   const { resourceMatchesQuery, resourceEmptyMessage, resourceSearchText } =
     build(new Map());
 
-  // A repository Skill filed under development/playwright publishes the
-  // frontmatter name "automating-browser"; the directory is what a reader types.
+  // A Skill whose frontmatter name diverges from its directory: the reader
+  // types the directory, so only relative_path can satisfy the query. The
+  // repository itself keeps name and directory aligned, so this case is
+  // constructed rather than sampled.
   const filed = {
     type: "skill",
     id: "skill_PPPPPPPPPPPPPPPPPPPPPP",

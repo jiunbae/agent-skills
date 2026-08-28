@@ -1,5 +1,5 @@
 ---
-name: committing-and-creating-pr
+name: git-commit-pr
 description: Guides local Git commit preparation and pull-request drafting with staged-diff and secret checks. Use when the user asks to commit changes, prepare a conventional commit, or draft a PR. When a dedicated GitHub publishing workflow is available, use it for pushing and opening the PR after these local checks.
 ---
 

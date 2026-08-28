@@ -1,5 +1,5 @@
 ---
-name: managing-skills
+name: skill-manager
 description: Audits and maintains a local skill collection, including discovery, Codex compatibility, trigger scope, installation paths, bundled resources, and validation. Use for "스킬 분석", "스킬 현황", "스킬 점검", "스킬 개선", or skill ecosystem maintenance. Use the built-in skill creator for new skills and substantial rewrites.
 ---
 

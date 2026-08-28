@@ -1,5 +1,5 @@
 ---
-name: syncing-ml-models
+name: model-sync
 description: Synchronizes ML model files across servers. Supports rsync-based transfer with bandwidth control and checksum verification. Use for "모델 동기화", "모델 배포", "rsync 모델", "서버로 전송" requests.
 ---
 

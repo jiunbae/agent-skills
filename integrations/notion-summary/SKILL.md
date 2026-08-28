@@ -1,5 +1,5 @@
 ---
-name: uploading-to-notion
+name: notion-summary
 description: Uploads Claude session summaries or markdown reports to Notion. Use for "노션 업로드", "결과 저장", "notion 정리", "세션 요약", "리포트 업로드", "보고서 작성" requests.
 ---
 
