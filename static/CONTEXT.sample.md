@@ -54,7 +54,8 @@
 
 ## 5. 관련 도구
 - **context-manager**: 이 표준에 맞춰 `.context/`를 탐색하고 필요한 문서만 읽는 선택 설치 스킬입니다.
-  core 프로파일에는 포함되지 않습니다 (`agt skill install --from jiunbae/agent-skills/context/context-manager`).
+  core 프로파일에는 포함되지 않습니다.
+  전역 설치: `agt skill install -g --from jiunbae/agent-skills/context/context-manager`
   이 문서의 규약 자체는 스킬 설치 여부와 무관하게 적용됩니다.
 
 ---
