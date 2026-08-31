@@ -2821,6 +2821,17 @@ _KIND_STATUS = {
 }
 
 
+def _string_sequence(values: object) -> bool:
+    """Nonempty sequence of nonempty strings; accepts the tuple form produced
+    by _freeze_json for validated child envelopes (a raw JSON array is decoded
+    as a list, then frozen to a tuple before reducers re-validate it)."""
+    return (
+        isinstance(values, (list, tuple))
+        and bool(values)
+        and all(isinstance(value, str) and bool(value) for value in values)
+    )
+
+
 def _all_strings(values: object) -> bool:
     return isinstance(values, list) and bool(values) and all(
         isinstance(value, str) and bool(value) for value in values
@@ -7871,7 +7882,7 @@ def carry_open_watches(
                 and verdict.get("status") == "passed"
                 and isinstance(verdict.get("counterexample_search"), str)
                 and bool(verdict["counterexample_search"])
-                and _all_strings(verdict.get("evidence"))
+                and _string_sequence(verdict.get("evidence"))
                 and f"watch:{row['id']}" in verdict["evidence"]
                 for verdict in result.envelope["payload"].get("verdicts", ())
             )

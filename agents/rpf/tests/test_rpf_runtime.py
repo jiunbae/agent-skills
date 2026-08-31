@@ -4138,5 +4138,17 @@ class LiteralBracketScopeTest(unittest.TestCase):
                 runtime.scope_digest((bad,), {bad: b""})
 
 
+class FrozenVerdictClearanceTest(unittest.TestCase):
+    def test_frozen_regression_verdict_evidence_tuple_is_accepted(self) -> None:
+        # _freeze_json turns JSON arrays into tuples; the carry-time verdict
+        # evidence check must accept that frozen form (it previously required
+        # a list, making watch clearance impossible for any sealed result).
+        self.assertTrue(runtime._string_sequence(("watch:WATCH-1",)))
+        self.assertTrue(runtime._string_sequence(["watch:WATCH-1"]))
+        self.assertFalse(runtime._string_sequence(()))
+        self.assertFalse(runtime._string_sequence(("", )))
+        self.assertFalse(runtime._string_sequence("watch:WATCH-1"))
+
+
 if __name__ == "__main__":
     unittest.main()
