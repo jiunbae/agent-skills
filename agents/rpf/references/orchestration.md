@@ -8,6 +8,7 @@ contract, and stop conditions stay in `SKILL.md`.
 ## Contents
 
 - [Orchestration topology](#orchestration-topology)
+- [Host event wait contract](#host-event-wait-contract)
 - [Scheduling and delegation](#scheduling-and-delegation)
 - [Rolling scheduler](#rolling-scheduler)
 - [State-bundle loading](#state-bundle-loading)
@@ -32,6 +33,66 @@ Prefer the topology that preserves native fan-out. Do not place scheduling
 inside a controller that cannot delegate, and do not fall back to role-playing
 multiple reviewers in one context merely to preserve the nested shape. Run only
 one active controller per invocation in either topology.
+
+## Host event wait contract
+
+The supervisor waits for controller/child events; it does not keep work alive
+by polling. Apply this policy to main waiting for a nested cycle controller and
+to a flat controller waiting for its child agents:
+
+```json
+{
+  "default_wait_ms": 1200000,
+  "default_wait_min_ms": 600000,
+  "default_wait_max_ms": 1800000,
+  "post_silence_probe_wait_max_ms": 3600000,
+  "short_poll_threshold_ms": 60000,
+  "short_poll_repeats_allowed": 0,
+  "status_probe_limit_per_controller": 1,
+  "nested_lease_owner": "cycle-controller",
+  "wake_events": [
+    "controller-terminal",
+    "phase-transition",
+    "failure-or-recovery",
+    "material-progress",
+    "user-interrupt"
+  ]
+}
+```
+
+- After launch, arm one host-native event wait for 20 minutes by default,
+  bounded to 10–30 minutes and capped by the controller's remaining real
+  dispatch deadline. The wait must return early for a mailbox message,
+  completion, failure, or user steering; do not sleep and then inspect.
+- A controller proactively emits safe host-internal milestone metadata at a
+  phase transition, terminal result, technical recovery transition, accepted
+  material source change, commit/push result, or gate/deployment result. Do not
+  send periodic `still working` heartbeats, repository bytes, exception text,
+  credentials, findings, or control material merely to wake main. If the host
+  has no intermediate message channel, rely on terminal completion instead of
+  simulating milestones with polling.
+- On a meaningful event, handle it and immediately re-arm one long event wait
+  when the controller remains active. Milestones do not require a status
+  question or a user-facing message; the fixed cycle report remains the normal
+  user update.
+- An empty wait before the dispatch deadline is host silence, not controller
+  failure, cancellation evidence, or a pointer/lease event. Do not repeat the
+  same wait interval or enter a short wait/status-message loop. At most once
+  per controller, perform one non-interrupting status probe after prolonged
+  silence. Then wait for the remaining dispatch deadline, capped by the host's
+  longest event wait. If the host forces finite re-subscription, re-arm only at
+  that maximum bound without another probe or user update.
+- Only the registered dispatch deadline or a user/parent cancellation invokes
+  interrupt, descendant cancellation, stream closure, and tombstoning. A host
+  wait timeout never substitutes for that deadline.
+- While a nested controller is active, it alone refreshes the 900 s run lease
+  and every active work claim before half-life. Main refreshes immediately
+  before launch and performs terminal cleanup after return; it never polls to
+  provide a heartbeat or lease renewal.
+
+Use the longest bounded event wait available when the host cannot express the
+numeric defaults exactly. A fallback remains event/completion-driven and must
+not degrade to repeated sub-minute polling.
 
 ## Scheduling and delegation
 
@@ -114,7 +175,9 @@ not review/verify/work agents. They accept only exact source-grounded coverage
 from captured authority.
 
 Refresh the 900 s run lease before 450 s and each 1800 s work claim before 900 s
-while this scheduler is active. Do not rely on phase boundaries alone.
+while this scheduler is active. The active cycle controller owns these
+refreshes; its supervisor never supplies them through polling. Do not rely on
+phase boundaries alone.
 
 ## State-bundle loading
 

@@ -344,6 +344,11 @@ positive limits for:
 - serialized context bytes; and
 - output bytes/tokens supported by the host.
 
+The dispatch deadline is distinct from the supervisor's mailbox/event wait.
+Use orchestration.md's **Host event wait contract** for long early-return host
+waits; an empty host wait never proves timeout and never authorizes
+cancellation or tombstoning.
+
 Register the unique dispatch ID in `DispatchLedger` before launch. Use bounded
 waits. Immediately after an asynchronous launch, call `attach_host()` with the
 real process-group leader, descendant PID, and output stream. A synchronous

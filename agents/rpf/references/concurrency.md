@@ -53,6 +53,11 @@ has expired is not a peer: it is crash residue, and any lock holder may remove
 it. Keep the run lease shorter than the work-claim lease so a dead run stops
 blocking convergence before its claims expire.
 
+In nested topology the active cycle controller, not its waiting parent, owns
+these in-cycle renewals. The parent refreshes once immediately before launch
+and performs terminal cleanup after return. Parent polling, status questions,
+and host wait timeouts are never lease heartbeats.
+
 ## Sidecar files
 
 The lock directories and the temporary file used for atomic writes sit next to
@@ -326,6 +331,10 @@ topology cycle, it may write only to:
 - publish a new bootstrapped pointer or add missing managed sections and columns;
 - create or refresh its own active-run row before a controller starts; and
 - remove its own row and release its own claims after the stop decision.
+
+While a nested controller is active, the coordinator waits on host events and
+does not interleave periodic run-row writes. The controller performs every
+half-life renewal under the normal pointer write protocol.
 
 It never merges findings, marks work `done` or `deferred`, or edits authored sections.
 After an abnormal stop, it may reset this run's remaining `active` rows to
@@ -726,6 +735,7 @@ files.
   corresponding path registration before any worker is dispatched.
 - Renew claims at each phase boundary and **before** half the lease elapses while
   an item is `active`; refresh the shorter run lease independently before 450 s.
+  In nested topology these are controller duties, never parent polling duties.
 - After targeted checks and integration, atomically mark the item `integrated`,
   release its claim, recompute this run's claimed-work/path projection for its
   remaining items, and claim the new ready frontier under the same lock.

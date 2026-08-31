@@ -11,6 +11,7 @@ obligation inventory in ``rpf_runtime.DispatchLedger``.
 
 import ast
 import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -99,6 +100,16 @@ def ordered(text: str, *needles: str) -> bool:
     haystack = normalize(text)
     positions = [haystack.find(normalize(needle)) for needle in needles]
     return all(position >= 0 for position in positions) and positions == sorted(positions)
+
+
+def fenced_json(text: str) -> dict[str, object]:
+    match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if not match:
+        raise AssertionError("missing fenced JSON contract")
+    value = json.loads(match.group(1))
+    if not isinstance(value, dict):
+        raise AssertionError("JSON contract is not an object")
+    return value
 
 
 def runtime_function(name: str) -> ast.FunctionDef:
@@ -2038,6 +2049,7 @@ class RpfContractTest(unittest.TestCase):
         cls.verification = read("references/review-verification.md")
         cls.detection = read("references/detection.md")
         cls.concurrency = read("references/concurrency.md")
+        cls.runtime_contract = read("references/runtime-contract.md")
         cls.technical = read("references/technical-recovery.md")
         cls.pointer = read("assets/pointer-template.md")
 
@@ -2055,6 +2067,51 @@ class RpfContractTest(unittest.TestCase):
         self.assertIn("no managed conclusions or prior review artifacts", state_bundles)
         self.assertIn("ROOT_PAYLOAD_KIND", state_bundles)
         self.assertIn("USER_INSTRUCTION_EPOCH", state_bundles)
+
+    def test_host_wait_is_event_driven_and_controller_owns_leases(self) -> None:
+        wait_contract = section(self.orchestration, "Host event wait contract")
+        policy = fenced_json(wait_contract)
+        self.assertEqual(600_000, policy["default_wait_min_ms"])
+        self.assertEqual(1_800_000, policy["default_wait_max_ms"])
+        self.assertGreaterEqual(
+            policy["default_wait_ms"], policy["default_wait_min_ms"]
+        )
+        self.assertLessEqual(
+            policy["default_wait_ms"], policy["default_wait_max_ms"]
+        )
+        self.assertEqual(0, policy["short_poll_repeats_allowed"])
+        self.assertLess(
+            policy["short_poll_threshold_ms"], policy["default_wait_min_ms"]
+        )
+        self.assertEqual(1, policy["status_probe_limit_per_controller"])
+        self.assertGreater(
+            policy["post_silence_probe_wait_max_ms"],
+            policy["default_wait_max_ms"],
+        )
+        self.assertEqual("cycle-controller", policy["nested_lease_owner"])
+        self.assertEqual(
+            {
+                "controller-terminal",
+                "phase-transition",
+                "failure-or-recovery",
+                "material-progress",
+                "user-interrupt",
+            },
+            set(policy["wake_events"]),
+        )
+        normalized_wait = normalize(wait_contract)
+        self.assertIn("remaining real dispatch deadline", normalized_wait)
+        self.assertIn("never substitutes for that deadline", normalized_wait)
+        self.assertIn("never lease heartbeats", self.concurrency)
+        self.assertIn(
+            "an empty host wait never proves timeout",
+            normalize(self.runtime_contract),
+        )
+        orchestrator = normalize(section(self.skill, "Orchestrator loop"))
+        self.assertIn("Host event wait contract", orchestrator)
+        controller = normalize(section(self.skill, "Cycle controller prompt"))
+        self.assertIn("host-internal milestones", controller)
+        self.assertIn("Never depend on main polling", controller)
 
     def test_source_changes_require_a_later_identical_fence(self) -> None:
         regression = section(
