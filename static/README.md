@@ -85,7 +85,7 @@ README.md    access: none
 | `VAULT.md` | `VAULT.sample.md` | Vaultwarden secrets 접근 가이드 | - |
 | `CONTEXT.md` | `CONTEXT.sample.md` | 프로젝트 컨텍스트 관리 표준 | - |
 | `SERVICES.md` | `SERVICES.sample.md` | 서비스/컨테이너 중앙 관리 (포트, 상태) | service-manager |
-| `KOREAN.md` | `KOREAN.sample.md` | 한국어 출력 지침 (생성 시점 문체 기준) | korean-editor |
+| `KOREAN.md` | `KOREAN.sample.md` | 한국어 출력 지침 (생성 시점 문체 기준) | editor |
 | `STYLE.md` | - | 코딩 스타일 가이드 | 전역 |
 
 ## 파일 상세
@@ -193,4 +193,4 @@ cd ~/.agent-skills
 ## 관련 스킬
 
 - **static-index**: WHOAMI.md 생성/관리
-- **korean-editor**: KOREAN.md의 기준에 어긋난 한국어 초안을 퇴고
+- **editor**: KOREAN.md의 기준에 어긋난 한국어 초안을 퇴고

@@ -294,7 +294,7 @@ async function verifyPackageAndSource() {
     "unittest",
     "discover",
     "-s",
-    "common/korean-editor/tests",
+    "common/editor/tests",
     "-p",
     "test_*.py",
     "-v",

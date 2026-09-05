@@ -1,13 +1,19 @@
 {
   "metadata": {
-    "title": "Korean editorial signals",
-    "purpose": "Advisory cues for conservative Korean editing; never an AI-authorship classifier.",
+    "title": "Editorial signals",
+    "purpose": "Advisory cues for conservative editing of Korean and English drafts; never an AI-authorship classifier.",
     "source_inspiration": [
       "https://github.com/epoko77-ai/im-not-ai",
-      "https://github.com/snflkd/fluent-korean"
+      "https://github.com/snflkd/fluent-korean",
+      "https://developers.openai.com/api/docs/guides/latest-model#gpt-6-astra-personality-and-writing-style"
     ],
     "license": "MIT",
-    "version": 3
+    "version": 4,
+    "languages": {
+      "ko": "한국어 문법과 어휘에 매인 신호",
+      "en": "영어 문법과 어휘에 매인 신호",
+      "any": "언어와 무관한 형식·구조 신호"
+    }
   },
   "categories": {
     "translationese": "번역투와 불필요한 피동",
@@ -16,12 +22,14 @@
     "connective": "문두 접속어 반복",
     "verbosity": "중복 수식과 불필요한 명사화",
     "formatting": "과한 시각 장식",
-    "compression": "생략과 압축으로 흐려진 의미"
+    "compression": "생략과 압축으로 흐려진 의미",
+    "coinage": "대비 구문과 지어낸 이름표"
   },
   "rules": [
     {
       "id": "TR-01",
       "category": "translationese",
+      "language": "ko",
       "severity": "medium",
       "pattern": "(?:을|를)\\s+통해",
       "minimum_occurrences": 1,
@@ -32,6 +40,7 @@
     {
       "id": "TR-02",
       "category": "translationese",
+      "language": "ko",
       "severity": "medium",
       "pattern": "에\\s+있어서",
       "minimum_occurrences": 1,
@@ -42,6 +51,7 @@
     {
       "id": "TR-03",
       "category": "translationese",
+      "language": "ko",
       "severity": "medium",
       "pattern": "에\\s+의해(?:서|\\b)",
       "minimum_occurrences": 2,
@@ -52,6 +62,7 @@
     {
       "id": "TR-04",
       "category": "translationese",
+      "language": "ko",
       "severity": "high",
       "pattern": "되어진|되어져|되어지는",
       "minimum_occurrences": 1,
@@ -62,6 +73,7 @@
     {
       "id": "TR-05",
       "category": "translationese",
+      "language": "ko",
       "severity": "low",
       "pattern": "가지고\\s+있(?:다|습니다|으며|고)",
       "minimum_occurrences": 2,
@@ -72,6 +84,7 @@
     {
       "id": "TR-06",
       "category": "translationese",
+      "language": "ko",
       "severity": "low",
       "pattern": "에\\s+대(?:한(?!민국)|해서?|하여)",
       "minimum_occurrences": 2,
@@ -82,6 +95,7 @@
     {
       "id": "TR-07",
       "category": "translationese",
+      "language": "ko",
       "severity": "low",
       "pattern": "(?:와|과)\\s+관련(?:하여|해서?|된|한)",
       "minimum_occurrences": 1,
@@ -92,6 +106,7 @@
     {
       "id": "TR-08",
       "category": "translationese",
+      "language": "ko",
       "severity": "medium",
       "pattern": "(?:으로|로)\\s+인(?:해서?|하여|한)",
       "minimum_occurrences": 2,
@@ -102,6 +117,7 @@
     {
       "id": "TR-09",
       "category": "translationese",
+      "language": "ko",
       "severity": "low",
       "pattern": "고\\s+있(?:다|습니다|으며|는|었|지)",
       "minimum_occurrences": 4,
@@ -112,6 +128,7 @@
     {
       "id": "TR-10",
       "category": "translationese",
+      "language": "ko",
       "severity": "low",
       "pattern": "(?:함|됨|음)에\\s+따라",
       "minimum_occurrences": 2,
@@ -122,6 +139,7 @@
     {
       "id": "TP-01",
       "category": "template",
+      "language": "ko",
       "severity": "medium",
       "pattern": "(?:결론적으로|요약하자면|정리하자면|한마디로\\s+말(?:해|하면))",
       "minimum_occurrences": 1,
@@ -132,6 +150,7 @@
     {
       "id": "TP-02",
       "category": "template",
+      "language": "ko",
       "severity": "high",
       "pattern": "시사하는\\s+바가\\s+(?:크|있)",
       "minimum_occurrences": 1,
@@ -142,6 +161,7 @@
     {
       "id": "TP-03",
       "category": "template",
+      "language": "ko",
       "severity": "low",
       "pattern": "주목할\\s+만(?:하다|한|합니다)",
       "minimum_occurrences": 2,
@@ -152,6 +172,7 @@
     {
       "id": "TP-04",
       "category": "template",
+      "language": "ko",
       "severity": "medium",
       "pattern": "첫째[\\s\\S]{0,400}둘째[\\s\\S]{0,400}셋째",
       "minimum_occurrences": 1,
@@ -162,6 +183,7 @@
     {
       "id": "TP-05",
       "category": "template",
+      "language": "ko",
       "severity": "medium",
       "pattern": "것으로\\s+(?:나타났|드러났|조사되|집계되)",
       "minimum_occurrences": 1,
@@ -172,6 +194,7 @@
     {
       "id": "TP-06",
       "category": "template",
+      "language": "ko",
       "severity": "low",
       "pattern": "다음과\\s+같(?:다|습니다|은|이)",
       "minimum_occurrences": 3,
@@ -182,6 +205,7 @@
     {
       "id": "HG-01",
       "category": "hedging",
+      "language": "ko",
       "severity": "high",
       "pattern": "수\\s+있을\\s+것으로\\s+(?:보인다|예상된다|판단된다)",
       "minimum_occurrences": 1,
@@ -192,6 +216,7 @@
     {
       "id": "HG-02",
       "category": "hedging",
+      "language": "ko",
       "severity": "high",
       "pattern": "가능성이\\s+있을\\s+수\\s+있",
       "minimum_occurrences": 1,
@@ -202,6 +227,7 @@
     {
       "id": "HG-03",
       "category": "hedging",
+      "language": "ko",
       "severity": "low",
       "pattern": "(?:것으로\\s+보인다|것으로\\s+판단된다)",
       "minimum_occurrences": 3,
@@ -212,6 +238,7 @@
     {
       "id": "HG-04",
       "category": "hedging",
+      "language": "ko",
       "severity": "medium",
       "pattern": "(?:라고|다고)\\s+(?:할|볼)\\s+수\\s+있",
       "minimum_occurrences": 1,
@@ -222,6 +249,7 @@
     {
       "id": "CN-01",
       "category": "connective",
+      "language": "ko",
       "severity": "low",
       "pattern": "(?:^|(?<=[.!?。！？]))[ \\t]*(?:또한|따라서|나아가|한편|즉)[,，]?",
       "minimum_occurrences": 4,
@@ -232,6 +260,7 @@
     {
       "id": "VB-01",
       "category": "verbosity",
+      "language": "ko",
       "severity": "medium",
       "pattern": "(?:매우|정말|굉장히|상당히)\\s+(?:매우|정말|굉장히|상당히)",
       "minimum_occurrences": 1,
@@ -242,6 +271,7 @@
     {
       "id": "VB-02",
       "category": "verbosity",
+      "language": "ko",
       "severity": "low",
       "pattern": "(?:혁신적|획기적|놀라운|강력한)",
       "minimum_occurrences": 4,
@@ -252,6 +282,7 @@
     {
       "id": "VB-03",
       "category": "verbosity",
+      "language": "ko",
       "severity": "low",
       "pattern": "할\\s+필요가\\s+있(?:다|습니다)",
       "minimum_occurrences": 3,
@@ -262,8 +293,9 @@
     {
       "id": "VB-04",
       "category": "verbosity",
+      "language": "ko",
       "severity": "low",
-      "pattern": "(?:을|를)\\s+(?:진행|실시|수행)(?:하|합|했|해)",
+      "pattern": "(?:을|를)\\s+(?:진행|실시|수행)(?:하|한|할|함|합|했|해)",
       "minimum_occurrences": 1,
       "cue": "'검토를 진행하다'처럼 동사를 명사와 대체 동사로 나눠 쓸 수 있음",
       "guidance": "'검토하다'처럼 하나의 동사로 줄인다.",
@@ -272,8 +304,9 @@
     {
       "id": "VB-05",
       "category": "verbosity",
+      "language": "ko",
       "severity": "low",
-      "pattern": "(?:요구(?:되|돼|됩|된)|필요로\\s+하)",
+      "pattern": "(?:요구(?:되|돼|됩|된|될|됨)|필요로\\s+(?:하|한|할|함|합|했|해))",
       "minimum_occurrences": 1,
       "cue": "행위자가 빠진 당위 표현일 수 있음",
       "guidance": "누가 무엇을 해야 하는지 드러나는 능동문을 검토한다.",
@@ -282,6 +315,7 @@
     {
       "id": "VB-06",
       "category": "verbosity",
+      "language": "ko",
       "severity": "low",
       "pattern": "(?:관점|측면|차원)에서",
       "minimum_occurrences": 2,
@@ -292,6 +326,7 @@
     {
       "id": "FM-01",
       "category": "formatting",
+      "language": "any",
       "severity": "low",
       "pattern": "\\*\\*[^*\\n]+\\*\\*",
       "minimum_occurrences": 8,
@@ -302,6 +337,7 @@
     {
       "id": "FM-02",
       "category": "formatting",
+      "language": "any",
       "severity": "low",
       "pattern": "(?:^|\\n)\\s*[-*+]\\s+",
       "minimum_occurrences": 10,
@@ -312,6 +348,7 @@
     {
       "id": "FM-03",
       "category": "formatting",
+      "language": "any",
       "severity": "low",
       "pattern": "^#{1,6}\\s*[←-⇿⌀-➿⬀-⯿🀀-🫿]",
       "minimum_occurrences": 1,
@@ -322,6 +359,7 @@
     {
       "id": "FM-04",
       "category": "formatting",
+      "language": "any",
       "severity": "low",
       "pattern": "^\\s*(?:---|\\*\\*\\*|___)\\s*$",
       "minimum_occurrences": 3,
@@ -332,6 +370,7 @@
     {
       "id": "FM-05",
       "category": "formatting",
+      "language": "any",
       "severity": "low",
       "pattern": "^\\s*[-*+]\\s+\\*\\*[^*\\n]+\\*\\*\\s*[:：]",
       "minimum_occurrences": 3,
@@ -342,6 +381,7 @@
     {
       "id": "CP-01",
       "category": "compression",
+      "language": "ko",
       "severity": "medium",
       "pattern": "^(?![ \\t]*(?:[-*+>#|]|\\d+[.)]))[^\\n]{0,160}?(?:[가-힣](?<![다요까죠네군오지라자마음함됨임])|(?<![아어에예세게래워여이까나니가지리려고해돼봐와줘져쳐네군데든봬셔])요)\\.(?=[ \\t]|$)",
       "minimum_occurrences": 2,
@@ -352,6 +392,7 @@
     {
       "id": "CP-02",
       "category": "compression",
+      "language": "ko",
       "severity": "low",
       "pattern": "[가-힣]{2,}의\\s+(?:[가-힣]{1,6}\\s+){0,2}[가-힣]{2,}의\\s",
       "minimum_occurrences": 2,
@@ -362,6 +403,7 @@
     {
       "id": "CP-03",
       "category": "compression",
+      "language": "any",
       "severity": "low",
       "pattern": "—",
       "minimum_occurrences": 2,
@@ -372,12 +414,167 @@
     {
       "id": "CP-04",
       "category": "compression",
+      "language": "ko",
       "severity": "low",
       "pattern": "(?:박아\\s?(?:넣|둔|두|둘)|얹어\\s?(?:놓|둔|두|둘)|치워\\s?(?:둔|두|둘)|걷어\\s?(?:내|낸)|털어\\s?(?:내|낸)|녹여\\s?(?:내|낸))",
       "minimum_occurrences": 1,
       "cue": "일반 어휘 자리에 비유나 구어 어휘가 쓰여 가리키는 동작이 불분명함",
       "guidance": "가리키는 동작을 그대로 나타내는 일반 어휘로 바꾼다. 예를 들어 '코드에 박아넣다'는 '코드에 명시하다'로 적는다.",
       "exceptions": "해당 분야에서 관용 표현으로 굳었거나 실제 물리적 동작을 가리키는 경우에는 유지한다."
+    },
+    {
+      "id": "TP-07",
+      "category": "template",
+      "language": "ko",
+      "severity": "low",
+      "pattern": "(?:중요한\\s+(?:것은|점은)|핵심은|주목해야\\s+할)",
+      "minimum_occurrences": 2,
+      "cue": "중요도를 예고하는 문구가 반복돼 내용보다 표지가 앞설 수 있음",
+      "guidance": "중요하다고 말하는 대신 중요한 내용을 바로 쓴다.",
+      "exceptions": "여러 논점 가운데 하나를 우선순위로 지목해야 하는 문서에서는 유지한다."
+    },
+    {
+      "id": "TP-08",
+      "category": "template",
+      "language": "en",
+      "severity": "high",
+      "pattern": "\\b(?:delve|delves|delving|underscore[sd]?|showcase[sd]?)\\b",
+      "minimum_occurrences": 1,
+      "cue": "Stock vocabulary that rarely survives a human edit",
+      "guidance": "가리키는 동작을 그대로 쓰는 평이한 동사로 바꾼다. delve into는 examine, underscore는 show로 검토한다.",
+      "exceptions": "인용문과 고유명사, 그리고 해당 분야에서 정착된 용례는 유지한다."
+    },
+    {
+      "id": "TP-09",
+      "category": "template",
+      "language": "en",
+      "severity": "medium",
+      "pattern": "\\b(?:it(?:'|’)s worth noting|it is worth noting|importantly|notably|needless to say)\\b",
+      "minimum_occurrences": 1,
+      "cue": "Importance markers stand in for the point itself",
+      "guidance": "표지를 지우고 그 문장이 말하려는 사실을 바로 쓴다.",
+      "exceptions": "앞 내용과의 우선순위 대비가 실제로 필요한 문장에서는 유지한다."
+    },
+    {
+      "id": "TP-10",
+      "category": "template",
+      "language": "en",
+      "severity": "medium",
+      "pattern": "\\b(?:in short|in summary|to sum up|bottom line|at its core|the simplest mental model is)\\b",
+      "minimum_occurrences": 1,
+      "cue": "Canned closing summary announces a conclusion instead of stating it",
+      "guidance": "요약 표지를 지우고 결론 문장만 남긴다.",
+      "exceptions": "긴 논증에서 결론 구간을 형식적으로 구분해야 하는 문서에서는 유지한다."
+    },
+    {
+      "id": "TP-11",
+      "category": "template",
+      "language": "en",
+      "severity": "low",
+      "pattern": "\\b(?:foster|fosters|leverage[sd]?|utilize[sd]?|facilitate[sd]?)\\b",
+      "minimum_occurrences": 2,
+      "cue": "Abstract verbs repeat where a concrete verb would say more",
+      "guidance": "use, build, help처럼 실제 동작을 가리키는 동사로 바꾼다.",
+      "exceptions": "금융·법률의 leverage처럼 그 분야에서 뜻이 고정된 용어는 유지한다."
+    },
+    {
+      "id": "TP-12",
+      "category": "template",
+      "language": "en",
+      "severity": "low",
+      "pattern": "[^.\\n?]{5,90}\\?\\s+(?:Yes|No|Not|It|That|The|This)\\b",
+      "minimum_occurrences": 2,
+      "cue": "Rhetorical question answered in the next sentence, repeatedly",
+      "guidance": "질문을 지우고 답에 해당하는 문장만 남긴다.",
+      "exceptions": "FAQ, 인터뷰, 교육 자료처럼 문답 구조가 형식인 문서에서는 유지한다."
+    },
+    {
+      "id": "CO-01",
+      "category": "coinage",
+      "language": "en",
+      "severity": "medium",
+      "pattern": "\\b\\w+\\s*(?:,|—|--)\\s*not\\s+\\w+",
+      "minimum_occurrences": 1,
+      "cue": "Contrastive framing introduces an alternative the reader never raised",
+      "guidance": "\"X, not Y\" 구문을 지우고 X만 단정해서 쓴다.",
+      "exceptions": "원문이 실제로 두 선택지를 비교하거나 앞에서 Y를 언급한 경우에는 유지한다."
+    },
+    {
+      "id": "CO-02",
+      "category": "coinage",
+      "language": "ko",
+      "severity": "medium",
+      "pattern": "(?:단순히|그저|단지)[^.\\n]{0,60}(?:이|가)\\s*아니라",
+      "minimum_occurrences": 1,
+      "cue": "독자가 꺼내지 않은 대안을 세워 대비하는 구문",
+      "guidance": "대비를 지우고 말하려는 내용을 바로 단정한다.",
+      "exceptions": "원문이 실제로 두 대상을 비교하거나 앞 문장에서 대안을 언급한 경우에는 유지한다."
+    },
+    {
+      "id": "CO-03",
+      "category": "coinage",
+      "language": "en",
+      "severity": "low",
+      "pattern": "\\b[A-Za-z]+-[A-Za-z]+-[A-Za-z]+\\b",
+      "minimum_occurrences": 2,
+      "cue": "Invented hyphenated labels compress a description into a name",
+      "guidance": "지어낸 이름표를 풀어 관계를 평범한 동사와 전치사로 쓴다.",
+      "exceptions": "제품명, 명령 플래그, 표준 용어처럼 이미 굳은 하이픈 표기는 유지한다."
+    },
+    {
+      "id": "HG-05",
+      "category": "hedging",
+      "language": "en",
+      "severity": "low",
+      "pattern": "\\b(?:it seems that|it appears that|arguably|somewhat|fairly|relatively)\\b",
+      "minimum_occurrences": 3,
+      "cue": "Stacked hedges blur how confident the draft actually is",
+      "guidance": "근거가 있으면 단정하고, 없으면 불확실성을 한 번만 표시한다.",
+      "exceptions": "연구·법률 문서에서 확실성 수준을 엄밀히 구분하는 표현은 유지한다."
+    },
+    {
+      "id": "VB-07",
+      "category": "verbosity",
+      "language": "en",
+      "severity": "low",
+      "pattern": "\\b(?:is|are|was|were|be|been|being)\\s+\\w+(?:ed|en)\\s+by\\b",
+      "minimum_occurrences": 2,
+      "cue": "Agentive passive repeats where the actor is already known",
+      "guidance": "행위자를 주어로 세운 능동문을 검토한다.",
+      "exceptions": "행위자보다 결과가 중요하거나 행위자를 알 수 없는 문장에서는 유지한다."
+    },
+    {
+      "id": "VB-08",
+      "category": "verbosity",
+      "language": "en",
+      "severity": "low",
+      "pattern": "\\b(?:make|makes|made|provide[sd]?|perform(?:s|ed)?|conduct(?:s|ed)?)\\s+(?:a|an|the)\\s+\\w+(?:tion|ment|sis|ance|ence)\\b",
+      "minimum_occurrences": 2,
+      "cue": "Nominalized verb phrases where one verb would do",
+      "guidance": "\"make a decision\"은 \"decide\"처럼 하나의 동사로 줄인다.",
+      "exceptions": "절차 이름이나 계약 문구로 굳은 표현은 유지한다."
+    },
+    {
+      "id": "VB-09",
+      "category": "verbosity",
+      "language": "en",
+      "severity": "low",
+      "pattern": "\\b(?:genuinely|truly|really|actually|incredibly|very)\\b",
+      "minimum_occurrences": 3,
+      "cue": "Vague intensifiers repeat without adding degree or evidence",
+      "guidance": "강조를 지우거나 정도와 근거를 구체적으로 쓴다.",
+      "exceptions": "인물의 말투를 재현한 직접 인용은 유지한다."
+    },
+    {
+      "id": "FM-06",
+      "category": "formatting",
+      "language": "any",
+      "severity": "low",
+      "pattern": "^(?: {2,}|\\t)[-*+]\\s+",
+      "minimum_occurrences": 3,
+      "cue": "중첩 목록이 이어져 위계를 목록 들여쓰기로만 표현할 수 있음",
+      "guidance": "위계를 산문이나 소제목으로 표현할 수 있으면 중첩을 풀고, 병렬 항목만 목록으로 남긴다.",
+      "exceptions": "명세, 목차, 트리 구조처럼 중첩 자체가 정보인 문서에서는 유지한다."
     }
   ]
 }

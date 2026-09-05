@@ -7,6 +7,12 @@
 이미 작성된 초안을 편집하므로, 지침 문구를 옮기지 않고 조사·어미 생략, 명사구 종결, 관형격 연쇄,
 엠대시 함축, 비유 어휘 대체라는 실패 유형만 편집 신호로 다시 표현했다.
 
+`prose-style.md`의 기본 문체 기준과 영어 상투어·대비 구문·지어낸 이름표 규칙은 OpenAI의
+[GPT-6 Astra personality and writing style](https://developers.openai.com/api/docs/guides/latest-model#gpt-6-astra-personality-and-writing-style)
+가이드에서 제시한 프롬프트 권고를 편집 신호로 다시 표현했다. 원문은 모델이 글을 생성하기 전에
+문체를 지시하는 프롬프트이고 이 스킬은 이미 작성된 초안을 편집하므로, 지시문을 옮기지 않고
+어떤 표현을 어떤 예외 아래 고칠지로 바꿔 적었다.
+
 ## im-not-ai 라이선스
 
 ```text
