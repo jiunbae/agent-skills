@@ -79,7 +79,7 @@ jobs:
         run: |
           # Generated rulebooks drift silently when the canonical source
           # changes without a rebuild, so the check gates every push.
-          python common/korean-editor/scripts/build_runtime_rules.py --check
+          python common/editor/scripts/build_runtime_rules.py --check
 
   air:
     name: AIR source release gate

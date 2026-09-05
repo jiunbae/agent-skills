@@ -23,28 +23,43 @@ def load_rules(path: Path = RULES_PATH) -> dict:
     return validate_rules(data)
 
 
+LANGUAGE_LABELS = {
+    "any": "언어 공통",
+    "ko": "한국어",
+    "en": "영어",
+}
+
+
 def render(data: dict) -> str:
     data = validate_rules(data)
     categories: dict[str, str] = data["categories"]
-    grouped: dict[str, list[dict]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for rule in data["rules"]:
-        grouped[rule["category"]].append(rule)
+        grouped[(rule["language"], rule["category"])].append(rule)
 
     lines = [
-        "# 한국어 편집 실행 규칙",
+        "# 편집 실행 규칙",
         "",
         "> `editing-rules.json`에서 생성된 파일이다. 직접 수정하지 않는다.",
         "> 규칙 일치는 편집 후보를 뜻할 뿐 AI 작성 여부를 판정하지 않는다.",
+        "> 언어 공통 규칙은 모든 초안에, 나머지는 해당 언어 초안에만 적용한다.",
         "",
         "## 목차",
         "",
     ]
-    for key, label in categories.items():
-        lines.append(f"- [{label}](#{key})")
+    sections: list[tuple[str, str, str, list[dict]]] = []
+    for language, language_label in LANGUAGE_LABELS.items():
+        for key, label in categories.items():
+            rules = grouped.get((language, key), [])
+            if not rules:
+                continue
+            anchor = f"{language}-{key}"
+            sections.append((anchor, language_label, label, rules))
+            lines.append(f"- [{language_label} · {label}](#{anchor})")
 
-    for key, label in categories.items():
-        lines.extend(["", f'<a id="{key}"></a>', f"## {label}", ""])
-        for rule in grouped.get(key, []):
+    for anchor, language_label, label, rules in sections:
+        lines.extend(["", f'<a id="{anchor}"></a>', f"## {language_label} · {label}", ""])
+        for rule in rules:
             lines.extend(
                 [
                     f"### {rule['id']} · {rule['severity']}",

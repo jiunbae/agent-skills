@@ -224,7 +224,7 @@ node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
 
 | 스킬 | 설명 |
 |------|------|
-| `korean-editor` | 의미와 형식을 보존하는 한국어 퇴고 및 충실도 검증 |
+| `editor` | 의미와 형식을 보존하는 한국어·영어 퇴고 및 충실도 검증 |
 
 ---
 

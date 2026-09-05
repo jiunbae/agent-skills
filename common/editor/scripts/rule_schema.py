@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validation for the Korean editor's canonical rule document."""
+"""Validation for the editor's canonical rule document."""
 
 from __future__ import annotations
 
@@ -8,9 +8,13 @@ from typing import Any
 
 
 SEVERITIES = {"low", "medium", "high"}
+# "any" marks a rule that describes formatting or structure rather than one
+# language's grammar, so it applies to every draft.
+LANGUAGES = {"ko", "en", "any"}
 REQUIRED_RULE_FIELDS = {
     "id": str,
     "category": str,
+    "language": str,
     "severity": str,
     "pattern": str,
     "minimum_occurrences": int,
@@ -64,6 +68,8 @@ def validate_rules(data: Any) -> dict:
             raise ValueError(f"{location}.category references an unknown category")
         if rule["severity"] not in SEVERITIES:
             raise ValueError(f"{location}.severity must be one of {sorted(SEVERITIES)}")
+        if rule["language"] not in LANGUAGES:
+            raise ValueError(f"{location}.language must be one of {sorted(LANGUAGES)}")
         if rule["minimum_occurrences"] < 1:
             raise ValueError(f"{location}.minimum_occurrences must be at least 1")
         try:

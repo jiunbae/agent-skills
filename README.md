@@ -243,7 +243,7 @@ The same form works for any other catalog entry, for example
 
 | Skill | Description |
 |-------|-------------|
-| `korean-editor` | Conservative Korean copy editing with fidelity checks |
+| `editor` | Conservative Korean and English copy editing with fidelity checks |
 
 ---
 
