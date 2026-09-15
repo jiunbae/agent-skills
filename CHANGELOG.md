@@ -16,6 +16,15 @@ Nothing below has been tagged. The most recent `v*` tag is `v2026.07.30.1`
 tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
 
+### Removed
+- `context/context-manager`: retired. Its ranker scored only filenames, parent
+  directory names and mtime — never file content — so on a real `context/` tree
+  it missed the relevant document and tied every file in a category at the same
+  score, ranking below a plain content `grep`. Modern models find these
+  documents natively. The `context/` convention itself stays; the skill, its two
+  scripts and the core-profile entry are gone, along with the `context-manager`
+  pointers in `static/README.md` and `static/CONTEXT.sample.md`.
+
 ## [2026.07.30.1] - 2026-07-30
 
 Everything below landed after `v2026.02.19.1` (2026-02-19) — 167 commits,

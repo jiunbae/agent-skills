@@ -45,7 +45,6 @@ $PersonasTarget = Join-Path $UserHome '.agents/personas'
 $CoreMode = $false
 $CoreSkills = @(
     'development/git-commit-pr',
-    'context/context-manager',
     'context/static-index',
     'security/security-auditor',
     'agents/background-implementer',

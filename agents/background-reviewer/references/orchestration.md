@@ -121,7 +121,7 @@ n=$(ls .context/<kind>/R*-*.md 2>/dev/null | sed -n 's#.*/R0*\([0-9]\+\)-.*#\1#p
 ROUND=$(printf 'R%02d' $(( ${n:-0} + 1 )))
 ```
 
-If the project uses the `context-manager` / `context-worktree` skills, defer to their
+If the project uses the `context-worktree` skill, defer to its
 conventions rather than duplicating state here.
 
 ## Token discipline

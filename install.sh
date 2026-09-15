@@ -60,7 +60,6 @@ EXCLUDE_DIRS=("static" "cli" "codex-support" "hooks" "personas" ".git" ".github"
 # Core 스킬 (기본 전역 설치, 워크스페이스 공통 필수)
 CORE_SKILLS=(
   "development/git-commit-pr"
-  "context/context-manager"
   "context/static-index"
   "security/security-auditor"
   "agents/background-implementer"
@@ -173,7 +172,6 @@ Codex 지원:
 
 Core 스킬 (워크스페이스 공통):
   - development/git-commit-pr       Git 커밋/PR 가이드
-  - context/context-manager         프로젝트 컨텍스트 로드
   - context/static-index            글로벌 설정 인덱스
   - security/security-auditor       보안 감사
   - agents/background-implementer   백그라운드 병렬 구현

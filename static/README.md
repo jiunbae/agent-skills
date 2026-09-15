@@ -40,7 +40,7 @@ cp CONTEXT.sample.md CONTEXT.md
 | `OBSIDIAN.md` | `OBSIDIAN.sample.md` | Obsidian vault 리소스 목록 | obsidian-writer |
 | `IAC.md` | `IAC.sample.md` | IaC/Kubernetes 배포 가이드 | - |
 | `VAULT.md` | `VAULT.sample.md` | Vaultwarden secrets 접근 가이드 | - |
-| `CONTEXT.md` | `CONTEXT.sample.md` | 프로젝트 컨텍스트 관리 표준 | context-manager |
+| `CONTEXT.md` | `CONTEXT.sample.md` | 프로젝트 컨텍스트 관리 표준 | - |
 | `SERVICES.md` | `SERVICES.sample.md` | 서비스/컨테이너 중앙 관리 (포트, 상태) | service-manager |
 | `STYLE.md` | - | 코딩 스타일 가이드 | 전역 |
 
@@ -117,7 +117,6 @@ cp CONTEXT.sample.md CONTEXT.md
 프로젝트 컨텍스트 관리 표준을 정의합니다. 암묵지 감소 및 에이전트 간 맥락 공유를 위한 `.context/` 디렉토리 활용 가이드를 제공합니다.
 
 **관리 방법:**
-- `context-manager` 스킬이 참조 및 업데이트 권장
 - [CONTEXT.md 상세 보기](./CONTEXT.md)
 
 ```
@@ -147,4 +146,3 @@ cd ~/.agt
 
 - **static-index**: WHOAMI.md 생성/관리
 - **git-commit-pr**: SECURITY.md 참조
-- **context-manager**: 프로젝트 컨텍스트 로드 시 참조
