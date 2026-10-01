@@ -85,7 +85,7 @@ agt skill install -g --from jiunbae/agent-skills/development/git-commit-pr
 agt persona install -g --from jiunbae/agent-skills
 ```
 
-`--agent claude` is the default and installs to `.claude/skills/<skill>`
+`--agent claude` is the default and installs to `.claude/skills/<skill>`.
 `--agent codex` installs to `.agents/skills/<skill>`. Add `--global` for the
 corresponding user-level directory. Skills an older agt placed under
 `<group>/<skill>` are not loaded by Claude Code. agt releases after 2026.7.23
