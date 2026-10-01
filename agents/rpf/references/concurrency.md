@@ -639,7 +639,7 @@ provider receipt and its identical persisted digest/provider entry, exact
 coverage. Arbitrary truthy text,
 static/none, missing, extra, linked not-applicable/excluded/uninspectable, or duplicate-
 conflicting UI evidence reduces to `unverified-unavailable` and opens a gap.
-The repository runtime does not possess an external provider trust root, so
+The bundled RPF runtime does not possess an external provider trust root, so
 its in-process registration API fails closed and cannot turn callbacks into a
 receipt. This unavailable runtime verification remains a separate UI risk.
 

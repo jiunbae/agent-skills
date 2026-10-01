@@ -26,37 +26,13 @@ so keep this layout when editing by hand:
 |------|--------|----------|------|
 ```
 
-## Common Commands
-
-### List Running Services
-```bash
-docker ps --format "table {{.Names}}\t{{.Ports}}\t{{.Status}}"
-```
-
-### Check Port Availability
-```bash
-lsof -i :8080 || echo "Port available"
-```
-
-### Start Service
-```bash
-docker start <container>
-# or
-docker-compose up -d <service>
-```
-
-### View Logs
-```bash
-docker logs -f <container> --tail 100
-```
-
 ## Workflows
 
 ### Register New Service
 
-1. Check port availability
-2. Add to SERVICES.md
-3. Verify no conflicts
+1. `scripts/service-manager.sh check-port <port>`
+2. `scripts/service-manager.sh add --name <n> --type <t> --port <p> --dir <d> --command <cmd> --purpose <why>`
+3. `scripts/service-manager.sh ports` to confirm no conflict
 
 ### Find Port Conflicts
 
@@ -81,9 +57,3 @@ docker inspect --format='{{.State.Health.Status}}' <container>
 | 5432 | PostgreSQL |
 | 6379 | Redis |
 | 8080-8099 | Backend services |
-
-## Best Practices
-
-- Always check port before registering
-- Use docker-compose for multi-container apps
-- Keep SERVICES.md updated

@@ -560,7 +560,8 @@ After every reviewer and verifier returns:
 - Preserve the highest severity and confidence among duplicates.
 - Order by severity, then confidence.
 - Record reviewer failures in an `AGENT FAILURES` section — a failed reviewer is
-  a coverage gap, not a clean result. Retry a failed reviewer once.
+  a coverage gap, not a clean result. Recover it as SKILL.md describes (shrink
+  context or split obligations; never resend the same prompt).
 - Record restricted units separately without their content. They block only the
   affected proof obligation; safe verified findings still enter Phase 2.
 
