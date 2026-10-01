@@ -57,9 +57,6 @@ This skill is part of the Claude Code toolkit. Use it with:
 
 ### Templates
 - [Basic App Template](templates/basic-app.md) - Minimal app with essential features
-- [Message Bot Template](templates/message-bot.md) - Chat bot template
-- [Workflow App Template](templates/workflow-app.md) - Workflow steps app
-- [Enterprise App Template](templates/enterprise-app.md) - Enterprise-grade features
 
 ## Supported Features
 
