@@ -19,6 +19,7 @@ import math
 import os
 import re
 import secrets
+import shlex
 import signal
 import stat
 import subprocess
@@ -203,6 +204,19 @@ class RuntimeReceipt:
 
 
 @dataclasses.dataclass(frozen=True)
+class GateReceipt:
+    """Process-local proof that the runtime itself ran one configured gate."""
+
+    gate_id: str
+    command: str
+    fence: tuple[str, tuple[str, ...], str]
+    head_sha: str
+    classification: str
+    output_tail: str | None
+    _seal: object = dataclasses.field(repr=False)
+
+
+@dataclasses.dataclass(frozen=True)
 class RuntimeEvidenceProvider:
     """Trusted host adapter for an actual UI/runtime execution provider."""
 
@@ -230,6 +244,7 @@ _CLASSIFICATION_SEAL = object()
 _USER_AUTHORIZATION_SEAL = object()
 _RUNTIME_RECEIPT_SEAL = object()
 _RUNTIME_PROVIDER_SEAL = object()
+_GATE_RECEIPT_SEAL = object()
 _USER_PROVIDER_SEAL = object()
 _RECOVERY_ACTION_SEAL = object()
 _TECHNICAL_RECOVERY_ACTION_SEAL = object()
@@ -239,6 +254,7 @@ _CLASSIFICATION_REGISTRY: dict[int, Classification] = {}
 _USER_AUTHORIZATION_REGISTRY: dict[int, UserAuthorization] = {}
 _RUNTIME_RECEIPT_REGISTRY: dict[int, RuntimeReceipt] = {}
 _RUNTIME_PROVIDER_REGISTRY: dict[int, RuntimeEvidenceProvider] = {}
+_GATE_RECEIPT_REGISTRY: dict[int, GateReceipt] = {}
 _USER_PROVIDER_REGISTRY: dict[int, UserAuthorityProvider] = {}
 _RECOVERY_ACTION_REGISTRY: dict[int, RecoveryAction] = {}
 _TECHNICAL_RECOVERY_ACTION_REGISTRY: dict[int, TechnicalRecoveryAction] = {}
@@ -506,6 +522,22 @@ def resolve_user_authorization(
         instruction_digest,
     )
     return value
+
+
+def _gate_receipt_valid(value: object) -> bool:
+    return bool(
+        isinstance(value, GateReceipt)
+        and value._seal is _GATE_RECEIPT_SEAL
+        and _has_registered_identity(_GATE_RECEIPT_REGISTRY, value)
+        and _fingerprint_matches(
+            value,
+            value.gate_id,
+            value.command,
+            value.fence,
+            value.head_sha,
+            value.classification,
+        )
+    )
 
 
 def issue_runtime_receipt(
@@ -1886,6 +1918,7 @@ def publish_if_exact(
     validated_results: Sequence[ValidatedChildResult] = (),
     user_authorizations: Sequence[UserAuthorization] = (),
     runtime_receipts: Sequence[RuntimeReceipt] = (),
+    gate_receipts: Sequence[GateReceipt] = (),
     recovery_snapshot: bytes = b"",
     dispatch_ledger: DispatchLedger | None = None,
 ) -> PublishResult:
@@ -1963,6 +1996,7 @@ def publish_if_exact(
                 validated_results=validated_results,
                 user_authorizations=user_authorizations,
                 runtime_receipts=runtime_receipts,
+                gate_receipts=gate_receipts,
                 recovery_snapshot=recovery_snapshot,
                 dispatch_ledger=dispatch_ledger,
             )
@@ -2552,6 +2586,190 @@ def run_safe_command(
     return completed
 
 
+_GATE_ENV_PASSTHROUGH = ("PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "DEVELOPER_DIR")
+_GATE_FORBIDDEN_EXECUTABLES = {"env", "printenv", "set", "export", "sudo", "doas"}
+_GATE_OUTPUT_TAIL_BYTES = 4096
+
+
+def _gate_git(worktree: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=worktree,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RpfContractError("gate worktree could not be inspected") from error
+
+
+def _gate_snapshot_matches(
+    worktree: Path,
+    head_sha: str,
+    approved_fence: tuple[str, tuple[str, ...], str],
+) -> bool:
+    """Prove the tracked tree is the committed snapshot of the approved fence.
+
+    Untracked build output may remain between gate reruns; a tracked change or
+    a moved HEAD means the gate no longer runs on the committed snapshot.
+    """
+
+    head = _gate_git(worktree, "rev-parse", "--verify", "HEAD^{commit}")
+    status = _gate_git(
+        worktree, "status", "--porcelain=v1", "--untracked-files=no"
+    )
+    if (
+        head.returncode != 0
+        or head.stdout.decode("ascii", errors="replace").strip() != head_sha
+        or status.returncode != 0
+        or status.stdout.strip()
+    ):
+        return False
+    base = approved_fence[0]
+    if base != "PRE-CONTRACT" and _gate_git(
+        worktree, "merge-base", "--is-ancestor", base, head_sha
+    ).returncode != 0:
+        return False
+    committed: dict[str, bytes] = {}
+    for path in approved_fence[1]:
+        blob = _gate_git(worktree, "cat-file", "blob", f"{head_sha}:{path}")
+        if blob.returncode != 0:
+            return False
+        committed[path] = blob.stdout
+    try:
+        return scope_digest(approved_fence[1], committed) == approved_fence[2]
+    except RpfContractError:
+        return False
+
+
+def run_configured_gate(
+    gate_id: str,
+    *,
+    approved_fence: tuple[str, tuple[str, ...], str],
+    source_bytes: Mapping[str, bytes],
+    repository_root: Path,
+    gate_worktree: Path,
+    head_sha: str,
+    timeout: float = 1800.0,
+) -> GateReceipt:
+    """Run one declared, non-prohibited gate on the committed fence snapshot.
+
+    Only an exact `RPF_CONFIGURED_GATE` command from the approved source fence
+    runs, without a shell, in a clean worktree whose committed HEAD carries the
+    fence bytes.  The gate is repository code the owner declared, so it runs
+    with host tools; the environment keeps only toolchain-locating variables.
+    The receipt keeps the exit classification and, when no restricted content
+    appears, a bounded output tail for diagnosis.
+    """
+
+    if (
+        not isinstance(gate_id, str)
+        or not isinstance(head_sha, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", head_sha)
+        or not isinstance(gate_worktree, Path)
+        or isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not 0 < timeout <= 7200
+    ):
+        raise RpfContractError("configured gate request is malformed")
+    if canonical_fence(
+        approved_fence[0],
+        approved_fence[1],
+        approved_fence[2],
+        source_bytes,
+        repository_root=repository_root,
+    ) != approved_fence:
+        raise RpfContractError("configured gate fence is not approved")
+    inventory = derive_source_contract_inventory(
+        source_bytes,
+        base=approved_fence[0],
+        repository_root=repository_root,
+    )
+    declaration = inventory["gates"].get(gate_id)
+    if declaration is None:
+        raise RpfContractError("gate is not declared in the approved fence")
+    command = declaration["command"]
+    if command in {
+        item["command"] for item in inventory["prohibitions"].values()
+    }:
+        raise RpfContractError("configured gate command is prohibited")
+    try:
+        argv = shlex.split(command)
+    except ValueError as error:
+        raise RpfContractError("configured gate command is malformed") from error
+    if (
+        not argv
+        or _SHELL_META.search(command)
+        or Path(argv[0]).name.lower() in _GATE_FORBIDDEN_EXECUTABLES
+        or any(arg in _INLINE_CODE_FLAGS for arg in argv[1:])
+    ):
+        raise RpfContractError("configured gate command needs shell or inline code")
+    try:
+        worktree = gate_worktree.resolve(strict=True)
+    except OSError as error:
+        raise RpfContractError("gate worktree is unavailable") from error
+    if not _gate_snapshot_matches(worktree, head_sha, approved_fence):
+        raise RpfConflictError("gate worktree is not the committed fence snapshot")
+    environment = {
+        name: os.environ[name]
+        for name in _GATE_ENV_PASSTHROUGH
+        if name in os.environ
+    }
+    environment.update({"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "CI": "1"})
+    returncode: int | None = None
+    output = b""
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=worktree,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            env=environment,
+            start_new_session=True,
+        )
+    except OSError:
+        process = None
+    if process is not None:
+        try:
+            output, _ = process.communicate(timeout=timeout)
+            returncode = process.returncode
+        except subprocess.TimeoutExpired:
+            # Build tools fork; end the whole session, not only the leader.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            output, _ = process.communicate()
+        output = output or b""
+    if not _gate_snapshot_matches(worktree, head_sha, approved_fence):
+        raise RpfConflictError("gate changed the committed fence snapshot")
+    classification = "passed" if returncode == 0 else "failed"
+    output_tail = (
+        None
+        if _document_restricted(output)
+        else output[-_GATE_OUTPUT_TAIL_BYTES:].decode("utf-8", errors="replace")
+    )
+    receipt = GateReceipt(
+        gate_id,
+        command,
+        approved_fence,
+        head_sha,
+        classification,
+        output_tail,
+        _GATE_RECEIPT_SEAL,
+    )
+    _register_identity(_GATE_RECEIPT_REGISTRY, receipt)
+    _record_fingerprint(
+        receipt, gate_id, command, approved_fence, head_sha, classification
+    )
+    return receipt
+
+
 def create_if_absent(
     path: Path,
     candidate: bytes,
@@ -2563,6 +2781,7 @@ def create_if_absent(
     validated_results: Sequence[ValidatedChildResult] = (),
     user_authorizations: Sequence[UserAuthorization] = (),
     runtime_receipts: Sequence[RuntimeReceipt] = (),
+    gate_receipts: Sequence[GateReceipt] = (),
     recovery_snapshot: bytes = b"",
     dispatch_ledger: DispatchLedger | None = None,
 ) -> str:
@@ -2579,6 +2798,7 @@ def create_if_absent(
         validated_results=validated_results,
         user_authorizations=user_authorizations,
         runtime_receipts=runtime_receipts,
+        gate_receipts=gate_receipts,
         recovery_snapshot=recovery_snapshot,
         dispatch_ledger=dispatch_ledger,
     )
@@ -5954,6 +6174,7 @@ def capture_authority(
     validated_results: Sequence[ValidatedChildResult] = (),
     user_authorizations: Sequence[UserAuthorization] = (),
     runtime_receipts: Sequence[RuntimeReceipt] = (),
+    gate_receipts: Sequence[GateReceipt] = (),
     recovery_snapshot: bytes = b"",
     dispatch_ledger: DispatchLedger | None = None,
 ) -> Mapping[str, Any]:
@@ -5970,6 +6191,9 @@ def capture_authority(
         or not isinstance(runtime_receipts, Sequence)
         or isinstance(runtime_receipts, (str, bytes, bytearray))
         or any(not _runtime_receipt_valid(receipt) for receipt in runtime_receipts)
+        or not isinstance(gate_receipts, Sequence)
+        or isinstance(gate_receipts, (str, bytes, bytearray))
+        or any(not _gate_receipt_valid(receipt) for receipt in gate_receipts)
         or not isinstance(recovery_snapshot, bytes)
     ):
         raise RpfContractError("external authority inputs are malformed")
@@ -6350,6 +6574,21 @@ def capture_authority(
     prohibited_commands = {
         item["command"] for item in derived_prohibitions.values()
     }
+    receipts_by_gate = {receipt.gate_id: receipt for receipt in gate_receipts}
+
+    def gate_execution_matches(gate_id: str, declaration: Mapping[str, Any]) -> bool:
+        classification = gates_by_id[gate_id]["classification"]
+        receipt = receipts_by_gate.get(gate_id)
+        if classification == "not-run-unavailable":
+            return receipt is None
+        return bool(
+            classification in {"passed", "failed"}
+            and receipt is not None
+            and receipt.command == declaration["command"]
+            and receipt.fence == approved_fence
+            and receipt.classification == classification
+        )
+
     if (
         dict(contracts) != derived_contracts
         or len(gates_by_id) != len(gates)
@@ -6377,10 +6616,15 @@ def capture_authority(
             )
             or (
                 declaration["command"] not in prohibited_commands
-                and gates_by_id[gate_id]["classification"]
-                != "not-run-unavailable"
+                and not gate_execution_matches(gate_id, declaration)
             )
             for gate_id, declaration in derived_gates.items()
+        )
+        or len(receipts_by_gate) != len(gate_receipts)
+        or any(
+            gate_id not in derived_gates
+            or derived_gates[gate_id]["command"] in prohibited_commands
+            for gate_id in receipts_by_gate
         )
     ):
         raise RpfContractError(
@@ -6970,6 +7214,7 @@ def capture_authority(
         "validated_results": tuple(validated_results),
         "user_authorizations": tuple(user_authorizations),
         "runtime_receipts": tuple(runtime_receipts),
+        "gate_receipts": tuple(gate_receipts),
         "recovery_snapshot": recovery_snapshot,
         "dispatch_ledger": dispatch_ledger,
     }
@@ -7005,6 +7250,7 @@ def captured_authority_valid(captured: object) -> bool:
             validated_results=captured.get("validated_results", ()),
             user_authorizations=captured.get("user_authorizations", ()),
             runtime_receipts=captured.get("runtime_receipts", ()),
+            gate_receipts=captured.get("gate_receipts", ()),
             recovery_snapshot=captured.get("recovery_snapshot", b""),
             dispatch_ledger=captured.get("dispatch_ledger"),
         )

@@ -788,7 +788,7 @@ run repository-wide gates against a shared dirty checkout.
 - Treat an existing `.git/index.lock` as a peer mid-commit: back off and retry
   up to 60 s rather than deleting it.
 - Run full gates against a committed `GATE_HEAD_SHA` in the integration
-  worktree. Push only that green commit to the recorded target ref by normal
+  worktree through `run_configured_gate()`. Push only that green commit to the recorded target ref by normal
   fast-forward. If the target advanced, rebase onto its fetched head and rerun
   every allowed, secret-safe gate against the new committed HEAD before
   retrying, at most twice.

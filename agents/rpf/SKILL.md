@@ -285,7 +285,8 @@ Perform once per invocation:
    with exact identity-registered approved file classifications before
    execution. Because the bundled runner lacks a filesystem sandbox, it rejects
    repository-aware git/rg/grep/find and all interpreters as unavailable rather
-   than permitting transitive reads. Never pass a directory, symlink
+   than permitting transitive reads. Declared configured gates are the
+   exception and run only through `run_configured_gate()` in PHASE 4. Never pass a directory, symlink
    component, shell, interpolation, environment dump, hidden/ignored broad
    scan, or protected filename. Its environment is literal PATH `/usr/bin:/bin`
    plus fixed non-secret variables.
@@ -531,7 +532,11 @@ diffs, and verify targeted acceptance. After every material source change,
 publish the exact new fence and carry every open watch to it at higher Rev
 without changing its original obligation or changed cycle.
 
-PHASE 4: run only approved gates on the immutable committed snapshot. When
+PHASE 4: run only approved gates on the immutable committed snapshot. Run
+each declared, non-prohibited gate with `run_configured_gate()` in the
+integration worktree at the committed `GATE_HEAD_SHA`, and pass its
+`GateReceipt` to the same process's `capture_authority()`/publish call; only
+that receipt turns a gate row into `passed` or `failed`. When
 checks are prohibited or unavailable, validate typed, source-resolvable
 producer/consumer contracts whose rows bind status/revision/cycle/run/
 dispatch/fence/coverage IDs, typed input/output source refs, and explicit
@@ -545,7 +550,7 @@ UI is verified only by an exact current-fence runtime record plus an
 independently verifiable host-issued `RuntimeReceipt`, a result whose role is
 exactly `ui-runtime-verifier`, and the complete atomic
 route/viewport/interaction/variant/mobile-layout/accessibility set. Static
-evidence remains unverified. This repository has no external provider trust
+evidence remains unverified. The bundled RPF runtime has no external provider trust
 root, so its callback registration fails closed and UI runtime status remains
 separately unverified until such a host integration is present. Commit and push only green, explicitly staged
 RPF-owned paths.
@@ -602,7 +607,8 @@ are true:
 - `MATERIAL_POINTER_CHANGES = 0`;
 - `GATES_GREEN = yes`, or `not-applicable` only because no configured gate
   exists; `PROHIBITED_CHECKS` and `UNAVAILABLE_CHECKS` must be `none` because a
-  configured gate that could not run remains a coverage gap. Its typed source
+  configured gate that was prohibited, refused by `run_configured_gate()`, or
+  never run through it remains a coverage gap. Its typed source
   contract is still required and valuable, but does not impersonate execution;
 - `ACTIVE_PEERS = 0`;
 - every completion criterion's typed authoritative obligation IDs occur in the

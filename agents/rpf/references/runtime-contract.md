@@ -191,10 +191,21 @@ exact manifest of identity-registered `approved` classifications. Existing
 path arguments must be bounded regular files in that manifest; directory
 arguments, every symlink component, repository-aware git/rg/grep/find
 operations, and all interpreters are forbidden because they can read
-unclassified repository bytes transitively. Until a filesystem-sandboxed host
-provider exists, this bundled runner executes no repository gate and records
-the check as unavailable; source-contract verification never impersonates
-execution. Environment dumps, interpolation/metacharacters, protected
+unclassified repository bytes transitively. Configured gates are the one
+exception: `run_configured_gate()` runs only an exact, non-prohibited
+`RPF_CONFIGURED_GATE` command from the approved fence, without a shell or
+inline code, in a worktree whose tracked files are exactly the committed
+`GATE_HEAD_SHA` carrying the fence bytes, with only toolchain-locating
+variables (`PATH`, `HOME`, `TMPDIR`, `USER`, `LOGNAME`, `DEVELOPER_DIR`) plus
+fixed locale and `CI=1`. A timeout kills the gate's whole process session and
+records `failed`. It rejects a gate that changes tracked files or moves HEAD
+(untracked build output may remain), and keeps only the exit
+classification plus a bounded output tail that is dropped when restricted
+content appears. Its process-sealed `GateReceipt` is the only way a gate row
+leaves `not-run-unavailable`: `capture_authority(gate_receipts=...)` rejects a
+root-authored `passed`/`failed` row without the exact receipt for that gate,
+command, and fence. A gate not run this way stays `not-run-unavailable`, and
+source-contract verification never impersonates execution. Environment dumps, interpolation/metacharacters, protected
 filenames, and hidden/ignored searches are forbidden. `run_safe_command()` uses the
 literal PATH `/usr/bin:/bin` and a fixed non-secret environment instead of
 inheriting session variables, buffers both streams,
