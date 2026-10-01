@@ -25,7 +25,7 @@ Env note: **macOS system ruby is < 3.0** (no endless-method `def`); scripts use 
 
 ### Generic App Store Connect API inspection
 
-`asc_api.rb` replaces ad-hoc `jwt encode` and the removed TypeScript/Playwright client. It signs an
+`asc_api.rb` is the ASC API client. It signs an
 ES256 JWT directly with Ruby OpenSSL. Configure credentials without printing their values:
 
 ```bash
