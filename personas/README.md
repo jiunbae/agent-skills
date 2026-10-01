@@ -62,9 +62,8 @@ agt persona show security-reviewer
 `~/.agents/personas`는 원본 저장소가 아니라 현재 활성화한 전역 설치 목록입니다. 직접 편집하지 말고 이 디렉토리의 파일을 symlink로 설치해서 사용합니다.
 
 - 개인/범용 원본: `~/workspace/agent-skills/personas` (`~/.agent-skills` 심링크로 탐색)
-- 회사/RTZR 원본: `~/workspace/agents/personas`
 - 전역 기본 설치 추천: `code-quality-reviewer`, `security-reviewer`, `architecture-reviewer`, `frontend-reviewer`, `performance-reviewer`
-- 회사 persona는 가능하면 회사 작업공간의 local `.agents/personas`에 설치합니다.
+- 팀 전용 persona는 별도 저장소에 두고, 그 팀 작업공간의 local `.agents/personas`에 설치합니다.
 
 ## 페르소나 목록
 
