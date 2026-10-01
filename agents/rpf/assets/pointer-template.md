@@ -561,8 +561,8 @@ Never record the value, a reversible derivative, or blocked output.
 
 Risk acceptance is valid only when its opaque authorization ID resolves to an
 independently verifiable host-issued `UserAuthorization` for the exact risk,
-scope, and rationale. The bundled registration API fails closed because this
-repository has no external conversation-host trust root; direct provider
+scope, and rationale. The bundled registration API fails closed because the
+bundled RPF runtime has no external conversation-host trust root; direct provider
 construction, callback pairs, a caller Boolean, or `explicit-user` text are not
 authority.
 

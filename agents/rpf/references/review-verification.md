@@ -485,7 +485,7 @@ even a well-shaped row-authored provenance/observation placeholder fails when
 its record ID does not resolve. The exact canonical record must also have an
 independently verifiable host-issued `RuntimeReceipt`, with the same digest/
 provider persisted in machine authority and provider ID matching the recorded
-runner. This repository has no external host trust root and its registration
+runner. The bundled RPF runtime has no external host trust root and its registration
 API therefore fails closed; caller-owned executor/observer callbacks never
 create runtime evidence. `observed` must equal the successful `expected`
 outcome before the row can be `verified`. Its linked coverage row must itself be `covered` with current
@@ -516,8 +516,8 @@ authorization in the row, and allow convergence only when no authored
 completion criterion requires runtime verification. Risk acceptance never
 turns an unchecked runtime criterion green. `failed` cannot be accepted as
 verified. `explicit-user` prose, a caller Boolean, or two caller-owned callbacks
-are not authorization. Because this repository has no external conversation-
-host trust root, its provider registration fails closed; preserve the risk and
+are not authorization. Because the bundled RPF runtime has no external
+conversation-host trust root, its provider registration fails closed; preserve the risk and
 wait for a future host-issued authority whose opaque ID, risk ID, scope, and
 rationale can be independently verified.
 

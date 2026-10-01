@@ -478,8 +478,8 @@ new `UserAuthorization` can be minted here. Preserve the residual risk and wait
 for a future host-issued, independently verifiable authority integration.
 
 Likewise, a root-authored runtime/backup dictionary or two in-process echo
-adapters are not execution evidence. This repository has no external signed or
-IPC trust root, so `register_runtime_evidence_provider()` fails closed. Until a
+adapters are not execution evidence. The bundled RPF runtime has no external
+signed or IPC trust root, so `register_runtime_evidence_provider()` fails closed. Until a
 host integration injects an independently verifiable sealed provider,
 `issue_runtime_receipt()` cannot mint a receipt and UI/backup runtime claims
 remain explicitly unverified. Capture

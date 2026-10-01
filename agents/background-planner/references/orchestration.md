@@ -93,7 +93,8 @@ The repository's `personas/*.md` are the single source of review/planning lenses
 not re-invent inline lens tables. Two supported integration modes (support both):
 
 1. **Inject the body** (host-native workers): read the persona `.md` and paste its
-   `Review Lens` / `Evaluation Framework` / `Red Flags` into the worker's prompt.
+   lens section (`Review Lens` for reviewers, `Planning Lens` for planners),
+   `Evaluation Framework` and `Red Flags` into the worker's prompt.
 2. **`agt persona review`** (cross-tool): `agt persona review <persona> --base <ref>`
    or `--staged`, optionally `--codex`/`--gemini` and `-o <file>`. Requires `agt`.
 
