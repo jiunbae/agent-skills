@@ -368,7 +368,7 @@ else
     echo "워크스페이스별 스킬 설치:"
     echo "  cd your-project"
     echo "  agt skill init"
-    echo "  agt skill install kubernetes-skill"
+    echo "  agt skill install git-commit-pr"
     echo ""
     echo "더 많은 정보: https://github.com/${REPO}"
     echo -e "${GREEN}════════════════════════════════════════${NC}"

@@ -16,6 +16,19 @@ Nothing below has been tagged. The most recent `v*` tag is `v2026.08.22.1`
 tag is cut, rename this heading to that tag's version and date and open a new
 empty `[Unreleased]` section above it.
 
+### Removed
+- `integrations/kubernetes-skill`. Its body was a kubectl cheat sheet the
+  model already knows, its `k8s-helper.sh` was never referenced from the
+  Skill, and its "k8s" trigger overlapped `iac-deploy-prep`.
+- `context/context-manager`. Its workflow (`ls .context`, `grep`, open a few
+  documents) is what current agents do unprompted; a project whose
+  `.context/` holds decisions the code cannot show gets a one-line pointer in
+  its own `CLAUDE.md`/`AGENTS.md` instead (`static/CONTEXT.sample.md` §5).
+- Scripts no Skill referenced: `development/context-worktree/scripts/context-worktree.sh`,
+  `integrations/discord-skill/scripts/discord-api.sh` and
+  `integrations/slack-skill/scripts/slack-api.sh`. Their SKILL.md files already
+  cover the same work with plain `git worktree` and REST examples.
+
 ### Changed
 - `context/context-manager` leaves the `core` profile and its two scripts are
   deleted. `find_context.py` scored only filenames and parent directory names,

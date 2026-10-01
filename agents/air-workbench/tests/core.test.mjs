@@ -2171,7 +2171,6 @@ const RECOGNIZED_SKILL_SHAPES = [
   ["agents/background-reviewer/SKILL.md", 6, 5, "numbered.h2"],
   ["business/bm-analyzer/SKILL.md", 3, 2, "workflow.children"],
   ["business/proposal-analyzer/SKILL.md", 3, 2, "workflow.children"],
-  ["context/context-manager/SKILL.md", 4, 3, "workflow.children"],
   ["development/appstore-screenshots/SKILL.md", 7, 6, "numbered.h2"],
   ["development/context-worktree/SKILL.md", 3, 2, "workflow.children"],
   ["integrations/notion-summary/SKILL.md", 3, 2, "workflow.children"],
@@ -2273,7 +2272,7 @@ test("the recognition ladder covers every repository Skill and round-trips byte 
     }
   };
   walk(ROOT);
-  assert.ok(skills.length >= 32, "the repository must expose the full Skill corpus");
+  assert.ok(skills.length >= 30, "the repository must expose the full Skill corpus");
   const unrecognized = [];
   for (const path of skills.sort()) {
     const bytes = await readFile(path);

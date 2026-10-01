@@ -949,8 +949,8 @@ test("Workbench proves a source checkout, discovers only grouped Skills, and doe
     randomIdBytes: ids(),
   });
   const checkout = await checkoutCatalog.initialize();
-  assert.equal(checkout.physical_record_count, 31);
-  assert.equal(checkout.item_count, 31);
+  assert.equal(checkout.physical_record_count, 29);
+  assert.equal(checkout.item_count, 29);
   assert.ok(
     checkout.items.some((item) => item.name === "bm-analyzer"),
   );

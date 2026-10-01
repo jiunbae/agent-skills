@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-31-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-29-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-20-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#quickstart-for-agents">Quickstart</a> •
@@ -60,7 +60,7 @@ Install the agent-skills toolkit into this project:
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
-<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=31+skills&model=Opus+5.5&project=agent-skills" width="100%" /></div>
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=29+skills&model=Opus+5.5&project=agent-skills" width="100%" /></div>
 
 ---
 
@@ -206,7 +206,6 @@ The same form works for any other catalog entry, for example
 | Skill | Description |
 |-------|-------------|
 | `discord-skill` | Discord REST API |
-| `kubernetes-skill` | Kubernetes cluster management |
 | `notion-summary` | Notion page upload |
 | `obsidian-tasks` | Obsidian TaskManager (Kanban, Dataview) |
 | `obsidian-writer` | Obsidian Vault writing and docs.jiun.dev publishing |
@@ -233,7 +232,6 @@ The same form works for any other catalog entry, for example
 
 | Skill | Description |
 |-------|-------------|
-| `context-manager` | Project context auto-loader |
 | `static-index` | Global static context index with user profile |
 
 ### 🔧 meta/ — Meta Skills
@@ -554,7 +552,6 @@ Example:
 backend:
   description: "Backend development essentials"
   skills:
-    - context/context-manager
     - security/security-auditor
   groups:
     - development

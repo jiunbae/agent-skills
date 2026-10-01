@@ -76,6 +76,6 @@ test("root catalogs use the AIR name without changing catalog counts", async () 
   assert.match(korean, /\| `air-workbench` \| AIR Skill 워크플로 편집/);
   assert.doesNotMatch(english, /\| `workflow-studio` \|/);
   assert.doesNotMatch(korean, /\| `workflow-studio` \|/);
-  assert.match(english, /skills-31-/);
-  assert.match(korean, /skills-31-/);
+  assert.match(english, /skills-29-/);
+  assert.match(korean, /skills-29-/);
 });

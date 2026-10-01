@@ -6,7 +6,7 @@
   <a href="https://github.com/open330/agt/releases"><img src="https://img.shields.io/github/v/release/open330/agt?style=for-the-badge&color=feca57&labelColor=1a1a2e&label=agt" alt="agt Release"></a>
   <a href="https://www.npmjs.com/package/@open330/agt"><img src="https://img.shields.io/npm/v/@open330/agt?style=for-the-badge&color=c0392b&labelColor=1a1a2e&logo=npm&logoColor=white" alt="npm"></a>
   <a href="#라이선스"><img src="https://img.shields.io/badge/license-MIT-54a0ff?style=for-the-badge&labelColor=1a1a2e" alt="License"></a>
-  <img src="https://img.shields.io/badge/skills-31-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
+  <img src="https://img.shields.io/badge/skills-29-ee5a24?style=for-the-badge&labelColor=1a1a2e" alt="Skills">
   <img src="https://img.shields.io/badge/personas-20-78e08f?style=for-the-badge&labelColor=1a1a2e" alt="Personas">
   <br><br>
   <a href="#스킬-카탈로그">스킬</a> •
@@ -187,7 +187,6 @@ node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
 | 스킬 | 설명 |
 |------|------|
 | `discord-skill` | Discord REST API |
-| `kubernetes-skill` | Kubernetes 클러스터 관리 |
 | `notion-summary` | Notion 페이지 업로드 |
 | `obsidian-tasks` | Obsidian TaskManager (Kanban, Dataview) |
 | `obsidian-writer` | Obsidian Vault 저장 및 docs.jiun.dev 퍼블리시 |
@@ -214,7 +213,6 @@ node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
 
 | 스킬 | 설명 |
 |------|------|
-| `context-manager` | 프로젝트 컨텍스트 자동 로드 |
 | `static-index` | 글로벌 정적 컨텍스트 인덱스 (사용자 프로필 포함) |
 
 ### 🔧 meta/ — 메타 스킬
