@@ -25,7 +25,10 @@ LOCALIZED_MAX_DENSITY = 6.0
 def read_input(path: str) -> str:
     if path == "-":
         return sys.stdin.read()
-    return Path(path).read_text(encoding="utf-8")
+    resolved = Path(path).resolve()
+    if not resolved.is_relative_to(Path.cwd().resolve()):
+        raise ValueError(f"input path must stay within the current working directory: {path}")
+    return resolved.read_text(encoding="utf-8")
 
 
 def line_column(text: str, offset: int) -> tuple[int, int]:
