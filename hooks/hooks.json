@@ -7,7 +7,7 @@
     "statusMessage": "English coaching..."
   },
   "prompt-logger": {
-    "description": "Logs all prompts to MinIO for analytics (non-blocking)",
+    "description": "Captures each submitted prompt into omp in the background (non-blocking)",
     "script": "prompt-logger.sh",
     "event": "UserPromptSubmit",
     "type": "command",

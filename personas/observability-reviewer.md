@@ -82,7 +82,7 @@ When reviewing code, you ask:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged:
+Flag these patterns wherever they appear in the change:
 
 - `catch {}` / `except: pass` / `.catch(() => {})` — an error swallowed with no log, metric, or re-throw
 - A new metric whose labels include a user id, request id, uuid, email, or free-text (cardinality bomb)

@@ -86,7 +86,7 @@ When reviewing AI/LLM code, you ask:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged:
+Flag these patterns wherever they appear in the change:
 
 - User/retrieved/tool content concatenated directly into a system prompt with no delimiting or instruction-hierarchy defense
 - Model output `JSON.parse`'d (or fed to a tool) with no schema validation and no catch path

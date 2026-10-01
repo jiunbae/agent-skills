@@ -60,7 +60,7 @@ Install the agent-skills toolkit into this project:
 Note: Use `npm install -g @open330/agt` first if you prefer running `agt` directly.
 ```
 
-<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=31+skills&model=Opus+4.8&project=agent-skills" width="100%" /></div>
+<div><img src="https://quickstart-for-agents.vercel.app/api/footer.svg?theme=claude-code&tokens=31+skills&model=Opus+5.5&project=agent-skills" width="100%" /></div>
 
 ---
 
@@ -85,9 +85,12 @@ agt skill install -g --from jiunbae/agent-skills/development/git-commit-pr
 agt persona install -g --from jiunbae/agent-skills
 ```
 
-`--agent claude` is the default and uses `.claude/skills`. `--agent codex`
-uses Codex's flat `.agents/skills/<skill>` discovery layout. Add `--global` for
-the corresponding user-level directory.
+`--agent claude` is the default and installs to `.claude/skills/<skill>`
+(`--claude-dir` or `CLAUDE_CONFIG_DIR` picks another config directory).
+`--agent codex` installs to `.agents/skills/<skill>`. Add `--global` for the
+corresponding user-level directory. Skills an older agt placed under
+`<group>/<skill>` are not loaded by Claude Code; move them with
+`agt skill migrate --global`.
 
 ### With install.sh
 
@@ -300,7 +303,7 @@ Event-driven automation for Claude Code.
 | Hook | Event | Description |
 |------|-------|-------------|
 | `english-coach` | `UserPromptSubmit` | Rewrites prompts in natural English with vocabulary |
-| `prompt-logger` | `UserPromptSubmit` | Logs prompts to MinIO for analytics |
+| `prompt-logger` | `UserPromptSubmit` | Captures each submitted prompt into omp in the background |
 | `stop-capture` | `Stop` | Captures each completed response into omp in the background |
 
 ---
@@ -471,7 +474,7 @@ Create the file at [GROUP]/[SKILL_NAME]/SKILL.md with this structure:
 4. A "Best Practices" section with DO/DON'T guidelines
 
 Rules:
-- Description should be third person, under 200 chars, end with trigger conditions
+- Description should be third person and state what the skill does, when to use it, and when not to
 - Keep under 300 lines total
 - Code examples should be practical and production-ready
 - Include both English and Korean trigger keywords where relevant
@@ -505,7 +508,7 @@ Create the file at personas/[PERSONA_NAME]/PERSONA.md with this structure:
 3. "Review Lens" section: numbered list of what they evaluate
 4. "Evaluation Framework" section: table with Category, Severity (CRITICAL/HIGH/MEDIUM/LOW), Criteria
 5. "Output Format" section: markdown template for review output
-6. "Red Flags" section: patterns that MUST always be flagged
+6. "Red Flags" section: concrete patterns the reviewer flags whenever they appear
 7. "Key Principles" section: numbered guiding principles
 
 Rules:
@@ -537,7 +540,7 @@ Create a new installation profile for the agent-skills repository.
 
 Profile name: [PROFILE_NAME]
 Purpose: [WHO_IS_THIS_FOR]
-Available groups: agents, development, business, integrations, ml, security, context, meta
+Available groups: agents, development, business, integrations, ml, security, context, meta, common
 
 Add the profile to profiles.yml with:
 - description: one-line description of the profile
@@ -615,6 +618,7 @@ agent-skills/                        open330/agt (CLI tool)
 ├── security/     Security skills
 ├── context/      Context management
 ├── meta/         Meta skills
+├── common/       Writing skills
 ├── personas/     Expert personas
 ├── hooks/        Claude Code hooks
 ├── static/       Global context

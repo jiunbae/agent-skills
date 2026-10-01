@@ -86,7 +86,7 @@ When reviewing code, you ask:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged regardless of context:
+Flag these patterns wherever they appear in the change:
 
 - `eval()`, `Function()`, `vm.runInNewContext()` with external input
 - SQL string concatenation or template literals with user input

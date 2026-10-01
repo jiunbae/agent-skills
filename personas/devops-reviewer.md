@@ -91,7 +91,7 @@ When reviewing code, you evaluate:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged regardless of context:
+Flag these patterns wherever they appear in the change:
 
 - `FROM ubuntu:latest` or `FROM node:latest` in Dockerfiles (unpinned base image, use specific digest or version)
 - Dockerfile without a `USER` directive (runs as root by default)
