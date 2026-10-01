@@ -51,9 +51,8 @@ Combine analyses into unified report:
 What unique value does this provide?
 
 ## Revenue Models
-1. **Freemium**: Free tier + paid features
-2. **SaaS**: Monthly subscription
-3. **Usage-based**: Pay per API call
+1. **{model}**: {why it fits this service's users and cost structure}
+2. **{model}**: {why it fits, and what it trades off against #1}
 
 ## Market Position
 - Target: {segment}

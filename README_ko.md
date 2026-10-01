@@ -67,9 +67,12 @@ agt skill install -g --from jiunbae/agent-skills/development/git-commit-pr
 agt persona install -g --from jiunbae/agent-skills
 ```
 
-`--agent claude`가 기본값이며 `.claude/skills`를 사용합니다.
-`--agent codex`는 Codex의 평면형 `.agents/skills/<skill>` 발견 구조를
-사용합니다. `--global`을 추가하면 사용자 전역 경로에 설치합니다.
+`--agent claude`가 기본값이며 `.claude/skills/<skill>`에 설치합니다.
+`--agent codex`는 `.agents/skills/<skill>`에 설치합니다. `--global`을 추가하면
+사용자 전역 경로에 설치합니다. 이전 agt가 `<group>/<skill>`에 둔 스킬은
+Claude Code가 읽지 못합니다. 2026.7.23 이후 agt 릴리스는 다른 설정 디렉터리를
+지정하는 `--claude-dir`(또는 `CLAUDE_CONFIG_DIR`)과 grouped 설치를 옮기는
+`agt skill migrate --global`을 제공합니다.
 
 ### install.sh로 설치 (Claude Code + Codex)
 
@@ -280,7 +283,7 @@ Claude Code 이벤트 기반 자동화.
 | 훅 | 이벤트 | 설명 |
 |----|--------|------|
 | `english-coach` | `UserPromptSubmit` | 프롬프트를 자연스러운 영어로 재작성 + 어휘 학습 |
-| `prompt-logger` | `UserPromptSubmit` | MinIO로 프롬프트 로깅 (분석용) |
+| `prompt-logger` | `UserPromptSubmit` | 제출한 프롬프트를 백그라운드에서 omp로 수집 |
 | `stop-capture` | `Stop` | 완료된 응답을 백그라운드에서 omp로 수집 |
 
 ---

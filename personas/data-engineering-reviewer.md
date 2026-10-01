@@ -83,7 +83,7 @@ When reviewing pipeline/analytics code, you ask:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged:
+Flag these patterns wherever they appear in the change:
 
 - An ingest/transform that `INSERT`s without a dedupe key, upsert, or replace semantics (re-run → duplicates)
 - A backfill script with an unbounded or open-ended window, or one that `DELETE`s + re-inserts without a transaction/guard

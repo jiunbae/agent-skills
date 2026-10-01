@@ -84,7 +84,7 @@ When reviewing code that touches user data, you ask:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged:
+Flag these patterns wherever they appear in the change:
 
 - A biometric identifier, or the content of a private communication, collected/stored with no visible consent or lawful-basis check
 - Raw content / identifiers / biometric data passed into `log`, a trace span, or an analytics event payload

@@ -88,7 +88,7 @@ When reviewing code, you evaluate:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged regardless of context:
+Flag these patterns wherever they appear in the change:
 
 - `<div onClick>` or `<span onClick>` without `role`, `tabIndex`, and `onKeyDown` (inaccessible clickable element)
 - `<img>` without `alt` attribute (screen reader announces the file name, which is useless)

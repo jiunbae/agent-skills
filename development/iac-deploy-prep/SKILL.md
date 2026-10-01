@@ -670,7 +670,7 @@ CI workflow uses `paths:` filter — only triggers on changes to `packages/**`, 
 Changes to `tools/**`, `docs/**`, or other non-build directories will NOT trigger CI. This is intentional —
 those files are not included in the Docker image. If you need to force a rebuild, touch a tracked path:
 ```bash
-echo "# trigger" >> .gitea/workflows/deploy.yaml && git add -A && git commit -m "ci: trigger rebuild" && git push
+echo "# trigger" >> .gitea/workflows/deploy.yaml && git add .gitea/workflows/deploy.yaml && git commit -m "ci: trigger rebuild" && git push
 ```
 
 ## Language Detection
@@ -680,5 +680,5 @@ echo "# trigger" >> .gitea/workflows/deploy.yaml && git add -A && git commit -m 
 | package.json | Node.js | node:22-slim | prom-client |
 | requirements.txt | Python | python:3.11-slim | prometheus_client |
 | pyproject.toml | Python (only with resolved backend/install/start command) | python:3.11-slim | prometheus_client |
-| Cargo.toml | Rust | rust:1.75-alpine | prometheus |
-| go.mod | Go | golang:1.21-alpine | prometheus/client_golang |
+| Cargo.toml | Rust | rust:{Cargo.toml rust-version, else 1}-alpine | prometheus |
+| go.mod | Go | golang:{go.mod go version}-alpine | prometheus/client_golang |

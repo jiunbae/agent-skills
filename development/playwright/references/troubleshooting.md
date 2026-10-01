@@ -69,8 +69,8 @@ Error: Cannot find module '../src/cli/index.js'
 
 **해결:**
 ```bash
-# 경로 확인 후 올바른 디렉토리에서 실행
-cd skills/jelly-playwright
+# 이 스킬이 설치된 디렉토리(SKILL.md가 있는 곳)에서 실행
+cd "<playwright 스킬 디렉토리>"
 npm run pw -- screenshot https://example.com
 ```
 

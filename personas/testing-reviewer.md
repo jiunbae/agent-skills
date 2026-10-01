@@ -82,7 +82,7 @@ When reviewing code and its tests, you ask:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged:
+Flag these patterns wherever they appear in the change:
 
 - New destructive/irreversible/auth/payment/agent-action logic with no test
 - A test that mocks the exact function/class it claims to be testing

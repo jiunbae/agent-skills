@@ -8,7 +8,7 @@ set -e
 
 # Load environment variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../../jelly-dotenv/load-env.sh" 2>/dev/null || true
+# Credentials come from the environment (SLACK_BOT_TOKEN).
 
 # Configuration
 SLACK_API_BASE="https://slack.com/api"
@@ -31,7 +31,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 check_token() {
     if [ -z "$SLACK_BOT_TOKEN" ]; then
         log_error "SLACK_BOT_TOKEN is not set"
-        log_info "Set it in skills/jelly-dotenv/.env"
+        log_info "Export SLACK_BOT_TOKEN in the environment"
         log_info "Get your token from: https://api.slack.com/apps"
         exit 1
     fi

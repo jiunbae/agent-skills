@@ -89,7 +89,7 @@ When reviewing code, you evaluate:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged regardless of context:
+Flag these patterns wherever they appear in the change:
 
 - ORM `.find()` or `.get()` calls inside `for`/`forEach`/`map` loops (N+1 pattern)
 - `SELECT *` in production code, especially on tables with JSONB, TEXT, or BYTEA columns

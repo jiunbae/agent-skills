@@ -79,7 +79,7 @@ README.md    access: none
 | `WHOAMI.md` | `WHOAMI.sample.md` | 사용자 프로필 (기술 스택, 선호도) | static-index |
 | `NOTION.yaml` | `NOTION.sample.yaml` | Notion 연동 설정 source of truth | notion-summary |
 | `NOTION.md` | `NOTION.sample.md` | Notion 연동 설명/legacy fallback | notion-summary |
-| `SECURITY.md` | `SECURITY.sample.md` | 보안 규칙 (커밋 금지 패턴) | git-commit-pr |
+| `SECURITY.md` | `SECURITY.sample.md` | 보안 규칙 (커밋 금지 패턴) | - |
 | `OBSIDIAN.md` | `OBSIDIAN.sample.md` | Obsidian vault 리소스 목록 | obsidian-writer |
 | `IAC.md` | `IAC.sample.md` | IaC/Kubernetes 배포 가이드 | - |
 | `VAULT.md` | `VAULT.sample.md` | Vaultwarden secrets 접근 가이드 | - |
@@ -113,7 +113,7 @@ README.md    access: none
 ```
 
 **관리 방법:**
-- `static-index` 스킬이 자동 생성/업데이트
+- `static-index` 스킬은 조회만 담당 (요청이 있을 때만 생성)
 - 직접 편집 가능
 
 ### SECURITY.md
@@ -135,7 +135,7 @@ README.md    access: none
 ```
 
 **관리 방법:**
-- `git-commit-pr` 스킬이 커밋 전 검증
+- 커밋 전 수동 점검용 체크리스트 (`git-commit-pr`은 번들 스크립트로 시크릿을 검사하며 이 파일을 읽지 않음)
 - 프로젝트별 규칙 추가 가능
 
 ### STYLE.md (선택)
@@ -161,7 +161,7 @@ README.md    access: none
 프로젝트 컨텍스트 관리 표준을 정의합니다. 암묵지 감소 및 에이전트 간 맥락 공유를 위한 `.context/` 디렉토리 활용 가이드를 제공합니다.
 
 **관리 방법:**
-- `context-manager` 스킬(선택 설치)이 참조 및 업데이트 권장
+- `context-manager` 스킬(선택 설치)이 참조 (문서 수정은 요청이 있을 때만)
 - [CONTEXT.md 상세 보기](./CONTEXT.md)
 
 ```
@@ -170,8 +170,8 @@ README.md    access: none
 
 ```bash
 # 1. 저장소 클론
-git clone https://github.com/open330/agt.git ~/.agt
-cd ~/.agt
+git clone https://github.com/jiunbae/agent-skills ~/.agent-skills
+cd ~/.agent-skills
 
 # 2. static 심링크 설정
 ./install.sh --link-static
@@ -193,6 +193,5 @@ cd ~/.agt
 ## 관련 스킬
 
 - **static-index**: WHOAMI.md 생성/관리
-- **git-commit-pr**: SECURITY.md 참조
 - **context-manager**(선택 설치): 프로젝트 컨텍스트 로드 시 참조
 - **korean-editor**: KOREAN.md의 기준에 어긋난 한국어 초안을 퇴고

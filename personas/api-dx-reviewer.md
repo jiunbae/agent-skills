@@ -82,7 +82,7 @@ When reviewing API/SDK/release-facing code, you ask:
 
 ## Red Flags
 
-These patterns must ALWAYS be flagged:
+Flag these patterns wherever they appear in the change:
 
 - A renamed/removed public export, command, or flag with no major bump and no deprecation alias
 - A new **required** parameter (or a removed default) added to an existing public function/command

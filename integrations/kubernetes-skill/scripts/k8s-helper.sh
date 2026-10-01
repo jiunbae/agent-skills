@@ -8,7 +8,7 @@ set -e
 
 # Load environment variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../../jelly-dotenv/load-env.sh" 2>/dev/null || true
+# Credentials come from the environment (KUBECONFIG and related variables).
 
 # Configuration
 KUBE_NAMESPACE="${KUBE_NAMESPACE:-default}"

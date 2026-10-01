@@ -16,8 +16,9 @@ sub-agent mechanism over shelling out to another CLI.
   Frontmatter that matters: `description` (drives selection), `tools` (allowlist —
   give reviewers **read-only** tools only), `model`, and `isolation: worktree` for
   parallel writers.
-- Invoke with the `Task` tool, `subagent_type: "<agent name>"`. One `Task` call per
-  independent worker; send them in a single turn so they run concurrently.
+- Invoke with the `Agent` tool (named `Task` on older releases),
+  `subagent_type: "<agent name>"`. One call per independent worker; send them in a
+  single turn so they run concurrently.
 - Sub-agents run in the **background by default** on current releases — you do not
   block-wait. Results arrive as a **completion notification** in a later turn; read
   the notification summary rather than the raw transcript. Do **not** poll
@@ -45,7 +46,7 @@ codex -C "$DIR" -a never exec -s workspace-write -o out.md - < prompt.md
   explicit `-s` flag instead.
 - `-o/--output-last-message <file>` saves the final message; `--json` streams JSONL
   events; `--output-schema <file>` forces a structured JSON result.
-- Codex now has native multi-agent workers and can run as an MCP server (`codex mcp`).
+- Codex has native multi-agent workers and can run as an MCP server (`codex mcp`).
   If the orchestrator **is** Codex, prefer its native workers over nested `codex exec`.
 
 ### Gemini CLI (fallback / cross-tool)

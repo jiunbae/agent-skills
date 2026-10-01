@@ -27,8 +27,8 @@ The remote installer remains available for compatibility and now downloads
 `jiunbae/agent-skills` instead of the CLI repository:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh \
-  | bash -s -- --core --cli --codex
+curl -fsSL https://raw.githubusercontent.com/jiunbae/agent-skills/main/setup.sh -o setup.sh
+bash setup.sh --core --cli --codex
 ```
 
 ## Local Source Checkout
