@@ -96,11 +96,14 @@ def envelope(
 
 
 def root_authority(
-    fence: tuple[str, tuple[str, ...], str], source: dict[str, bytes]
+    fence: tuple[str, tuple[str, ...], str],
+    source: dict[str, bytes],
+    *,
+    repository_root: Path = REPO_ROOT,
 ) -> dict[str, object]:
     primary_path = sorted(source)[0]
     inventory = runtime.derive_source_contract_inventory(
-        source, base=fence[0], repository_root=REPO_ROOT
+        source, base=fence[0], repository_root=repository_root
     )
     prohibited_commands = {
         item["command"] for item in inventory["prohibitions"].values()
@@ -4152,3 +4155,158 @@ class FrozenVerdictClearanceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfiguredGateExecutionTest(unittest.TestCase):
+    SOURCE = "app/source.py"
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temporary.name).resolve()
+        self.git("init", "-q")
+        self.git("commit", "-q", "--allow-empty", "-m", "base")
+        self.base = self.git("rev-parse", "HEAD")
+        (self.repo / "app").mkdir()
+        (self.repo / "gate_ok.py").write_text("print('gate ok')\n")
+        (self.repo / "gate_fail.py").write_text("raise SystemExit(3)\n")
+        (self.repo / "gate_dirty.py").write_text("open('app/source.py', 'a').write('#')\n")
+        self.write_source("python3 gate_ok.py")
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def git(self, *args: str) -> str:
+        return subprocess.check_output(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false", *args],
+            cwd=self.repo,
+            text=True,
+        ).strip()
+
+    def write_source(self, command: str) -> None:
+        text = (
+            "def producer():\n    return 1\n\n\nconsumer = producer()\n\n"
+            'RPF_SOURCE_CONTRACT = "SC-1|save contract"\n'
+            f'RPF_CONFIGURED_GATE = "GATE-1|{command}|SC-1"\n'
+            'RPF_TEST_PROHIBITION = "PROHIBIT-1|unit|SC-1"\n'
+        )
+        (self.repo / self.SOURCE).write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "gate")
+        self.head = self.git("rev-parse", "HEAD")
+        self.source = {self.SOURCE: (self.repo / self.SOURCE).read_bytes()}
+        self.fence = runtime.canonical_fence(
+            self.base,
+            [self.SOURCE],
+            runtime.scope_digest((self.SOURCE,), self.source),
+            self.source,
+            repository_root=self.repo,
+        )
+
+    def run_gate(self, **overrides: object) -> runtime.GateReceipt:
+        arguments: dict[str, object] = {
+            "approved_fence": self.fence,
+            "source_bytes": self.source,
+            "repository_root": self.repo,
+            "gate_worktree": self.repo,
+            "head_sha": self.head,
+        }
+        arguments.update(overrides)
+        return runtime.run_configured_gate("GATE-1", **arguments)  # type: ignore[arg-type]
+
+    def pointer(self, classification: str) -> bytes:
+        root = root_authority(self.fence, self.source, repository_root=self.repo)
+        root["gate_results"] = [{**root["gate_results"][0], "classification": classification}]
+        return pointer_document(root)
+
+    def test_declared_gate_runs_on_committed_snapshot_and_reaches_convergence_input(self) -> None:
+        receipt = self.run_gate()
+        self.assertEqual(receipt.classification, "passed")
+        self.assertEqual(receipt.head_sha, self.head)
+        self.assertIn("gate ok", receipt.output_tail or "")
+        captured = runtime.capture_authority(
+            self.pointer("passed"), self.fence, self.source, self.repo,
+            gate_receipts=[receipt],
+        )
+        self.assertTrue(runtime.captured_authority_valid(captured))
+        self.assertEqual(
+            captured["root_authority"]["gate_results"][0]["classification"], "passed"
+        )
+
+    def test_unattested_or_mismatched_gate_results_fail_closed(self) -> None:
+        receipt = self.run_gate()
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.capture_authority(
+                self.pointer("passed"), self.fence, self.source, self.repo
+            )
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.capture_authority(
+                self.pointer("failed"), self.fence, self.source, self.repo,
+                gate_receipts=[receipt],
+            )
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.capture_authority(
+                self.pointer("not-run-unavailable"), self.fence, self.source,
+                self.repo, gate_receipts=[receipt],
+            )
+        forged = dataclasses.replace(receipt)
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.capture_authority(
+                self.pointer("passed"), self.fence, self.source, self.repo,
+                gate_receipts=[forged],
+            )
+        captured = runtime.capture_authority(
+            self.pointer("not-run-unavailable"), self.fence, self.source, self.repo
+        )
+        self.assertTrue(runtime.captured_authority_valid(captured))
+
+    def test_failing_gate_is_recorded_as_failed(self) -> None:
+        self.write_source("python3 gate_fail.py")
+        receipt = self.run_gate()
+        self.assertEqual(receipt.classification, "failed")
+        runtime.capture_authority(
+            self.pointer("failed"), self.fence, self.source, self.repo,
+            gate_receipts=[receipt],
+        )
+
+    def test_gate_refuses_unapproved_commands_and_snapshots(self) -> None:
+        with self.assertRaises(runtime.RpfContractError):
+            runtime.run_configured_gate(
+                "GATE-UNDECLARED",
+                approved_fence=self.fence,
+                source_bytes=self.source,
+                repository_root=self.repo,
+                gate_worktree=self.repo,
+                head_sha=self.head,
+            )
+        with self.assertRaises(runtime.RpfConflictError):
+            self.run_gate(head_sha=self.base)
+        (self.repo / "gate_ok.py").write_text("print('edited')\n")
+        with self.assertRaises(runtime.RpfConflictError):
+            self.run_gate()
+        self.git("checkout", "--", "gate_ok.py")
+        (self.repo / "build-output.txt").write_text("untracked artifact")
+        self.assertEqual(self.run_gate().classification, "passed")
+        for command in ("unit", "env", "bash -c true", "python3 -c 1"):
+            with self.subTest(command=command):
+                self.write_source(command)
+                with self.assertRaises(runtime.RpfContractError):
+                    self.run_gate()
+
+    def test_gate_that_mutates_the_snapshot_is_rejected(self) -> None:
+        self.write_source("python3 gate_dirty.py")
+        with self.assertRaises(runtime.RpfConflictError):
+            self.run_gate()
+
+    def test_timed_out_gate_is_failed(self) -> None:
+        (self.repo / "gate_slow.py").write_text("import time\ntime.sleep(30)\n")
+        self.write_source("python3 gate_slow.py")
+        self.assertEqual(self.run_gate(timeout=1).classification, "failed")
+
+    def test_gate_environment_drops_session_secrets(self) -> None:
+        (self.repo / "gate_env.py").write_text(
+            "import os\nraise SystemExit(1 if 'RPF_TEST_TOKEN' in os.environ else 0)\n"
+        )
+        self.write_source("python3 gate_env.py")
+        with mock.patch.dict(os.environ, {"RPF_TEST_TOKEN": "x"}):
+            self.assertEqual(self.run_gate().classification, "passed")
