@@ -32,7 +32,6 @@ ml:
 full:
   description: "Core + all dev and agent skills"
   skills:
-    - context/context-manager
     - context/static-index
     - security/security-auditor
   groups:

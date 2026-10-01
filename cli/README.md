@@ -18,7 +18,7 @@ Manage workspace-specific skills. Install only the skills you need per project.
 
 ```bash
 # Install to current workspace (local)
-agt skill install kubernetes-skill
+agt skill install git-commit-pr
 agt skill install ml/                    # entire group
 
 # Install globally
@@ -30,7 +30,7 @@ agt skill list --installed               # installed only
 agt skill list --installed --local       # current workspace only
 
 # Remove
-agt skill uninstall kubernetes-skill
+agt skill uninstall git-commit-pr
 
 # Init workspace
 agt skill init                           # creates .claude/skills/

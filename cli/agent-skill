@@ -90,11 +90,11 @@ List Options:
   --json              JSON 형식 출력
 
 예시:
-  agent-skill install kubernetes-skill    # 로컬에 설치
+  agent-skill install git-commit-pr       # 로컬에 설치
   agent-skill install -g git-commit-pr    # 전역에 설치
   agent-skill install ml/                 # ml 그룹 전체 설치
   agent-skill install integrations/slack-skill  # 특정 스킬
-  agent-skill uninstall kubernetes-skill
+  agent-skill uninstall git-commit-pr
   agent-skill list --installed --local
 
 원격 설치:
@@ -267,7 +267,7 @@ cmd_install() {
     # 원격 설치 또는 로컬 설치 중 하나는 필요
     if [[ -z "$remote_spec" && ${#targets[@]} -eq 0 ]]; then
         log_error "설치할 스킬을 지정하세요"
-        echo "예: agent-skill install kubernetes-skill"
+        echo "예: agent-skill install git-commit-pr"
         echo "    agent-skill install --from owner/repo/path/to/skill"
         exit 1
     fi
@@ -592,7 +592,7 @@ list_all_skills() {
     echo -e "${CYAN}요약${NC}: 전체 ${total}개 / 설치됨 ${installed_count}개"
     echo ""
     echo "설치 예시:"
-    echo "  agent-skill install kubernetes-skill     # 로컬"
+    echo "  agent-skill install git-commit-pr        # 로컬"
     echo "  agent-skill install -g git-commit-pr     # 전역"
     echo "  agent-skill install ml/                  # 그룹 전체"
     echo ""
