@@ -68,10 +68,11 @@ agt persona install -g --from jiunbae/agent-skills
 ```
 
 `--agent claude`가 기본값이며 `.claude/skills/<skill>`에 설치합니다
-(`--claude-dir` 또는 `CLAUDE_CONFIG_DIR`로 다른 설정 디렉터리를 지정).
 `--agent codex`는 `.agents/skills/<skill>`에 설치합니다. `--global`을 추가하면
 사용자 전역 경로에 설치합니다. 이전 agt가 `<group>/<skill>`에 둔 스킬은
-Claude Code가 읽지 못하므로 `agt skill migrate --global`로 옮깁니다.
+Claude Code가 읽지 못합니다. 2026.7.23 이후 agt 릴리스는 다른 설정 디렉터리를
+지정하는 `--claude-dir`(또는 `CLAUDE_CONFIG_DIR`)과 grouped 설치를 옮기는
+`agt skill migrate --global`을 제공합니다.
 
 ### install.sh로 설치 (Claude Code + Codex)
 

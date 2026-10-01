@@ -10,15 +10,16 @@ NVIDIA Triton Inference Server management.
 ## Bundled helper
 
 `scripts/triton-deploy.sh` wraps the `docker run` options below and only stops
-containers it labelled itself. Prefer it over a hand-built `docker run`:
+containers it labelled itself. Prefer it over a hand-built `docker run`. Run
+it from the project that holds the models, through this skill's directory:
 
 ```bash
-bash scripts/triton-deploy.sh validate --model-repo ./models
-bash scripts/triton-deploy.sh start --model-repo ./models --gpu 0
-bash scripts/triton-deploy.sh status
+bash <skill-dir>/scripts/triton-deploy.sh validate --model-repo ./models
+bash <skill-dir>/scripts/triton-deploy.sh start --model-repo ./models --gpu 0
+bash <skill-dir>/scripts/triton-deploy.sh status
 ```
 
-`bash scripts/triton-deploy.sh --help` lists every command and option.
+`bash <skill-dir>/scripts/triton-deploy.sh --help` lists every command and option.
 
 ## Quick Start
 
