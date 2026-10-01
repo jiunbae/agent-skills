@@ -10,8 +10,7 @@
  *   node channel-crud.js delete CHANNEL_ID
  */
 
-// Load environment variables
-require('../../jelly-dotenv/load-env.js');
+// Reads DISCORD_BOT_TOKEN and DISCORD_GUILD_ID from the environment.
 
 const DISCORD_API = 'https://discord.com/api/v10';
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;

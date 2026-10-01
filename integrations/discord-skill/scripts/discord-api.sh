@@ -8,7 +8,7 @@ set -e
 
 # Load environment variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../../jelly-dotenv/load-env.sh" 2>/dev/null || true
+# Credentials come from the environment (DISCORD_BOT_TOKEN, DISCORD_GUILD_ID).
 
 # Configuration
 DISCORD_API_BASE="https://discord.com/api/v10"
@@ -32,7 +32,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 check_token() {
     if [ -z "$DISCORD_BOT_TOKEN" ]; then
         log_error "DISCORD_BOT_TOKEN is not set"
-        log_info "Set it in skills/jelly-dotenv/.env or export it"
+        log_info "Export DISCORD_BOT_TOKEN in the environment"
         exit 1
     fi
 }
@@ -40,7 +40,7 @@ check_token() {
 check_guild_id() {
     if [ -z "$DISCORD_GUILD_ID" ]; then
         log_error "DISCORD_GUILD_ID is not set"
-        log_info "Set it in skills/jelly-dotenv/.env or use --guild option"
+        log_info "Export DISCORD_GUILD_ID or use --guild option"
         exit 1
     fi
 }
