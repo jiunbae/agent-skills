@@ -26,6 +26,15 @@ default.
 8. Re-run validation and summarize active, available, invalid, overlapping,
    and deferred items.
 
+## Claude Code Locations
+
+- User: `~/.claude/skills/<skill>/SKILL.md` (the `install.sh` default target)
+- Project: `.claude/skills/<skill>/SKILL.md`
+
+Claude Code loads only `<skills-dir>/<skill>/SKILL.md`; a grouped
+`<group>/<skill>/` layout is not discovered. This repository's installers place
+each skill flat under its directory name, which matches its frontmatter `name`.
+
 ## Codex Locations
 
 - User: `~/.agents/skills/<skill>/SKILL.md`

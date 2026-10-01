@@ -73,6 +73,11 @@ snapshot limit is smaller.
 scripts/security-audit.sh gitignore
 ```
 
+Run every command above with the audited repository as the working directory,
+calling the script through this skill's directory
+(`<skill-dir>/scripts/security-audit.sh`); the bare `scripts/` path resolves
+only from the skill directory.
+
 ## Report Format
 
 ```markdown
@@ -82,7 +87,7 @@ scripts/security-audit.sh gitignore
 - path=src/config line=12 detector=hardcoded-api-key occurrence=1 severity=HIGH
 
 ### History finding
-- commit=&lt;abbreviated-commit&gt; path=docs/setup line=8 detector=hardcoded-password occurrence=1 severity=CRITICAL
+- commit=<abbreviated-commit> path=docs/setup line=8 detector=hardcoded-password occurrence=1 severity=CRITICAL
 
 ### ✅ Passed
 - Finding cap: none; all matches are reported
