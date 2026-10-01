@@ -7,6 +7,19 @@ description: Deploys and manages NVIDIA Triton Inference Server containers. Auto
 
 NVIDIA Triton Inference Server management.
 
+## Bundled helper
+
+`scripts/triton-deploy.sh` wraps the `docker run` options below and only stops
+containers it labelled itself. Prefer it over a hand-built `docker run`:
+
+```bash
+bash scripts/triton-deploy.sh validate --model-repo ./models
+bash scripts/triton-deploy.sh start --model-repo ./models --gpu 0
+bash scripts/triton-deploy.sh status
+```
+
+`bash scripts/triton-deploy.sh --help` lists every command and option.
+
 ## Quick Start
 
 ```bash

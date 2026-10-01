@@ -37,7 +37,7 @@ print(f"Avg latency: {elapsed/100*1000:.2f}ms")
 
 | Metric | Description | Command |
 |--------|-------------|---------|
-| Latency | Inference time | `time.time()` |
+| Latency | Inference time | `time.perf_counter()` (after `torch.cuda.synchronize()`) |
 | Throughput | Samples/sec | `samples / elapsed` |
 | Memory | VRAM usage | `torch.cuda.max_memory_allocated()` |
 | Accuracy | Model quality | `accuracy_score(y_true, y_pred)` |

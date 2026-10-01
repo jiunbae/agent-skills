@@ -10,14 +10,20 @@ Central service and container management.
 
 ## Service Registry
 
-Location: `~/.agents/SERVICES.md` or `static/SERVICES.md`
+Location: `~/.agents/SERVICES.md` (seeded from `static/SERVICES.sample.md`).
+`scripts/service-manager.sh` edits it by these exact section and table headers,
+so keep this layout when editing by hand:
 
 ```markdown
-| Service | Port | Container | Status |
-|---------|------|-----------|--------|
-| postgres | 5432 | db-postgres | running |
-| redis | 6379 | cache-redis | running |
-| api | 8080 | app-api | stopped |
+## 서비스 목록
+
+| 이름 | 종류 | 목적 | 포트 | 상태 | 실행 위치 | 실행 명령어 | 마지막 변경 |
+|------|------|------|------|------|----------|------------|------------|
+
+## 포트 매핑
+
+| 포트 | 서비스 | 프로토콜 | 비고 |
+|------|--------|----------|------|
 ```
 
 ## Common Commands
@@ -56,7 +62,7 @@ docker logs -f <container> --tail 100
 
 ```bash
 # List all used ports
-docker ps --format "{{.Ports}}" | grep -oE '[0-9]+(?=->)'
+docker ps --format "{{.Ports}}" | grep -oE '[0-9]+->' | tr -d '>-'
 lsof -i -P -n | grep LISTEN
 ```
 

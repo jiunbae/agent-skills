@@ -85,7 +85,7 @@ try {
 await page.fill('#email', 'user@example.com');
 await page.fill('#password', 'secret');
 await page.click('button[type="submit"]');
-await page.waitForNavigation();
+await page.waitForURL('**/dashboard');  // the URL the form lands on
 ```
 
 ### Wait Strategies

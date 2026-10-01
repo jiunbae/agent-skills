@@ -29,7 +29,7 @@ Compare new request against current branch:
 
 ```bash
 # Create worktree with new branch
-git worktree add ../project-feature feature/new-feature
+git worktree add -b feature/new-feature ../project-feature
 
 # Switch to worktree
 cd ../project-feature

@@ -52,9 +52,6 @@ ffmpeg -version
 ffprobe -version
 jq --version
 bc --version
-
-# 스크립트 실행 권한
-chmod +x /path/to/agt/ml/audio-processor/scripts/audio-process.sh
 ```
 
 ## Workflow

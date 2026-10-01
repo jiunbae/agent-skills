@@ -11,8 +11,9 @@ redaction, retention metadata plus manual enforcement, and local retry protectio
 ## Prerequisites
 
 ```bash
-# Installed skill-relative command. Keep this variable for all examples below.
-NOTION_SUMMARY_SKILL_DIR="${AGENTS_DIR:-$HOME/.agents}/skills/notion-summary"
+# Resolve to the installed directory that contains this SKILL.md; do not assume
+# a fixed install root. All examples below use this variable.
+NOTION_SUMMARY_SKILL_DIR="<directory containing this SKILL.md>"
 python3 "$NOTION_SUMMARY_SKILL_DIR/scripts/notion-upload.py" --help
 
 # API actions only; --help and --dry-run do not need notion-client.
