@@ -5,10 +5,11 @@
     "source_inspiration": [
       "https://github.com/epoko77-ai/im-not-ai",
       "https://github.com/snflkd/fluent-korean",
-      "https://developers.openai.com/api/docs/guides/latest-model#gpt-6-astra-personality-and-writing-style"
+      "https://developers.openai.com/api/docs/guides/latest-model#gpt-6-astra-personality-and-writing-style",
+      "https://github.com/leeandev/stop-slop-ko"
     ],
     "license": "MIT",
-    "version": 4,
+    "version": 5,
     "languages": {
       "ko": "한국어 문법과 어휘에 매인 신호",
       "en": "영어 문법과 어휘에 매인 신호",
@@ -31,7 +32,7 @@
       "category": "translationese",
       "language": "ko",
       "severity": "medium",
-      "pattern": "(?:을|를)\\s+통해",
+      "pattern": "(?:을|를)\\s+통(?:해|하여)",
       "minimum_occurrences": 1,
       "cue": "'~를 통해'가 단순 수단을 장황하게 표현할 수 있음",
       "guidance": "문맥이 허용하면 조사 '~로' 또는 직접 동사로 줄인다.",
@@ -64,7 +65,7 @@
       "category": "translationese",
       "language": "ko",
       "severity": "high",
-      "pattern": "되어진|되어져|되어지는",
+      "pattern": "되어[지진져질짐집]",
       "minimum_occurrences": 1,
       "cue": "이중 피동 가능성",
       "guidance": "'된', '되어', 능동 동사 중 의미에 맞는 형태를 사용한다.",
@@ -240,7 +241,7 @@
       "category": "hedging",
       "language": "ko",
       "severity": "medium",
-      "pattern": "(?:라고|다고)\\s+(?:할|볼)\\s+수\\s+있",
+      "pattern": "(?:(?:이)?라고?|다고)\\s+할\\s+수\\s+있|(?:이라고|[가-힣]라고|다고)\\s+볼\\s+수\\s+있",
       "minimum_occurrences": 1,
       "cue": "'~라고 할 수 있다'가 주장을 흐릴 수 있음",
       "guidance": "근거가 있으면 단정하고, 없으면 문장 자체가 필요한지 확인한다.",
@@ -383,11 +384,12 @@
       "category": "compression",
       "language": "ko",
       "severity": "medium",
-      "pattern": "^(?![ \\t]*(?:[-*+>#|]|\\d+[.)]))[^\\n]{0,160}?(?:[가-힣](?<![다요까죠네군오지라자마음함됨임])|(?<![아어에예세게래워여이까나니가지리려고해돼봐와줘져쳐네군데든봬셔])요)\\.(?=[ \\t]|$)",
+      "pattern": "[^\\n]*?(?:[가-힣](?<![다요까죠네군오지라자마음함됨임])|(?<![아어에예세게래워여이까나니가지리려고해돼봐와줘져쳐네군데든봬셔])요)\\.(?=[ \\t]|$)",
       "minimum_occurrences": 2,
       "cue": "본문 문장이 서술어 없이 명사구나 연결어미로 끝남",
       "guidance": "서술어와 종결어미를 되살려 문장을 맺는다. 생략된 조사와 문장 성분은 원문에서 확인되는 범위에서만 복원하고 새 정보를 넣지 않는다.",
-      "exceptions": "제목, 목록, 표, 인용, 그리고 '~함·~음'으로 맺는 개조식 보고서처럼 명사형 종결이 장르 문체인 자리에서는 유지한다."
+      "exceptions": "제목, 목록, 표, 인용, 그리고 '~함·~음'으로 맺는 개조식 보고서처럼 명사형 종결이 장르 문체인 자리에서는 유지한다.",
+      "match_scope": "sentence"
     },
     {
       "id": "CP-02",
@@ -403,7 +405,7 @@
     {
       "id": "CP-03",
       "category": "compression",
-      "language": "any",
+      "language": "en",
       "severity": "low",
       "pattern": "—",
       "minimum_occurrences": 2,
@@ -423,6 +425,17 @@
       "exceptions": "해당 분야에서 관용 표현으로 굳었거나 실제 물리적 동작을 가리키는 경우에는 유지한다."
     },
     {
+      "id": "CP-05",
+      "category": "compression",
+      "language": "ko",
+      "severity": "low",
+      "pattern": "—",
+      "minimum_occurrences": 1,
+      "cue": "한국어 문서의 엠대시가 앞뒤 관계를 감출 수 있음",
+      "guidance": "앞뒤 관계를 흐릴 수 있으므로 검토한다. 쉼표, 콜론, 접속어, 문장 분리 가운데 관계에 맞는 것으로 바꾼다.",
+      "exceptions": "인용 원문, 서지 정보, 대화 지문, 표의 '해당 없음' 표시처럼 부호 자체가 형식인 자리에서는 유지한다. 인용과 서지는 자동으로 제외되지 않으므로 직접 확인한다."
+    },
+    {
       "id": "TP-07",
       "category": "template",
       "language": "ko",
@@ -432,6 +445,28 @@
       "cue": "중요도를 예고하는 문구가 반복돼 내용보다 표지가 앞설 수 있음",
       "guidance": "중요하다고 말하는 대신 중요한 내용을 바로 쓴다.",
       "exceptions": "여러 논점 가운데 하나를 우선순위로 지목해야 하는 문서에서는 유지한다."
+    },
+    {
+      "id": "TP-13",
+      "category": "template",
+      "language": "ko",
+      "severity": "low",
+      "pattern": "(?:(?:중요성|소중함|필요성)을|가치를)\\s*(?:깨달|깨닫|알게\\s*되|배웠|배우게|느꼈|실감)|교훈을\\s*(?:얻|배)",
+      "minimum_occurrences": 1,
+      "cue": "'~의 중요성을 깨달았다' 같은 교훈형 마무리",
+      "guidance": "앞뒤 문단을 확인한다. 교훈 문장이 앞 내용을 되풀이할 뿐이면 덜어내는 쪽을 검토하되, 새 행동이나 사실을 지어내지 않는다.",
+      "exceptions": "회고나 교육 글에서 배운 내용 자체가 주장인 문장은 유지한다. 뒤에 새 사실이 없다는 이유만으로 지우지 않는다."
+    },
+    {
+      "id": "TP-14",
+      "category": "template",
+      "language": "ko",
+      "severity": "low",
+      "pattern": "오늘은\\s[^.\\n]{0,30}알아보(?:겠|도록|려고)|도움이\\s*되(?:셨|었)(?:길|으면)|시작해\\s*볼까요",
+      "minimum_occurrences": 1,
+      "cue": "블로그 인사 도입이나 맺음 상투구",
+      "guidance": "인사와 예고를 덜고 본론 문장부터 시작한다.",
+      "exceptions": "방송 대본, 강의 안내처럼 인사가 형식인 글에서는 유지한다."
     },
     {
       "id": "TP-08",
@@ -504,7 +539,7 @@
       "category": "coinage",
       "language": "ko",
       "severity": "medium",
-      "pattern": "(?:단순히|그저|단지)[^.\\n]{0,60}(?:이|가)\\s*아니라",
+      "pattern": "(?:단순(?:한|히)|그저|단지)[^.\\n]{0,60}(?:이|가)\\s*(?:아니라|아닌)",
       "minimum_occurrences": 1,
       "cue": "독자가 꺼내지 않은 대안을 세워 대비하는 구문",
       "guidance": "대비를 지우고 말하려는 내용을 바로 단정한다.",
@@ -575,6 +610,39 @@
       "cue": "중첩 목록이 이어져 위계를 목록 들여쓰기로만 표현할 수 있음",
       "guidance": "위계를 산문이나 소제목으로 표현할 수 있으면 중첩을 풀고, 병렬 항목만 목록으로 남긴다.",
       "exceptions": "명세, 목차, 트리 구조처럼 중첩 자체가 정보인 문서에서는 유지한다."
+    },
+    {
+      "id": "FM-07",
+      "category": "formatting",
+      "language": "ko",
+      "severity": "medium",
+      "pattern": "(?<=[A-Za-z0-9%)\\]][A-Za-z0-9%)\\]])[ \\t]+(?:와|과|를|을|은|는|가|에|에서|에게|의|로|으로|도|만)(?=[ \\t,.)\\r]|$)",
+      "minimum_occurrences": 1,
+      "cue": "영문·숫자 뒤 조사를 띄어 씀 ('React 와', 'SQLite 를')",
+      "guidance": "조사를 앞말에 붙인다.",
+      "exceptions": "'A 와 B'처럼 한 글자 기호를 나열한 수식·변수 표기, 코드와 원문 인용은 유지한다. 인라인 코드 뒤의 조사는 검사하지 않는다."
+    },
+    {
+      "id": "FM-08",
+      "category": "formatting",
+      "language": "any",
+      "severity": "low",
+      "pattern": "[^\\s·][ \\t]+·[ \\t]+[^\\s·](?:[^·\\n.!?]|[.!?](?![ \\t]|$))*?[ \\t]+·[ \\t]+[^\\s·]",
+      "minimum_occurrences": 1,
+      "cue": "띄어 쓴 가운뎃점으로 세 항목 이상을 나열함 ('A · B · C')",
+      "guidance": "본문 문장에서는 쉼표로 나열하거나 목록으로 바꾼다.",
+      "exceptions": "내비게이션, 메타 정보 줄, 브랜드 표기처럼 구분자가 관례인 자리와 '성능·품질'처럼 붙여 쓴 가운뎃점은 유지한다."
+    },
+    {
+      "id": "FM-09",
+      "category": "formatting",
+      "language": "any",
+      "severity": "low",
+      "pattern": "^(?![ \\t]*#)[^\\n]*?[★☆✅❌❎✨⭐⚠\\U0001F300-\\U0001FAFF]",
+      "minimum_occurrences": 2,
+      "cue": "본문 여러 줄에 장식 별표나 이모지가 붙음",
+      "guidance": "강조는 문장으로 드러내고 장식 기호를 덜어낸다. 상태를 나타내야 하면 말로 쓴다.",
+      "exceptions": "평점, 범례, 상태 표처럼 기호가 정보인 자리, 팀 관례나 릴리스 노트, 메신저 말투에서는 유지한다. 제목 앞 이모지는 FM-03이 따로 다룬다."
     }
   ]
 }

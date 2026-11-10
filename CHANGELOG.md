@@ -43,6 +43,17 @@ empty `[Unreleased]` section above it.
   hyphenated labels, agentive passives, nominalized verb phrases, and nested
   lists. `references/prose-style.md` records the default style contract the
   skill applies when the user names no other standard.
+- The editor's Korean rules now catch the cues they kept missing. Four
+  patterns that matched a single surface form widen (`TR-01` ~을 통하여,
+  `TR-04` 되어짐, `HG-04` ~라 할 수 있다, `CO-02` 단순한 ~이 아니라), and six
+  rules adapted from leeandev/stop-slop-ko (MIT) flag Korean em dashes
+  (`CP-05`), particle spacing after Latin tokens (`FM-07`), spaced middot
+  lists (`FM-08`), decorative stars and emoji (`FM-09`), lesson closings
+  (`TP-13`) and blog greeting openers (`TP-14`). A rule may set
+  `match_scope: sentence` to count each sentence; `CP-01` uses it, so a
+  compressed paragraph no longer reports one hit at most. The English em dash
+  rule (`CP-03`) keeps its two-dash threshold. `tests/corpus` holds
+  before/after drafts with the expected cue counts.
 
 - `context/context-manager` leaves the `core` profile and its two scripts are
   deleted. `find_context.py` scored only filenames and parent directory names,

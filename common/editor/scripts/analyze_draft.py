@@ -20,6 +20,13 @@ DEFAULT_RULES = SKILL_ROOT / "references" / "editing-rules.json"
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3}
 LOCALIZED_MAX_FINDINGS = 3
 LOCALIZED_MAX_DENSITY = 6.0
+# Lines whose shape is a genre convention (headings, list items, quotes, table
+# rows) are not prose sentences, so sentence-scoped rules skip them whole.
+STRUCTURAL_LINE_RE = re.compile(r"[ \t]*(?:[-*+>#|]|\d+[.)])")
+# A sentence ends at ., ! or ? followed by a space or the end of the line, so
+# decimals and version numbers ("1.5초", "v2.1") stay inside one sentence.
+# A closing quote or bracket right after the mark stays with its sentence.
+SENTENCE_RE = re.compile(r"\S[^\n]*?(?:[.!?][\"'”’)\]]*(?=[ \t]|$)|$)")
 
 
 def read_input(path: str) -> str:
@@ -60,6 +67,27 @@ def select_rules(rules_data: dict, language: str) -> list[dict]:
     ]
 
 
+def sentence_matches(regex: re.Pattern[str], prose: str) -> list[re.Match[str]]:
+    """Match a sentence-scoped rule once per sentence of each prose line.
+
+    Offsets stay those of the masked text, which keeps line numbers and
+    excerpts pointing at the original draft.
+    """
+    matches = []
+    offset = 0
+    for raw_line in prose.split("\n"):
+        # Raw CRLF input keeps its "\r"; match without it but advance by the
+        # real length so offsets still point into the original text.
+        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
+        if line.strip() and not STRUCTURAL_LINE_RE.match(line):
+            for sentence in SENTENCE_RE.finditer(line):
+                match = regex.fullmatch(prose, offset + sentence.start(), offset + sentence.end())
+                if match:
+                    matches.append(match)
+        offset += len(raw_line) + 1
+    return matches
+
+
 def analyze(text: str, rules_data: dict, language: str = "auto") -> dict:
     rules_data = validate_rules(rules_data)
     if language == "auto":
@@ -72,7 +100,10 @@ def analyze(text: str, rules_data: dict, language: str = "auto") -> dict:
 
     for rule in select_rules(rules_data, language):
         regex = re.compile(rule["pattern"], re.MULTILINE | re.IGNORECASE)
-        matches = list(regex.finditer(prose))
+        if rule.get("match_scope", "text") == "sentence":
+            matches = sentence_matches(regex, prose)
+        else:
+            matches = list(regex.finditer(prose))
         minimum = int(rule.get("minimum_occurrences", 1))
         if len(matches) < minimum:
             continue

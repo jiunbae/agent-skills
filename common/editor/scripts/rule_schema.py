@@ -11,6 +11,10 @@ SEVERITIES = {"low", "medium", "high"}
 # "any" marks a rule that describes formatting or structure rather than one
 # language's grammar, so it applies to every draft.
 LANGUAGES = {"ko", "en", "any"}
+# "sentence" rules are matched against each sentence of a prose line instead of
+# the whole text, so one paragraph can yield several matches. Lines that are
+# headings, list items, quotes or table rows are skipped for these rules.
+MATCH_SCOPES = {"text", "sentence"}
 REQUIRED_RULE_FIELDS = {
     "id": str,
     "category": str,
@@ -72,6 +76,9 @@ def validate_rules(data: Any) -> dict:
             raise ValueError(f"{location}.language must be one of {sorted(LANGUAGES)}")
         if rule["minimum_occurrences"] < 1:
             raise ValueError(f"{location}.minimum_occurrences must be at least 1")
+        scope = rule.get("match_scope", "text")
+        if not isinstance(scope, str) or scope not in MATCH_SCOPES:
+            raise ValueError(f"{location}.match_scope must be one of {sorted(MATCH_SCOPES)}")
         try:
             re.compile(rule["pattern"])
         except re.error as exc:

@@ -65,7 +65,8 @@ def render(data: dict) -> str:
                     f"### {rule['id']} · {rule['severity']}",
                     "",
                     f"- 신호: {rule['cue']}",
-                    f"- 최소 발생 횟수: {rule['minimum_occurrences']}회",
+                    f"- 최소 발생 횟수: {rule['minimum_occurrences']}회"
+                    + (" (문장마다 셈)" if rule.get("match_scope") == "sentence" else ""),
                     f"- 권고: {rule['guidance']}",
                     f"- 예외: {rule['exceptions']}",
                     "",
