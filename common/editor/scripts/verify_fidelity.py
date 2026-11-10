@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify protected facts and Markdown structure across a Korean edit."""
+"""Verify protected facts and Markdown structure across an edit."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from korean_text import (  # noqa: E402
+from markdown_text import (  # noqa: E402
     INLINE_CODE_RE,
+    detect_language,
     URL_RE,
     extract_link_destinations,
     fenced_code_spans,
@@ -390,8 +391,13 @@ def verify(before: str, after: str) -> dict:
             }
         )
 
-    before_speech = speech_level_profile(before)
-    after_speech = speech_level_profile(after)
+    # Speech level and Latin-term protection describe Korean drafts: an English
+    # draft has no speech level, and its ordinary capitalized words would make
+    # the Latin-term check warn on every real edit.
+    korean = detect_language(before) == "ko" or detect_language(after) == "ko"
+
+    before_speech = speech_level_profile(before) if korean else Counter()
+    after_speech = speech_level_profile(after) if korean else Counter()
     before_level = dominant_speech_level(before_speech)
     after_level = dominant_speech_level(after_speech)
     if before_level and after_level and before_level != after_level:
@@ -403,7 +409,7 @@ def verify(before: str, after: str) -> dict:
                 "after": dict(after_speech),
             }
         )
-    elif before_speech["polite"] == 0 and after_speech["polite"] > 0:
+    elif korean and before_speech["polite"] == 0 and after_speech["polite"] > 0:
         warnings.append(
             {
                 "kind": "speech_level_mixed",
@@ -411,7 +417,11 @@ def verify(before: str, after: str) -> dict:
             }
         )
 
-    removed_terms, added_terms = counter_delta(extract_latin_terms(before), extract_latin_terms(after))
+    removed_terms, added_terms = (
+        counter_delta(extract_latin_terms(before), extract_latin_terms(after))
+        if korean
+        else ([], [])
+    )
     if removed_terms or added_terms:
         warnings.append(
             {
@@ -454,6 +464,7 @@ def verify(before: str, after: str) -> dict:
         "status": "fail" if errors else "pass",
         "errors": errors,
         "warnings": warnings,
+        "language": "ko" if korean else "en",
         "statistics": {
             "before_characters": len(before),
             "after_characters": len(after),

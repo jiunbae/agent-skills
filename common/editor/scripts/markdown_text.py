@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared Markdown-aware text helpers for the Korean editor scripts.
+"""Shared Markdown-aware text helpers for the editor scripts.
 
 Editorial rules describe prose. Code, URLs, and front matter are not prose, so
 every consumer masks them before matching. Masking keeps line endings and byte
@@ -230,3 +230,27 @@ def strip_code(text: str) -> str:
     for start, end in fenced_code_spans(text):
         stripped = mask_span(stripped, start, end)
     return INLINE_CODE_RE.sub(" ", stripped)
+
+
+HANGUL_RE = re.compile(r"[가-힣ᄀ-ᇿ㄰-㆏]")
+LATIN_LETTER_RE = re.compile(r"[A-Za-z]")
+# A Korean draft quoting API names still reads as Korean, so the threshold sits
+# well below parity instead of at it.
+KOREAN_RATIO_THRESHOLD = 0.10
+
+
+def detect_language(text: str) -> str:
+    """Return 'ko' or 'en' for the prose part of a draft.
+
+    'en' is the fallback for any non-Korean Latin-script draft: the English
+    rules describe formatting and stock-phrase habits, not English grammar, so
+    they stay useful for other Latin-script languages while Korean-only checks
+    stay off.
+    """
+    prose = mask_prose(text)
+    hangul = len(HANGUL_RE.findall(prose))
+    latin = len(LATIN_LETTER_RE.findall(prose))
+    total = hangul + latin
+    if total == 0:
+        return "en"
+    return "ko" if hangul / total >= KOREAN_RATIO_THRESHOLD else "en"

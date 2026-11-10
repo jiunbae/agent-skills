@@ -23,13 +23,13 @@ def load_module(name: str, relative_path: str):
 
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
-ANALYZE = load_module("korean_editor_analyze", "scripts/analyze_korean.py")
-VERIFY = load_module("korean_editor_verify", "scripts/verify_fidelity.py")
-BUILD = load_module("korean_editor_build", "scripts/build_runtime_rules.py")
+ANALYZE = load_module("editor_analyze", "scripts/analyze_draft.py")
+VERIFY = load_module("editor_verify", "scripts/verify_fidelity.py")
+BUILD = load_module("editor_build", "scripts/build_runtime_rules.py")
 RULES = json.loads((SKILL_ROOT / "references" / "editing-rules.json").read_text(encoding="utf-8"))
 
 
-class AnalyzeKoreanTests(unittest.TestCase):
+class AnalyzeDraftTests(unittest.TestCase):
     def test_natural_text_has_no_configured_signal(self) -> None:
         report = ANALYZE.analyze("배포가 끝났습니다. 오류가 없는지 로그를 한 번 더 확인하겠습니다.", RULES)
         self.assertEqual(report["edit_scope_hint"], "none")
@@ -135,6 +135,22 @@ class AnalyzeKoreanTests(unittest.TestCase):
         report = ANALYZE.analyze(sentence_initial, RULES)
         self.assertIn("CN-01", {finding["id"] for finding in report["findings"]})
 
+    def test_translationese_variants_are_detected(self) -> None:
+        cases = {
+            "TR-01": "새 검색 엔진을 통하여 목록을 조회한다.",
+            "TR-04": "대여 기록 확인 절차가 추가되어짐.",
+            "HG-04": "이번 개선은 사내 독서 문화의 핵심이라 할 수 있다.",
+        }
+        for rule_id, text in cases.items():
+            with self.subTest(rule_id=rule_id):
+                found = {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]}
+                self.assertIn(rule_id, found)
+
+    def test_hedging_rule_ignores_plain_verbs_ending_in_ra(self) -> None:
+        text = "아이가 자라 볼 수 있는 키가 됐다. 나무가 자라 보기 좋다."
+        found = {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertNotIn("HG-04", found)
+
     def test_unfinished_sentence_endings_are_detected(self) -> None:
         text = (
             "이번 배포에서 응답 지연이 발생했다. 원인은 커넥션 풀 고갈로 추정.\n"
@@ -179,7 +195,8 @@ class AnalyzeKoreanTests(unittest.TestCase):
             "설정 값을 코드에 박아넣는 방식이라 환경마다 다시 배포했습니다."
         )
         ids = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
-        self.assertIn("CP-03", ids)
+        self.assertIn("CP-05", ids)
+        self.assertNotIn("CP-03", ids)
         self.assertIn("CP-04", ids)
 
     def test_compression_signals_skip_code_and_front_matter(self) -> None:
@@ -189,13 +206,288 @@ class AnalyzeKoreanTests(unittest.TestCase):
             "```python\n# 원인은 커넥션 풀 고갈로 추정.\n# 우선 캐시를 비우고.\nvalue = 1  # 코드에 박아넣는 값 — 임시\n```\n"
         )
         ids = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
-        self.assertFalse({"CP-01", "CP-03", "CP-04"} & ids, ids)
+        self.assertFalse({"CP-01", "CP-03", "CP-04", "CP-05"} & ids, ids)
+
+    def test_compressed_sentences_in_one_paragraph_are_each_counted(self) -> None:
+        text = "첫 장면은 서울. 다음 장면은 부산. 마지막 장면은 대구. 끝 장면은 제주."
+        finding = next(f for f in ANALYZE.analyze(text, RULES)["findings"] if f["id"] == "CP-01")
+        self.assertEqual(finding["count"], 4)
+        self.assertEqual([e["column"] for e in finding["examples"]], [1, 11, 22])
+
+    def test_compressed_sentence_after_long_sentence_is_found(self) -> None:
+        long_sentence = "이번 분기에는 " + "서비스 응답 시간을 줄이기 위한 작업을 여러 팀이 나눠 진행했고 " * 4 + "모두 끝났다."
+        text = f"{long_sentence} 원인은 커넥션 풀 고갈로 추정. 우선 캐시 비우고 재시작 예정."
+        finding = next(f for f in ANALYZE.analyze(text, RULES)["findings"] if f["id"] == "CP-01")
+        self.assertEqual(finding["count"], 2)
+        self.assertEqual(finding["examples"][0]["match"], "원인은 커넥션 풀 고갈로 추정.")
+
+    def test_sentence_scope_skips_every_sentence_of_structural_lines(self) -> None:
+        text = (
+            "- 추가 확인 필요. 롤백 절차 정리.\n"
+            "> 인용에서 검토 필요. 두 번째 문장도 인용.\n"
+            "1. 마이그레이션 예정. 일정 미정.\n"
+            "| 상태 확인. | 담당 미정. |\n"
+        )
+        ids = {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertNotIn("CP-01", ids)
+
+    def test_sentence_boundaries_ignore_decimals_and_versions(self) -> None:
+        text = "응답 시간이 1.5초로 줄었다. v2.1 배포를 마쳤다. 다음 배포는 3.0이다."
+        ids = {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertNotIn("CP-01", ids)
+
+    def test_single_korean_em_dash_is_reported_but_english_needs_two(self) -> None:
+        korean = "캐시 정책은 유지합니다 — 변경 비용이 큽니다."
+        self.assertIn("CP-05", {f["id"] for f in ANALYZE.analyze(korean, RULES)["findings"]})
+
+        english_once = "The cache policy stays — changing it is expensive."
+        self.assertNotIn("CP-03", {f["id"] for f in ANALYZE.analyze(english_once, RULES)["findings"]})
+        english_twice = english_once + "\nThe queue grows — workers fall behind."
+        self.assertIn("CP-03", {f["id"] for f in ANALYZE.analyze(english_twice, RULES)["findings"]})
+
+    def test_single_korean_em_dash_weighs_no_more_than_other_single_cues(self) -> None:
+        dash = ANALYZE.analyze("캐시 정책은 유지합니다 — 변경 비용이 큽니다. 다음 주에 다시 봅니다.", RULES)
+        channel = ANALYZE.analyze("캐시 정책은 회의를 통해 유지합니다. 변경 비용이 큽니다. 다음 주에 봅니다.", RULES)
+        self.assertEqual(dash["weighted_signal_count"], 1)
+        self.assertLessEqual(dash["weighted_signal_count"], channel["weighted_signal_count"])
+
+    def test_particle_spacing_after_latin_tokens(self) -> None:
+        text = "React 와 SQLite 를 사용했다. 요청 40,000 은 모두 처리됐다."
+        finding = next(f for f in ANALYZE.analyze(text, RULES)["findings"] if f["id"] == "FM-07")
+        self.assertEqual(finding["count"], 3)
+
+    def test_particle_spacing_ignores_notation_and_following_words(self) -> None:
+        text = (
+            "A 와 B 를 비교하면 A가 크다. API 와이파이 설정을 바꿨다.\n"
+            "SQLite 를르베 같은 이름은 없다. `React` 와 연결했다. React 이 경우는 예외다.\n"
+        )
+        self.assertNotIn("FM-07", {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]})
+
+    def test_spaced_middot_lists_need_three_items(self) -> None:
+        listed = "검색 속도 개선 · 예약 기능 추가 · 반납 알림 강화를 마쳤다."
+        self.assertIn("FM-08", {f["id"] for f in ANALYZE.analyze(listed, RULES)["findings"]})
+
+        pair = "성능·품질·비용을 함께 봤다. 출시일 · 미정인 항목이 있다."
+        self.assertNotIn("FM-08", {f["id"] for f in ANALYZE.analyze(pair, RULES)["findings"]})
+
+    def test_decorative_symbols_count_lines_not_code_points(self) -> None:
+        one_line = "배포 완료 ✅ 👨‍👩‍👧 ★"
+        self.assertNotIn("FM-09", {f["id"] for f in ANALYZE.analyze(one_line, RULES)["findings"]})
+
+        two_lines = "배포 완료 ✅\n알림 추가 ★\n"
+        self.assertIn("FM-09", {f["id"] for f in ANALYZE.analyze(two_lines, RULES)["findings"]})
+
+        headings = "## 🚀 배포\n## ✨ 기능\n"
+        ids = {f["id"] for f in ANALYZE.analyze(headings, RULES)["findings"]}
+        self.assertIn("FM-03", ids)
+        self.assertNotIn("FM-09", ids)
+
+    def test_lesson_closings_and_blog_openers(self) -> None:
+        lesson = "기록이 남으면서 결정이 뒤집히는 일이 줄었다. 이번 경험으로 소통의 중요성을 깨달았다."
+        self.assertIn("TP-13", {f["id"] for f in ANALYZE.analyze(lesson, RULES)["findings"]})
+        plain = "로그를 다시 읽고 나서야 버그 원인을 깨달았다."
+        self.assertNotIn("TP-13", {f["id"] for f in ANALYZE.analyze(plain, RULES)["findings"]})
+
+        opener = "오늘은 Docker 볼륨에 대해 알아보겠습니다. 컨테이너를 지우면 파일도 사라집니다."
+        self.assertIn("TP-14", {f["id"] for f in ANALYZE.analyze(opener, RULES)["findings"]})
+
+    def test_korean_em_dash_is_found_regardless_of_spacing_or_quotes(self) -> None:
+        cases = [
+            "캐시 정책은 유지합니다  —  변경 비용이 큽니다.",
+            '"정책 유지" — "비용 절감"이라는 두 조건을 지켰다.',
+            "저장소는 Redis — SQLite 순서로 바꿨다.",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertIn("CP-05", {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]})
+
+    def test_lesson_closing_covers_each_noun_and_ending(self) -> None:
+        cases = [
+            "이번 경험으로 기록의 가치를 깨달았다.",
+            "매번 테스트의 중요성을 깨닫는다.",
+            "작은 병합의 필요성을 알게 되었다.",
+            "동료의 소중함을 느꼈다.",
+            "실패에서 교훈을 얻었다.",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertIn("TP-13", {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]})
+
+    def test_middot_pairs_in_separate_sentences_are_not_a_list(self) -> None:
+        text = "첫 번째는 A · B. 다음 선택지는 C · D."
+        self.assertNotIn("FM-08", {f["id"] for f in ANALYZE.analyze(text, RULES)["findings"]})
+
+        for listed in ("React · Vue · Svelte를 비교했다.", "React · Vue.js · Svelte를 비교했다.", "React · Vue 3.5 · Svelte를 비교했다."):
+            with self.subTest(listed=listed):
+                self.assertIn("FM-08", {f["id"] for f in ANALYZE.analyze(listed, RULES)["findings"]})
+
+    def test_sentence_after_a_quoted_sentence_is_located_exactly(self) -> None:
+        text = '"정상 문장이다." 원인은 서울. 다음은 부산.'
+        finding = next(f for f in ANALYZE.analyze(text, RULES)["findings"] if f["id"] == "CP-01")
+        self.assertEqual(finding["count"], 2)
+        self.assertEqual(finding["examples"][0]["match"], "원인은 서울.")
+        self.assertEqual(finding["examples"][0]["column"], 12)
+
+    def test_particle_spacing_with_several_spaces_and_crlf(self) -> None:
+        text = "React  와 SQLite  를 사용했다.\r\nNode 와\r\n"
+        finding = next(f for f in ANALYZE.analyze(text, RULES)["findings"] if f["id"] == "FM-07")
+        self.assertEqual(finding["count"], 3)
+
+    def test_sentence_scope_handles_raw_crlf_input(self) -> None:
+        text = "원인은 서울.\r\n다음은 부산.\r\n"
+        finding = next(f for f in ANALYZE.analyze(text, RULES)["findings"] if f["id"] == "CP-01")
+        self.assertEqual(finding["count"], 2)
+        self.assertEqual([e["line"] for e in finding["examples"]], [1, 2])
+
+    def test_match_scope_with_a_wrong_type_is_a_schema_error(self) -> None:
+        for bad in ([], {}, 1):
+            invalid = copy.deepcopy(RULES)
+            invalid["rules"][0]["match_scope"] = bad
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "match_scope"):
+                ANALYZE.analyze("본문이다.", invalid)
+
+    def test_type_distinction_is_still_reported_for_review(self) -> None:
+        # CO-02 is a cue, not a deletion order: a real type distinction matches
+        # and the exception text tells the editor to keep it.
+        text = "반환값은 단순한 문자열이 아니라 배열이다."
+        finding = next(f for f in ANALYZE.analyze(text, RULES)["findings"] if f["id"] == "CO-02")
+        self.assertTrue(finding["exceptions"])
 
     def test_analyzer_rejects_invalid_rule_schema(self) -> None:
         invalid = copy.deepcopy(RULES)
         del invalid["rules"][0]["exceptions"]
         with self.assertRaisesRegex(ValueError, "exceptions"):
             ANALYZE.analyze("본문이다.", invalid)
+
+
+class KoreanConjugationTests(unittest.TestCase):
+    """A rule keyed to one conjugation misses the same phrase in every other form."""
+
+    def assert_rule(self, rule_id: str, text: str) -> None:
+        found = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertIn(rule_id, found, text)
+
+    def test_split_verb_phrase_matches_every_conjugation(self) -> None:
+        for text in (
+            "검토를 진행하고 있습니다.",
+            "검토를 진행할 예정입니다.",
+            "점검을 진행한 뒤에 배포합니다.",
+            "배포를 진행함에 따라 알림을 보냅니다.",
+            "테스트를 수행했습니다.",
+            "조사를 실시해서 원인을 찾았습니다.",
+        ):
+            self.assert_rule("VB-04", text)
+
+    def test_split_verb_phrase_needs_an_object_particle(self) -> None:
+        found = {finding["id"] for finding in ANALYZE.analyze("회의 진행한 사람", RULES)["findings"]}
+        self.assertNotIn("VB-04", found)
+
+    def test_agentless_obligation_matches_every_conjugation(self) -> None:
+        for text in (
+            "승인이 요구된다.",
+            "추가 작업이 요구될 수 있다.",
+            "검증이 요구됨에 따라 절차를 늘렸다.",
+            "권한이 요구됩니다.",
+            "이 작업은 별도 승인을 필요로 한다.",
+            "이 작업은 별도 승인을 필요로 할 수 있다.",
+        ):
+            self.assert_rule("VB-05", text)
+
+
+class LanguageSelectionTests(unittest.TestCase):
+    def test_language_is_detected_from_the_draft(self) -> None:
+        self.assertEqual(ANALYZE.analyze("배포가 끝났습니다.", RULES)["language"], "ko")
+        self.assertEqual(ANALYZE.analyze("The deploy finished.", RULES)["language"], "en")
+
+    def test_korean_draft_quoting_api_names_stays_korean(self) -> None:
+        text = "이번 릴리스에서 RetryPolicy and BackoffConfig defaults 를 바꿨습니다."
+        self.assertEqual(ANALYZE.analyze(text, RULES)["language"], "ko")
+
+    def test_english_rules_do_not_run_on_a_korean_draft(self) -> None:
+        selected = {rule["id"] for rule in ANALYZE.select_rules(RULES, "ko")}
+        self.assertIn("TR-01", selected)
+        self.assertIn("FM-01", selected)
+        self.assertNotIn("TP-08", selected)
+
+    def test_shared_rules_run_on_both_languages(self) -> None:
+        for language in ("ko", "en"):
+            selected = {rule["id"] for rule in ANALYZE.select_rules(RULES, language)}
+            self.assertIn("FM-06", selected)
+        # The em dash rule is language-specific: Korean cues one dash, English two.
+        self.assertIn("CP-05", {rule["id"] for rule in ANALYZE.select_rules(RULES, "ko")})
+        self.assertIn("CP-03", {rule["id"] for rule in ANALYZE.select_rules(RULES, "en")})
+        self.assertNotIn("CP-03", {rule["id"] for rule in ANALYZE.select_rules(RULES, "ko")})
+
+    def test_english_stock_phrases_are_reported(self) -> None:
+        text = (
+            "It's worth noting that we delve into the retry queue. "
+            "In short, the fix is safe, not risky."
+        )
+        found = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertIn("TP-08", found)
+        self.assertIn("TP-09", found)
+        self.assertIn("TP-10", found)
+        self.assertIn("CO-01", found)
+
+    def test_english_signals_skip_code_and_urls(self) -> None:
+        text = "See `delve_into()` and https://example.com/in-short-guide for details."
+        found = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertNotIn("TP-08", found)
+        self.assertNotIn("TP-10", found)
+
+    def test_explicit_language_overrides_detection(self) -> None:
+        report = ANALYZE.analyze("배포가 끝났습니다.", RULES, language="en")
+        self.assertEqual(report["language"], "en")
+
+    def test_korean_contrastive_framing_is_reported(self) -> None:
+        text = "이 변경은 단순히 성능 개선이 아니라 구조 정리다."
+        found = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertIn("CO-02", found)
+
+    def test_korean_contrastive_framing_with_adjective_form(self) -> None:
+        text = "이는 단순한 저장 기능이 아니라 운영 방식의 변화다."
+        found = {finding["id"] for finding in ANALYZE.analyze(text, RULES)["findings"]}
+        self.assertIn("CO-02", found)
+
+    def test_every_rule_declares_a_language(self) -> None:
+        for rule in RULES["rules"]:
+            self.assertIn(rule["language"], {"ko", "en", "any"}, rule["id"])
+
+
+class RegressionCorpusTests(unittest.TestCase):
+    """Before/after drafts in tests/corpus pin what each rule must catch."""
+
+    CORPUS = SKILL_ROOT / "tests" / "corpus"
+    EXPECTED = {
+        "report": {"TR-01": 1, "TR-02": 1, "TR-04": 1, "HG-04": 1, "CP-05": 1, "FM-07": 2, "FM-08": 1, "FM-09": 2},
+        "blog": {"CO-02": 1, "HG-04": 1, "TP-13": 1, "TP-14": 1},
+        "narrative": {"TR-09": 4},
+        "compressed": {"CP-01": 3, "CP-02": 2, "CP-05": 1},
+    }
+
+    def counts(self, name: str, stage: str) -> dict[str, int]:
+        text = (self.CORPUS / f"{name}.{stage}.md").read_text(encoding="utf-8")
+        return {f["id"]: f["count"] for f in ANALYZE.analyze(text, RULES)["findings"]}
+
+    def test_before_drafts_raise_the_expected_cues(self) -> None:
+        for name, expected in self.EXPECTED.items():
+            with self.subTest(name=name):
+                found = self.counts(name, "before")
+                self.assertEqual({rule: found.get(rule) for rule in expected}, expected)
+
+    def test_after_drafts_clear_the_targeted_cues(self) -> None:
+        for name, expected in self.EXPECTED.items():
+            with self.subTest(name=name):
+                found = self.counts(name, "after")
+                self.assertFalse(set(expected) & set(found), found)
+
+    def test_after_drafts_keep_protected_content(self) -> None:
+        for name in self.EXPECTED:
+            with self.subTest(name=name):
+                before = (self.CORPUS / f"{name}.before.md").read_text(encoding="utf-8")
+                after = (self.CORPUS / f"{name}.after.md").read_text(encoding="utf-8")
+                report = VERIFY.verify(before, after)
+                self.assertEqual(report["errors"], [], name)
 
 
 class VerifyFidelityTests(unittest.TestCase):
@@ -388,6 +680,29 @@ class VerifyFidelityTests(unittest.TestCase):
         self.assertIn("change_rate", {warning["kind"] for warning in report["warnings"]})
 
 
+class EnglishFidelityTests(unittest.TestCase):
+    def test_english_edit_does_not_warn_on_ordinary_capitalized_words(self) -> None:
+        before = "The Deploy Pipeline runs nightly. Importantly, it retries failures."
+        after = "The nightly deploy pipeline retries failures."
+        report = VERIFY.verify(before, after)
+        self.assertEqual(report["language"], "en")
+        self.assertNotIn("latin_terms", {item["kind"] for item in report["warnings"]})
+
+    def test_english_edit_reports_no_speech_level_error(self) -> None:
+        before = "We shipped the fix. The queue is drained by the worker."
+        after = "We shipped the fix. The worker drains the queue."
+        report = VERIFY.verify(before, after)
+        self.assertEqual(report["status"], "pass")
+        self.assertNotIn("speech_level", {item["kind"] for item in report["errors"]})
+
+    def test_korean_checks_still_run_on_a_korean_draft(self) -> None:
+        before = "배포를 마쳤습니다. 로그를 확인하겠습니다."
+        after = "배포를 마쳤다. 로그를 확인한다."
+        report = VERIFY.verify(before, after)
+        self.assertEqual(report["language"], "ko")
+        self.assertIn("speech_level", {item["kind"] for item in report["errors"]})
+
+
 class BuildRulesTests(unittest.TestCase):
     def test_generated_rules_are_current(self) -> None:
         expected = BUILD.render(BUILD.load_rules())
@@ -404,6 +719,18 @@ class BuildRulesTests(unittest.TestCase):
         invalid["rules"][1]["id"] = invalid["rules"][0]["id"]
         with self.assertRaisesRegex(ValueError, "duplicate rule id"):
             BUILD.render(invalid)
+
+    def test_renderer_rejects_undeclared_rule_language(self) -> None:
+        invalid = copy.deepcopy(RULES)
+        invalid["rules"][0]["language"] = "fr"
+        with self.assertRaisesRegex(ValueError, "language must be one of"):
+            BUILD.render(invalid)
+
+    def test_runtime_rules_separate_language_sections(self) -> None:
+        rendered = BUILD.render(RULES)
+        self.assertIn("## 언어 공통 ·", rendered)
+        self.assertIn("## 한국어 ·", rendered)
+        self.assertIn("## 영어 ·", rendered)
 
     def test_renderer_rejects_undeclared_rule_category(self) -> None:
         invalid = copy.deepcopy(RULES)

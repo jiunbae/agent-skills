@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find advisory Korean editorial signals without claiming authorship detection."""
+"""Find advisory editorial signals without claiming authorship detection."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from korean_text import mask_prose  # noqa: E402
+from markdown_text import detect_language, mask_prose  # noqa: E402
 from rule_schema import validate_rules  # noqa: E402
 
 
@@ -20,6 +20,13 @@ DEFAULT_RULES = SKILL_ROOT / "references" / "editing-rules.json"
 SEVERITY_WEIGHT = {"low": 1, "medium": 2, "high": 3}
 LOCALIZED_MAX_FINDINGS = 3
 LOCALIZED_MAX_DENSITY = 6.0
+# Lines whose shape is a genre convention (headings, list items, quotes, table
+# rows) are not prose sentences, so sentence-scoped rules skip them whole.
+STRUCTURAL_LINE_RE = re.compile(r"[ \t]*(?:[-*+>#|]|\d+[.)])")
+# A sentence ends at ., ! or ? followed by a space or the end of the line, so
+# decimals and version numbers ("1.5초", "v2.1") stay inside one sentence.
+# A closing quote or bracket right after the mark stays with its sentence.
+SENTENCE_RE = re.compile(r"\S[^\n]*?(?:[.!?][\"'”’)\]]*(?=[ \t]|$)|$)")
 
 
 def read_input(path: str) -> str:
@@ -53,17 +60,50 @@ def scope_hint(finding_count: int, weighted: int, prose_characters: int) -> str:
     return "standard"
 
 
-def analyze(text: str, rules_data: dict) -> dict:
+def select_rules(rules_data: dict, language: str) -> list[dict]:
+    """Keep the rules that describe this draft's language plus the shared ones."""
+    return [
+        rule for rule in rules_data["rules"] if rule["language"] in (language, "any")
+    ]
+
+
+def sentence_matches(regex: re.Pattern[str], prose: str) -> list[re.Match[str]]:
+    """Match a sentence-scoped rule once per sentence of each prose line.
+
+    Offsets stay those of the masked text, which keeps line numbers and
+    excerpts pointing at the original draft.
+    """
+    matches = []
+    offset = 0
+    for raw_line in prose.split("\n"):
+        # Raw CRLF input keeps its "\r"; match without it but advance by the
+        # real length so offsets still point into the original text.
+        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
+        if line.strip() and not STRUCTURAL_LINE_RE.match(line):
+            for sentence in SENTENCE_RE.finditer(line):
+                match = regex.fullmatch(prose, offset + sentence.start(), offset + sentence.end())
+                if match:
+                    matches.append(match)
+        offset += len(raw_line) + 1
+    return matches
+
+
+def analyze(text: str, rules_data: dict, language: str = "auto") -> dict:
     rules_data = validate_rules(rules_data)
+    if language == "auto":
+        language = detect_language(text)
     findings = []
     weighted_signal_count = 0
     # Offsets survive masking, so line numbers and excerpts come from the
     # original text while matching only sees prose.
     prose = mask_prose(text)
 
-    for rule in rules_data["rules"]:
+    for rule in select_rules(rules_data, language):
         regex = re.compile(rule["pattern"], re.MULTILINE | re.IGNORECASE)
-        matches = list(regex.finditer(prose))
+        if rule.get("match_scope", "text") == "sentence":
+            matches = sentence_matches(regex, prose)
+        else:
+            matches = list(regex.finditer(prose))
         minimum = int(rule.get("minimum_occurrences", 1))
         if len(matches) < minimum:
             continue
@@ -102,6 +142,7 @@ def analyze(text: str, rules_data: dict) -> dict:
     sentences = [part for part in re.split(r"(?<=[.!?。！？])\s+|\n+", text) if part.strip()]
     return {
         "kind": "editorial_signal_report",
+        "language": language,
         "disclaimer": "Advisory editing cues only; not an AI-authorship score.",
         "statistics": {
             "characters": len(text),
@@ -119,7 +160,8 @@ def print_human(report: dict) -> None:
     stats = report["statistics"]
     print(
         f"characters={stats['characters']} paragraphs={stats['paragraphs']} "
-        f"sentences={stats['sentences']} edit_scope_hint={report['edit_scope_hint']}"
+        f"sentences={stats['sentences']} language={report['language']} "
+        f"edit_scope_hint={report['edit_scope_hint']}"
     )
     print(report["disclaimer"])
     if not report["findings"]:
@@ -137,13 +179,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", help="UTF-8 text file or '-' for stdin")
     parser.add_argument("--rules", type=Path, default=DEFAULT_RULES)
+    parser.add_argument(
+        "--language",
+        choices=["auto", "ko", "en"],
+        default="auto",
+        help="rule set to apply; 'auto' detects it from the draft",
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON")
     args = parser.parse_args()
 
     try:
         text = read_input(args.input)
         rules_data = json.loads(args.rules.read_text(encoding="utf-8"))
-        report = analyze(text, rules_data)
+        report = analyze(text, rules_data, args.language)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, KeyError, re.error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

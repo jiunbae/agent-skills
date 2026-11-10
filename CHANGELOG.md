@@ -30,6 +30,31 @@ empty `[Unreleased]` section above it.
   cover the same work with plain `git worktree` and REST examples.
 
 ### Changed
+- `common/korean-editor` becomes `common/editor` and now edits English drafts as
+  well as Korean ones. Every rule in `editing-rules.json` declares a `language`
+  (`ko`, `en`, or `any`), the analyzer detects the draft's language and applies
+  only that language's rules plus the shared formatting ones (`--language`
+  overrides the detection), and `verify_fidelity.py` skips the speech-level and
+  Latin-term checks on an English draft, where they described nothing and warned
+  on every real edit. `analyze_korean.py` is now `analyze_draft.py` and
+  `korean_text.py` is `markdown_text.py`. Fourteen rules were added from
+  OpenAI's GPT-6 Astra writing-style guidance: English stock phrases and closing
+  summaries, contrastive "X, not Y" framing and its Korean counterpart, invented
+  hyphenated labels, agentive passives, nominalized verb phrases, and nested
+  lists. `references/prose-style.md` records the default style contract the
+  skill applies when the user names no other standard.
+- The editor's Korean rules now catch the cues they kept missing. Four
+  patterns that matched a single surface form widen (`TR-01` ~을 통하여,
+  `TR-04` 되어짐, `HG-04` ~라 할 수 있다, `CO-02` 단순한 ~이 아니라), and six
+  rules adapted from leeandev/stop-slop-ko (MIT) flag Korean em dashes
+  (`CP-05`), particle spacing after Latin tokens (`FM-07`), spaced middot
+  lists (`FM-08`), decorative stars and emoji (`FM-09`), lesson closings
+  (`TP-13`) and blog greeting openers (`TP-14`). A rule may set
+  `match_scope: sentence` to count each sentence; `CP-01` uses it, so a
+  compressed paragraph no longer reports one hit at most. The English em dash
+  rule (`CP-03`) keeps its two-dash threshold. `tests/corpus` holds
+  before/after drafts with the expected cue counts.
+
 - `context/context-manager` leaves the `core` profile and its two scripts are
   deleted. `find_context.py` scored only filenames and parent directory names,
   never document bodies, so a term that appears in the text — the normal case —
@@ -76,6 +101,11 @@ empty `[Unreleased]` section above it.
   re-verified against its upstream repository.
 
 ### Fixed
+- `VB-04` and `VB-05` in the editor's rulebook only matched a few conjugations
+  of the verb they describe, so "검토를 진행할", "점검을 진행한", "요구될",
+  "요구됨", and "필요로 한다" never produced a signal even though the phrase they
+  flag was right there. Both patterns now cover the contracted 하다 and 되다
+  forms.
 - `setup.sh`: its own usage header, `usage()` and every example fetch the script
   and run it as a file instead of piping it into a shell. #14 changed the Quick
   Install block in the generated release notes, but not the script documenting

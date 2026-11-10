@@ -77,7 +77,7 @@ jobs:
           done
 
       - name: Check generated files are current
-        run: python common/korean-editor/scripts/build_runtime_rules.py --check
+        run: python common/editor/scripts/build_runtime_rules.py --check
 
       - name: Set up supported Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
