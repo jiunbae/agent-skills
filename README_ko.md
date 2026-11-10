@@ -161,6 +161,7 @@ node ~/.claude/skills/air-workbench/scripts/air.mjs workbench
 | `background-planner` | 페르소나 기반 병렬 기획 + stance 기반 종합(충돌·오픈 이슈 명시) |
 | `background-reviewer` | 페르소나 병렬 리뷰 + 적대적 검증 + root-cause 병합 |
 | `incident-writer` | 구조화된 장애 및 상태 페이지 보고서 작성 |
+| `memory-dream` | 최근 세션 근거로 프로젝트 에이전트 기억의 추가·수정·삭제를 제안(승인 전 변경 없음) |
 | `rpf` | 하나의 동적 pointer 문서를 따르는 다중 에이전트 리뷰·계획·작업·피드백 루프 |
 | `air-workbench` | AIR Skill 워크플로 편집·로컬 Skill 탐색·계획 승인·관찰 가능한 추적 |
 

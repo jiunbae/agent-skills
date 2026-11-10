@@ -180,6 +180,7 @@ The same form works for any other catalog entry, for example
 | `background-planner` | Bounded parallel planning with planner personas and stance-steered synthesis |
 | `background-reviewer` | Bounded parallel persona review with adversarial verification and root-cause merge |
 | `incident-writer` | Structured incident and status-page reports |
+| `memory-dream` | Evidence-backed, proposal-only review of a project's agent memory against recent sessions |
 | `rpf` | Explicit pointer-driven multi-agent review, plan, work, and feedback loop |
 | `air-workbench` | AIR Skill workflow editing, local Skill discovery, plan approval, and observable tracing |
 
