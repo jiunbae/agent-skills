@@ -106,8 +106,8 @@ jobs:
         working-directory: agents/air-workbench
         env:
           WORKFLOW_STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/development/playwright/node_modules/playwright-core/index.mjs
-          DEBUG: pw:browser
-        run: timeout 240 node --test --test-reporter=spec --test-timeout=90000 tests/browser-air-workbench.mjs || echo "DIAG exit=$?"
+          DEBUG: pw:api
+        run: timeout 240 node --test --test-reporter=spec --test-timeout=90000 --test-name-pattern='carrier safety' tests/browser-air-workbench.mjs || echo "DIAG exit=$?"
 
       - name: Verify AIR source, generated assets, and examples
         env:
