@@ -101,6 +101,13 @@ empty `[Unreleased]` section above it.
   re-verified against its upstream repository.
 
 ### Fixed
+- AIR Workbench: the studio server's `close()` waited on `server.close()`,
+  which does not return until every open socket ends. A browser that kept a
+  socket open after its page closed left `close()` pending, and the AIR
+  release gate hung at `browser-air-workbench.mjs` until the 20-minute job
+  limit (about 1 run in 4 on the CI runner). `close()` now ends the remaining
+  sockets with `closeAllConnections()`, and a server test holds a half-sent
+  request open to prove `close()` still resolves.
 - `VB-04` and `VB-05` in the editor's rulebook only matched a few conjugations
   of the verb they describe, so "검토를 진행할", "점검을 진행한", "요구될",
   "요구됨", and "필요로 한다" never produced a signal even though the phrase they

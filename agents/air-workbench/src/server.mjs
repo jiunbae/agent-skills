@@ -901,6 +901,10 @@ export function createStudioServer({
         if (error) rejectPromise(error);
         else resolvePromise();
       });
+      // server.close() only stops accepting and waits for open sockets to end.
+      // A browser can keep a socket open after its page closes, which left
+      // close() pending forever, so end the remaining sockets ourselves.
+      server.closeAllConnections();
     });
   }
 

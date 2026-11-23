@@ -7,6 +7,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { request } from "node:http";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -146,6 +147,37 @@ test("serves only bundled assets with exact content types and secure headers", a
       assert.equal(response.headers["access-control-allow-origin"], undefined);
     }
   });
+});
+
+test("close resolves while a client still holds an open connection", async () => {
+  const studio = createStudioServer({
+    artifact: { kind: "workflow" },
+    assetsDir: join(COMPONENT_ROOT, "assets"),
+  });
+  const address = await studio.listen();
+  // A request whose headers never finish keeps its socket busy, as a browser
+  // can after the page that opened it is gone. server.close() alone waits
+  // for that socket forever.
+  const socket = connect(address.port, "127.0.0.1");
+  socket.on("error", () => {});
+  await new Promise((resolvePromise) => socket.once("connect", resolvePromise));
+  socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  let timer;
+  try {
+    await Promise.race([
+      studio.close(),
+      new Promise((_, rejectPromise) => {
+        timer = setTimeout(
+          () => rejectPromise(new Error("close() did not resolve within 2s")),
+          2_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    socket.destroy();
+  }
 });
 
 test("serves checked-in generated assets byte-for-byte from fixed routes", async (t) => {
