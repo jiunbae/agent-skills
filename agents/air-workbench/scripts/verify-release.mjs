@@ -66,7 +66,7 @@ const COMPONENT_TEST_INVENTORY = Object.freeze({
   "r3-integration.test.mjs": 7,
   "release-gate.test.mjs": 9,
   "schema-runtime-differential.test.mjs": 1,
-  "server.test.mjs": 12,
+  "server.test.mjs": 13,
   "session-api.test.mjs": 13,
   "sessions.test.mjs": 49,
 });
