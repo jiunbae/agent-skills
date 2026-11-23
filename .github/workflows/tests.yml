@@ -107,7 +107,14 @@ jobs:
         env:
           WORKFLOW_STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/development/playwright/node_modules/playwright-core/index.mjs
           DEBUG: pw:api
-        run: timeout 240 node --test --test-reporter=spec --test-timeout=90000 tests/browser-air-workbench.mjs || echo "DIAG exit=$?"
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            if timeout 100 node --test --test-reporter=spec --test-timeout=60000 tests/browser-air-workbench.mjs > "$RUNNER_TEMP/diag_$i.log" 2>&1; then
+              echo "DIAG run $i ok"
+            else
+              echo "DIAG run $i FAILED"; grep -E '✔|✖' "$RUNNER_TEMP/diag_$i.log" | head; echo "--- tail"; grep -v 'pw:api.*<= \|pw:api.*=> ' "$RUNNER_TEMP/diag_$i.log" | tail -5; echo "--- api tail"; grep 'pw:api' "$RUNNER_TEMP/diag_$i.log" | tail -40
+            fi
+          done
 
       - name: Verify AIR source, generated assets, and examples
         env:
